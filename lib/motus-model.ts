@@ -1,44 +1,39 @@
-export const PROJECT_SCHEMA_VERSION = 1 as const;
+export const PROJECT_SCHEMA_VERSION = 2 as const;
 
-export type ScenePalette = {
-  from: string;
-  to: string;
-  glow: string;
-};
+export type ElementType = 'shape' | 'text' | 'speech' | 'image';
+export type Easing = 'linear' | 'ease-out' | 'ease-in-out';
 
-export type EventBlock = {
-  id: string;
-  kind: 'event';
-  trigger: 'scene-enter';
-};
-
-export type MoveBlock = {
-  id: string;
-  kind: 'move';
-  deltaX: number;
+export type ElementMotion = {
+  moveX: number;
+  moveY: number;
   durationMs: number;
-  easing: 'ease-out';
+  fromOpacity: number;
+  easing: Easing;
 };
 
-export type FadeBlock = {
+export type MotusElement = {
   id: string;
-  kind: 'fade';
-  from: number;
-  to: number;
-  durationMs: number;
-  withPrevious: boolean;
+  name: string;
+  type: ElementType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  opacity: number;
+  fill: string;
+  text?: string;
+  src?: string;
+  visible: boolean;
+  locked: boolean;
+  motion: ElementMotion;
 };
-
-export type AnimationBlock = EventBlock | MoveBlock | FadeBlock;
 
 export type MotusScene = {
   id: string;
-  kicker: string;
-  title: string;
-  speech: string;
-  palette: ScenePalette;
-  blocks: AnimationBlock[];
-  accentCount: number;
+  name: string;
+  background: string;
+  elements: MotusElement[];
 };
 
 export type MotusProject = {
@@ -50,37 +45,101 @@ export type MotusProject = {
   updatedAt: string;
 };
 
+const motion = (
+  moveX = 0,
+  moveY = 0,
+  durationMs = 900,
+  fromOpacity = 1,
+): ElementMotion => ({
+  moveX,
+  moveY,
+  durationMs,
+  fromOpacity,
+  easing: 'ease-out',
+});
+
+export function createElement(
+  type: ElementType,
+  index: number,
+  overrides: Partial<MotusElement> = {},
+): MotusElement {
+  const labels: Record<ElementType, string> = {
+    shape: 'Shape',
+    text: 'Text',
+    speech: 'Speech bubble',
+    image: 'Image',
+  };
+
+  return {
+    id: `${type}-${Date.now()}-${index}`,
+    name: `${labels[type]} ${index}`,
+    type,
+    x: 350,
+    y: 560,
+    width: type === 'text' ? 440 : 260,
+    height: type === 'text' ? 120 : 220,
+    rotation: 0,
+    opacity: 1,
+    fill: type === 'speech' ? '#fffaf0' : '#8c74ff',
+    text:
+      type === 'speech'
+        ? 'Add your dialogue…'
+        : type === 'text'
+          ? 'A new moment'
+          : undefined,
+    visible: true,
+    locked: false,
+    motion: motion(80, 0, 900, 0.15),
+    ...overrides,
+  };
+}
+
 const scene = (
   id: string,
-  kicker: string,
+  name: string,
+  background: string,
   title: string,
   speech: string,
-  palette: ScenePalette,
-  deltaX: number,
+  glow: string,
 ): MotusScene => ({
   id,
-  kicker,
-  title,
-  speech,
-  palette,
-  accentCount: 0,
-  blocks: [
-    { id: `${id}-event`, kind: 'event', trigger: 'scene-enter' },
-    {
-      id: `${id}-move`,
-      kind: 'move',
-      deltaX,
-      durationMs: 1200,
-      easing: 'ease-out',
-    },
-    {
-      id: `${id}-fade`,
-      kind: 'fade',
-      from: 0.1,
-      to: 1,
-      durationMs: 800,
-      withPrevious: true,
-    },
+  name,
+  background,
+  elements: [
+    createElement('text', 1, {
+      id: `${id}-title`,
+      name: 'Scene title',
+      x: 95,
+      y: 150,
+      width: 620,
+      height: 190,
+      fill: '#ffffff',
+      text: title,
+      locked: false,
+      motion: motion(0, 34, 700, 0),
+    }),
+    createElement('shape', 2, {
+      id: `${id}-orb`,
+      name: 'Signal orb',
+      x: 670,
+      y: 580,
+      width: 150,
+      height: 150,
+      fill: glow,
+      motion: motion(140, -20, 1200, 0.08),
+    }),
+    createElement('speech', 3, {
+      id: `${id}-speech`,
+      name: 'Speech bubble',
+      x: 560,
+      y: 1020,
+      width: 390,
+      height: 170,
+      text: speech,
+      fill: '#fffaf0',
+      rotation: -2,
+      motion: motion(0, 28, 650, 0),
+    }),
   ],
 });
 
@@ -93,56 +152,33 @@ export const createDefaultProject = (): MotusProject => ({
   scenes: [
     scene(
       'scene-1',
-      'NIGHT 03 — THE SIGNAL',
+      'The signal',
+      'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
       'Something moved beyond the fog.',
       'Did you see that?',
-      { from: '#24203b', to: '#332b46', glow: '#8d71ff' },
-      92,
+      '#8d71ff',
     ),
     scene(
       'scene-2',
-      'NIGHT 03 — THE CROSSING',
+      'The crossing',
+      'linear-gradient(155deg, #38284c 0%, #1c1729 54%, #7d4e61 100%)',
       'The light waited on the other side.',
       'It knows we are here.',
-      { from: '#38284c', to: '#7d4e61', glow: '#ff8ca6' },
-      64,
+      '#ff8ca6',
     ),
     scene(
       'scene-3',
-      'NIGHT 03 — THE ANSWER',
+      'The answer',
+      'linear-gradient(155deg, #22293b 0%, #101d28 54%, #315a63 100%)',
       'A second pulse answered from below.',
       'That was not an echo.',
-      { from: '#22293b', to: '#315a63', glow: '#67d6df' },
-      118,
-    ),
-    scene(
-      'scene-4',
-      'DAWN 01 — THE DOOR',
-      'By morning, the path had opened.',
-      'We go together.',
-      { from: '#30293c', to: '#806a78', glow: '#f1d086' },
-      78,
+      '#67d6df',
     ),
   ],
 });
 
-export type CompiledMotion = {
-  distancePx: number;
-  durationMs: number;
-  fromOpacity: number;
-  toOpacity: number;
-};
-
-export function compileMotion(blocks: AnimationBlock[]): CompiledMotion {
-  const move = blocks.find((block): block is MoveBlock => block.kind === 'move');
-  const fade = blocks.find((block): block is FadeBlock => block.kind === 'fade');
-
-  return {
-    distancePx: move?.deltaX ?? 0,
-    durationMs: Math.max(move?.durationMs ?? fade?.durationMs ?? 1, 1),
-    fromOpacity: fade?.from ?? 1,
-    toOpacity: fade?.to ?? 1,
-  };
+export function cloneProject(project: MotusProject): MotusProject {
+  return structuredClone(project);
 }
 
 export function restoreProject(value: string | null): MotusProject | null {
@@ -154,7 +190,8 @@ export function restoreProject(value: string | null): MotusProject | null {
       candidate.schemaVersion !== PROJECT_SCHEMA_VERSION ||
       typeof candidate.title !== 'string' ||
       !Array.isArray(candidate.scenes) ||
-      candidate.scenes.length === 0
+      candidate.scenes.length === 0 ||
+      candidate.scenes.some((item) => !Array.isArray(item.elements))
     ) {
       return null;
     }
@@ -163,8 +200,4 @@ export function restoreProject(value: string | null): MotusProject | null {
   } catch {
     return null;
   }
-}
-
-export function cloneProject(project: MotusProject): MotusProject {
-  return structuredClone(project);
 }
