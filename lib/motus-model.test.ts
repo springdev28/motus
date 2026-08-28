@@ -6,6 +6,7 @@ import {
   PROJECT_SCHEMA_VERSION,
   compileElementMotion,
   createDefaultProject,
+  createPublicationRevision,
   restoreProject,
 } from './motus-model.ts';
 
@@ -73,6 +74,45 @@ void test('version 2 drafts migrate without losing scenes or element motion', ()
 });
 
 void test('invalid project data is rejected', () => {
-  assert.equal(restoreProject('{"schemaVersion":3,"title":"Broken","scenes":[]}'), null);
+  assert.equal(restoreProject('{"schemaVersion":4,"title":"Broken","scenes":[]}'), null);
   assert.equal(restoreProject('not json'), null);
+});
+
+void test('published revisions remain immutable when the draft changes', () => {
+  const project = createDefaultProject();
+  const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+
+  project.title = 'Changed draft title';
+  project.tags.push('new tag');
+  project.scenes[0].elements[0].text = 'Changed draft scene';
+
+  assert.equal(revision.revision, 1);
+  assert.equal(revision.createdAt, '2026-08-29T00:00:00.000Z');
+  assert.equal(revision.title, 'Signal in the Fog');
+  assert.deepEqual(revision.tags, ['science fiction', 'mystery']);
+  assert.equal(revision.scenes[0].elements[0].text, 'Something moved beyond the fog.');
+});
+
+void test('version 3 drafts receive safe publication defaults', () => {
+  const legacy = structuredClone(createDefaultProject()) as unknown as Record<
+    string,
+    unknown
+  >;
+  legacy.schemaVersion = 3;
+  delete legacy.description;
+  delete legacy.tags;
+  delete legacy.language;
+  delete legacy.contentRating;
+  delete legacy.visibility;
+  delete legacy.publications;
+
+  const restored = restoreProject(JSON.stringify(legacy));
+
+  assert.ok(restored);
+  assert.equal(restored.description, '');
+  assert.deepEqual(restored.tags, []);
+  assert.equal(restored.language, 'en');
+  assert.equal(restored.contentRating, 'all-ages');
+  assert.equal(restored.visibility, 'private');
+  assert.deepEqual(restored.publications, []);
 });

@@ -28,6 +28,7 @@ import {
   Play,
   Plus,
   Redo2,
+  Send,
   Sparkles,
   Square,
   Trash2,
@@ -53,12 +54,16 @@ import {
   compileElementMotion,
   createDefaultProject,
   createElement,
+  createPublicationRevision,
   restoreProject,
+  type ContentRating,
   type Easing,
   type ElementType,
   type MotusElement,
   type MotusProject,
+  type MotusPublicationRevision,
   type MotusScene,
+  type PublicationVisibility,
 } from '@/lib/motus-model';
 
 const STORAGE_KEY = 'motus.project.v2';
@@ -67,6 +72,10 @@ const CANVAS_HEIGHT = 1440;
 
 function uniqueId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
 }
 
 const toolItems = [
@@ -225,6 +234,9 @@ export function MotusStudio() {
   const [zoom, setZoom] = useState(64);
   const [previewKey, setPreviewKey] = useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [readerRevision, setReaderRevision] =
+    useState<MotusPublicationRevision | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [notice, setNotice] = useState('Ready');
   const undoStack = useRef<MotusProject[]>([]);
@@ -481,13 +493,27 @@ export function MotusStudio() {
     setNotice('Project exported');
   };
 
-  const openReader = () => {
-    commitProject((draft) => {
-      draft.publishedRevision += 1;
-    });
+  const openReader = (revision?: MotusPublicationRevision) => {
+    const selectedRevision = revision ?? project.publications.at(-1) ?? null;
+    setReaderRevision(selectedRevision ? structuredClone(selectedRevision) : null);
     setPreviewKey((key) => key + 1);
     setReaderOpen(true);
-    setNotice('Reader revision created');
+    setNotice(selectedRevision ? `Viewing revision ${selectedRevision.revision}` : 'Previewing draft');
+  };
+
+  const publishRevision = () => {
+    const createdAt = nowIso();
+    const revision = createPublicationRevision(project, createdAt);
+    commitProject((draft) => {
+      const snapshot = createPublicationRevision(draft, createdAt);
+      draft.publications.push(snapshot);
+      draft.publishedRevision = snapshot.revision;
+    });
+    setPublishOpen(false);
+    setReaderRevision(revision);
+    setPreviewKey((key) => key + 1);
+    setReaderOpen(true);
+    setNotice(`Revision ${revision.revision} published`);
   };
 
   const beginPointerAction = (
@@ -593,6 +619,8 @@ export function MotusStudio() {
   });
 
   const artboardWidth = Math.round(430 * (zoom / 64));
+  const readerScenes = readerRevision?.scenes ?? project.scenes;
+  const readerTitle = readerRevision?.title ?? project.title;
 
   return (
     <main className="studio-shell">
@@ -639,7 +667,8 @@ export function MotusStudio() {
           <Button onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
             <Play data-icon="inline-start" fill="currentColor" />Preview
           </Button>
-          <Button onClick={openReader}><Layers3 data-icon="inline-start" />Reader</Button>
+          <Button onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" />Reader</Button>
+          <Button onClick={() => setPublishOpen(true)}><Send data-icon="inline-start" />Publish</Button>
           <Button aria-label="Import Motus project" onClick={() => projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
           <Button aria-label="Export Motus project" onClick={exportProject} size="icon" variant="outline"><Download /></Button>
         </div>
@@ -826,16 +855,111 @@ export function MotusStudio() {
       <Dialog onOpenChange={setReaderOpen} open={readerOpen}>
         <DialogContent className="reader-dialog">
           <DialogHeader>
-            <DialogTitle>{project.title}</DialogTitle>
-            <DialogDescription>Reader preview · revision {project.publishedRevision}</DialogDescription>
+            <DialogTitle>{readerTitle}</DialogTitle>
+            <DialogDescription>
+              {readerRevision
+                ? `Published revision ${readerRevision.revision} · ${readerRevision.visibility}`
+                : 'Unpublished draft preview'}
+            </DialogDescription>
           </DialogHeader>
           <div className="reader-scroll">
-            {project.scenes.map((scene, index) => (
+            {readerScenes.map((scene, index) => (
               <article className="reader-scene" key={`${scene.id}-${previewKey}`}>
                 <span className="reader-scene-number">SCENE {String(index + 1).padStart(2, '0')}</span>
                 <SceneView playingKey={previewKey || 1} scene={scene} />
               </article>
             ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog onOpenChange={setPublishOpen} open={publishOpen}>
+        <DialogContent className="publish-dialog">
+          <DialogHeader>
+            <DialogTitle>Publish {project.title}</DialogTitle>
+            <DialogDescription>
+              Create an immutable reader snapshot. Later edits stay in your draft until you publish again.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="publish-grid">
+            <label className="publish-field" htmlFor="publish-description">
+              <span>Description</span>
+              <Textarea
+                id="publish-description"
+                onChange={(event) => commitProject((draft) => { draft.description = event.target.value; })}
+                placeholder="What should readers know before they begin?"
+                value={project.description}
+              />
+            </label>
+            <label className="publish-field" htmlFor="publish-tags">
+              <span>Tags</span>
+              <Input
+                id="publish-tags"
+                onChange={(event) => commitProject((draft) => {
+                  draft.tags = event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 8);
+                })}
+                placeholder="mystery, science fiction"
+                value={project.tags.join(', ')}
+              />
+            </label>
+
+            <div className="publish-field-row">
+              <label className="publish-field" htmlFor="publish-language">
+                <span>Language</span>
+                <NativeSelect id="publish-language" onChange={(event) => commitProject((draft) => { draft.language = event.target.value; })} value={project.language}>
+                  <NativeSelectOption value="en">English</NativeSelectOption>
+                  <NativeSelectOption value="tr">Turkish</NativeSelectOption>
+                  <NativeSelectOption value="es">Spanish</NativeSelectOption>
+                  <NativeSelectOption value="fr">French</NativeSelectOption>
+                  <NativeSelectOption value="ja">Japanese</NativeSelectOption>
+                </NativeSelect>
+              </label>
+              <label className="publish-field" htmlFor="publish-rating">
+                <span>Content rating</span>
+                <NativeSelect id="publish-rating" onChange={(event) => commitProject((draft) => { draft.contentRating = event.target.value as ContentRating; })} value={project.contentRating}>
+                  <NativeSelectOption value="all-ages">All ages</NativeSelectOption>
+                  <NativeSelectOption value="teen">Teen</NativeSelectOption>
+                  <NativeSelectOption value="mature">Mature</NativeSelectOption>
+                </NativeSelect>
+              </label>
+              <label className="publish-field" htmlFor="publish-visibility">
+                <span>Visibility</span>
+                <NativeSelect id="publish-visibility" onChange={(event) => commitProject((draft) => { draft.visibility = event.target.value as PublicationVisibility; })} value={project.visibility}>
+                  <NativeSelectOption value="private">Private</NativeSelectOption>
+                  <NativeSelectOption value="public">Public metadata</NativeSelectOption>
+                </NativeSelect>
+              </label>
+            </div>
+
+            <p className="publish-note">
+              This alpha site remains owner-only. Choosing public records your intended visibility in the revision but does not change site access.
+            </p>
+
+            {project.publications.length > 0 ? (
+              <section className="revision-history" aria-labelledby="revision-history-title">
+                <div className="revision-history-heading">
+                  <strong id="revision-history-title">Revision history</strong>
+                  <span>{project.publications.length} saved</span>
+                </div>
+                <div className="revision-list">
+                  {[...project.publications].reverse().map((revision) => (
+                    <div className="revision-row" key={revision.id}>
+                      <div>
+                        <strong>Revision {revision.revision}</strong>
+                        <small>{revision.createdAt.slice(0, 16).replace('T', ' ')} · {revision.scenes.length} scenes</small>
+                      </div>
+                      <Button onClick={() => { setPublishOpen(false); openReader(revision); }} size="sm" variant="outline">View</Button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </div>
+
+          <div className="publish-actions">
+            <span>Next: revision {project.publishedRevision + 1}</span>
+            <Button onClick={publishRevision}><Send />Publish revision</Button>
           </div>
         </DialogContent>
       </Dialog>

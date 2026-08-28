@@ -1,8 +1,10 @@
-export const PROJECT_SCHEMA_VERSION = 3 as const;
+export const PROJECT_SCHEMA_VERSION = 4 as const;
 export const MOTION_SCHEMA_VERSION = 1 as const;
 
 export type ElementType = 'shape' | 'text' | 'speech' | 'image';
 export type Easing = 'linear' | 'ease-out' | 'ease-in-out';
+export type ContentRating = 'all-ages' | 'teen' | 'mature';
+export type PublicationVisibility = 'private' | 'public';
 
 export type ElementMotion = {
   schemaVersion: typeof MOTION_SCHEMA_VERSION;
@@ -64,11 +66,30 @@ export type MotusScene = {
   elements: MotusElement[];
 };
 
+export type MotusPublicationRevision = {
+  id: string;
+  revision: number;
+  createdAt: string;
+  title: string;
+  description: string;
+  tags: string[];
+  language: string;
+  contentRating: ContentRating;
+  visibility: PublicationVisibility;
+  scenes: MotusScene[];
+};
+
 export type MotusProject = {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   id: string;
   title: string;
+  description: string;
+  tags: string[];
+  language: string;
+  contentRating: ContentRating;
+  visibility: PublicationVisibility;
   publishedRevision: number;
+  publications: MotusPublicationRevision[];
   scenes: MotusScene[];
   updatedAt: string;
 };
@@ -229,7 +250,13 @@ export const createDefaultProject = (): MotusProject => ({
   schemaVersion: PROJECT_SCHEMA_VERSION,
   id: 'signal-in-the-fog',
   title: 'Signal in the Fog',
+  description: 'Three signals answer one another across a silent, shifting landscape.',
+  tags: ['science fiction', 'mystery'],
+  language: 'en',
+  contentRating: 'all-ages',
+  visibility: 'private',
   publishedRevision: 0,
+  publications: [],
   updatedAt: new Date().toISOString(),
   scenes: [
     scene(
@@ -263,6 +290,25 @@ export function cloneProject(project: MotusProject): MotusProject {
   return structuredClone(project);
 }
 
+export function createPublicationRevision(
+  project: MotusProject,
+  createdAt = new Date().toISOString(),
+): MotusPublicationRevision {
+  const revision = project.publishedRevision + 1;
+  return {
+    id: `${project.id}-revision-${revision}`,
+    revision,
+    createdAt,
+    title: project.title,
+    description: project.description,
+    tags: [...project.tags],
+    language: project.language,
+    contentRating: project.contentRating,
+    visibility: project.visibility,
+    scenes: structuredClone(project.scenes),
+  };
+}
+
 export function restoreProject(value: string | null): MotusProject | null {
   if (!value) return null;
 
@@ -274,7 +320,9 @@ export function restoreProject(value: string | null): MotusProject | null {
       [key: string]: unknown;
     };
     if (
-      (candidate.schemaVersion !== 2 && candidate.schemaVersion !== PROJECT_SCHEMA_VERSION) ||
+      (candidate.schemaVersion !== 2 &&
+        candidate.schemaVersion !== 3 &&
+        candidate.schemaVersion !== PROJECT_SCHEMA_VERSION) ||
       typeof candidate.title !== 'string' ||
       !Array.isArray(candidate.scenes) ||
       candidate.scenes.length === 0 ||
@@ -296,9 +344,39 @@ export function restoreProject(value: string | null): MotusProject | null {
     }
 
     const restored = candidate as unknown as MotusProject;
+    const publications = Array.isArray(restored.publications)
+      ? restored.publications.filter(
+          (revision) =>
+            revision &&
+            typeof revision.id === 'string' &&
+            Number.isInteger(revision.revision) &&
+            revision.revision > 0 &&
+            typeof revision.createdAt === 'string' &&
+            typeof revision.title === 'string' &&
+            Array.isArray(revision.scenes),
+        )
+      : [];
+    const publishedRevision = Math.max(
+      0,
+      finite(restored.publishedRevision, 0),
+      ...publications.map((revision) => revision.revision),
+    );
     return {
       ...restored,
       schemaVersion: PROJECT_SCHEMA_VERSION,
+      description:
+        typeof restored.description === 'string' ? restored.description : '',
+      tags: Array.isArray(restored.tags)
+        ? restored.tags.filter((tag): tag is string => typeof tag === 'string')
+        : [],
+      language: typeof restored.language === 'string' ? restored.language : 'en',
+      contentRating:
+        restored.contentRating === 'teen' || restored.contentRating === 'mature'
+          ? restored.contentRating
+          : 'all-ages',
+      visibility: restored.visibility === 'public' ? 'public' : 'private',
+      publishedRevision,
+      publications: structuredClone(publications),
       scenes: restored.scenes.map((item) => ({
         ...item,
         elements: item.elements.map((element) => ({
