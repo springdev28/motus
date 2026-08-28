@@ -372,6 +372,46 @@ export const createDefaultProject = (): MotusProject => ({
   ],
 });
 
+export function createBlankProject(
+  id: string,
+  updatedAt = new Date().toISOString(),
+): MotusProject {
+  const projectId = id.trim() || 'untitled-work';
+  return {
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    id: projectId,
+    title: 'Untitled work',
+    description: '',
+    tags: [],
+    language: 'en',
+    contentRating: 'all-ages',
+    visibility: 'private',
+    publishedRevision: 0,
+    publications: [],
+    updatedAt,
+    scenes: [
+      {
+        id: `${projectId}-scene-1`,
+        name: 'Opening scene',
+        background: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
+        elements: [],
+      },
+    ],
+  };
+}
+
+export function createProjectBackupFileName(project: Pick<MotusProject, 'id' | 'title'>) {
+  const fallback = project.id.trim() || 'untitled-work';
+  const stem = (project.title.trim() || fallback)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return `${stem || 'untitled-work'}.motus.json`;
+}
+
 export function cloneProject(project: MotusProject): MotusProject {
   return structuredClone(project);
 }

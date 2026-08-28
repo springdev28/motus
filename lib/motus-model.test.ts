@@ -9,8 +9,10 @@ import {
   MOTION_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
   compileElementMotion,
+  createBlankProject,
   constrainElementToCanvas,
   createDefaultProject,
+  createProjectBackupFileName,
   createPublicationRevision,
   detectImageFormat,
   reorderScenes,
@@ -19,6 +21,30 @@ import {
   restoreProject,
   validateImageAsset,
 } from './motus-model.ts';
+
+void test('blank projects start private with one editable scene', () => {
+  const project = createBlankProject('work-123', '2026-08-29T02:00:00.000Z');
+
+  assert.equal(project.id, 'work-123');
+  assert.equal(project.title, 'Untitled work');
+  assert.equal(project.visibility, 'private');
+  assert.equal(project.updatedAt, '2026-08-29T02:00:00.000Z');
+  assert.equal(project.scenes.length, 1);
+  assert.equal(project.scenes[0].id, 'work-123-scene-1');
+  assert.deepEqual(project.scenes[0].elements, []);
+  assert.deepEqual(project.publications, []);
+});
+
+void test('project backup names are portable and never empty', () => {
+  assert.equal(
+    createProjectBackupFileName({ id: 'fallback', title: ' Signal / Fog: №2 ' }),
+    'signal-fog-no2.motus.json',
+  );
+  assert.equal(
+    createProjectBackupFileName({ id: 'fallback', title: '✨' }),
+    'untitled-work.motus.json',
+  );
+});
 
 void test('element geometry is constrained without mutating the source', () => {
   const source = createDefaultProject().scenes[0].elements[0];

@@ -405,6 +405,12 @@
 .revision-actions svg { width: 12px; height: 12px; }
 .publish-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-top: 1px solid #e2dcd5; padding-top: 14px; }
 .publish-actions span { color: #77707c; font-family: var(--font-mono); font-size: 9px; }
+.new-work-dialog { max-width: 470px !important; }
+.new-work-backup { display: flex; align-items: flex-start; gap: 12px; border: 1px solid #dcd4ef; border-radius: 11px; background: #f7f3ff; padding: 14px; }
+.new-work-backup > svg { width: 18px; height: 18px; flex: none; margin-top: 2px; color: #654ee0; }
+.new-work-backup strong { display: block; font-size: 12px; }
+.new-work-backup p { margin: 4px 0 0; color: #6f6875; font-size: 10px; line-height: 1.5; }
+.new-work-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 @media (max-width: 1120px) {
   .studio-topbar { grid-template-columns: 180px 220px 1fr; }

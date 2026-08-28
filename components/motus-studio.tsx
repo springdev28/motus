@@ -20,6 +20,7 @@ import {
   Eye,
   EyeOff,
   FileImage,
+  FilePlus2,
   ImagePlus,
   Layers3,
   Lock,
@@ -60,8 +61,10 @@ import {
   cloneProject,
   compileElementMotion,
   constrainElementToCanvas,
+  createBlankProject,
   createDefaultProject,
   createElement,
+  createProjectBackupFileName,
   createPublicationRevision,
   detectImageFormat,
   reorderScenes,
@@ -350,6 +353,7 @@ export function MotusStudio() {
   const [previewKey, setPreviewKey] = useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [newWorkOpen, setNewWorkOpen] = useState(false);
   const [readerRevision, setReaderRevision] =
     useState<MotusPublicationRevision | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -657,17 +661,40 @@ export function MotusStudio() {
     setNotice('Scene deleted');
   };
 
-  const exportProject = () => {
-    const blob = new Blob([JSON.stringify(project, null, 2)], {
+  const downloadProject = (candidate: MotusProject) => {
+    const blob = new Blob([JSON.stringify(candidate, null, 2)], {
       type: 'application/json',
     });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `${project.id}.motus.json`;
+    anchor.download = createProjectBackupFileName(candidate);
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const exportProject = () => {
+    downloadProject(project);
     setNotice('Project exported');
+  };
+
+  const startNewWork = () => {
+    downloadProject(project);
+    const blank = createBlankProject(uniqueId('work'), nowIso());
+    if (!persistProject(blank, false)) {
+      setNotice('New work could not be saved — backup downloaded');
+      return;
+    }
+
+    undoStack.current = [cloneProject(project)];
+    redoStack.current = [];
+    setProject(blank);
+    setActiveSceneId(blank.scenes[0].id);
+    setSelectedElementId('');
+    setActiveTool('select');
+    setInspectorTab('design');
+    setNewWorkOpen(false);
+    setNotice('New work started · previous draft downloaded');
   };
 
   const openReader = (revision?: MotusPublicationRevision) => {
@@ -858,6 +885,7 @@ export function MotusStudio() {
 
         <div className="topbar-actions">
           <button className="save-state" onClick={() => persistProject(project)} title="Save draft now" type="button"><Cloud />{notice}</button>
+          <Button aria-label="Start a new work" onClick={() => setNewWorkOpen(true)} size="icon" variant="outline"><FilePlus2 /></Button>
           <Button aria-label="Undo" onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
           <Button aria-label="Redo" onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
           <Button onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
@@ -1079,6 +1107,28 @@ export function MotusStudio() {
           </div>
         </aside>
       </div>
+
+      <Dialog onOpenChange={setNewWorkOpen} open={newWorkOpen}>
+        <DialogContent className="new-work-dialog">
+          <DialogHeader>
+            <DialogTitle>Start a new work?</DialogTitle>
+            <DialogDescription>
+              Motus will download a complete backup of “{project.title}” before opening a blank scene.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="new-work-backup">
+            <Download />
+            <div>
+              <strong>Your current work stays recoverable</strong>
+              <p>Import the downloaded .motus.json file at any time to continue exactly where you left off.</p>
+            </div>
+          </div>
+          <div className="new-work-actions">
+            <Button onClick={() => setNewWorkOpen(false)} variant="outline">Keep editing</Button>
+            <Button onClick={startNewWork}><FilePlus2 />Back up &amp; start</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog onOpenChange={setReaderOpen} open={readerOpen}>
         <DialogContent className="reader-dialog">
