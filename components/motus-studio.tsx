@@ -70,6 +70,7 @@ import {
   detectImageFormat,
   recordProjectHistory,
   reorderScenes,
+  resolveEditorSelection,
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
@@ -404,10 +405,24 @@ export function MotusStudio() {
     let active = true;
     queueMicrotask(() => {
       if (!active) return;
+      const activeSlot =
+        window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
       const restored = restoreNewestProject([
-        { source: 'legacy', value: window.localStorage.getItem(LEGACY_STORAGE_KEY) },
-        { source: 'slot-a', value: window.localStorage.getItem(DRAFT_SLOT_A_KEY) },
-        { source: 'slot-b', value: window.localStorage.getItem(DRAFT_SLOT_B_KEY) },
+        {
+          source: 'legacy',
+          value: window.localStorage.getItem(LEGACY_STORAGE_KEY),
+          priority: -1,
+        },
+        {
+          source: 'slot-a',
+          value: window.localStorage.getItem(DRAFT_SLOT_A_KEY),
+          priority: activeSlot === 'a' ? 1 : 0,
+        },
+        {
+          source: 'slot-b',
+          value: window.localStorage.getItem(DRAFT_SLOT_B_KEY),
+          priority: activeSlot === 'b' ? 1 : 0,
+        },
       ]);
       if (restored) {
         setProject(restored.project);
@@ -482,12 +497,23 @@ export function MotusStudio() {
     historyTransaction.current = null;
   };
 
+  const reconcileSelection = (candidate: MotusProject) => {
+    const selection = resolveEditorSelection(
+      candidate,
+      activeSceneId,
+      selectedElementId,
+    );
+    setActiveSceneId(selection.sceneId);
+    setSelectedElementId(selection.elementId);
+  };
+
   const undo = () => {
     endHistoryTransaction();
     const previous = undoStack.current.pop();
     if (!previous) return;
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
+    reconcileSelection(previous);
     setProject((current) => {
       redoStack.current.push(cloneProject(current));
       return previous;
@@ -501,6 +527,7 @@ export function MotusStudio() {
     if (!next) return;
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
+    reconcileSelection(next);
     setProject((current) => {
       undoStack.current.push(cloneProject(current));
       return next;
@@ -628,6 +655,11 @@ export function MotusStudio() {
         return;
       }
       const restored = result.project;
+      restored.updatedAt = nowIso();
+      if (!persistProject(restored, false)) {
+        setNotice('Imported project could not be saved — current draft kept');
+        return;
+      }
       undoStack.current = [cloneProject(project)];
       redoStack.current = [];
       endHistoryTransaction();

@@ -460,21 +460,40 @@ export type RestoredDraft = {
 };
 
 export function restoreNewestProject(
-  candidates: Array<{ source: string; value: string | null }>,
+  candidates: Array<{ source: string; value: string | null; priority?: number }>,
 ): RestoredDraft | null {
-  const restored = candidates.flatMap(({ source, value }) => {
+  const restored = candidates.flatMap(({ source, value, priority = 0 }) => {
     const project = restoreProject(value);
-    return project ? [{ source, project }] : [];
+    return project ? [{ source, project, priority }] : [];
   });
 
-  return (
-    restored.sort((left, right) => {
-      const leftTime = Date.parse(left.project.updatedAt);
-      const rightTime = Date.parse(right.project.updatedAt);
-      return (Number.isFinite(rightTime) ? rightTime : 0) -
-        (Number.isFinite(leftTime) ? leftTime : 0);
-    })[0] ?? null
-  );
+  const winner = restored.sort((left, right) => {
+    const leftTime = Date.parse(left.project.updatedAt);
+    const rightTime = Date.parse(right.project.updatedAt);
+    const timeDifference =
+      (Number.isFinite(rightTime) ? rightTime : 0) -
+      (Number.isFinite(leftTime) ? leftTime : 0);
+    return timeDifference || right.priority - left.priority;
+  })[0];
+  return winner ? { source: winner.source, project: winner.project } : null;
+}
+
+export type EditorSelection = {
+  sceneId: string;
+  elementId: string;
+};
+
+export function resolveEditorSelection(
+  project: MotusProject,
+  requestedSceneId: string,
+  requestedElementId: string,
+): EditorSelection {
+  const scene =
+    project.scenes.find((item) => item.id === requestedSceneId) ?? project.scenes[0];
+  const elementId = scene.elements.some((item) => item.id === requestedElementId)
+    ? requestedElementId
+    : (scene.elements.at(-1)?.id ?? '');
+  return { sceneId: scene.id, elementId };
 }
 
 export function createPublicationRevision(
@@ -768,7 +787,7 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
     typeof candidate.updatedAt === 'string' &&
     Number.isFinite(Date.parse(candidate.updatedAt))
       ? candidate.updatedAt
-      : new Date().toISOString();
+      : new Date(0).toISOString();
   const fallbackId = createProjectBackupFileName({
     id: 'imported-work',
     title: candidate.title,

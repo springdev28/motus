@@ -17,6 +17,7 @@ import {
   detectImageFormat,
   recordProjectHistory,
   reorderScenes,
+  resolveEditorSelection,
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
@@ -257,7 +258,7 @@ void test('project import normalizes optional metadata without losing history', 
   assert.equal(result.project.publications[0].description, '');
   assert.deepEqual(result.project.publications[0].tags, []);
   assert.equal(result.project.publications[0].visibility, 'private');
-  assert.ok(Number.isFinite(Date.parse(result.project.updatedAt)));
+  assert.equal(result.project.updatedAt, '1970-01-01T00:00:00.000Z');
 });
 
 void test('published revisions remain immutable when the draft changes', () => {
@@ -343,6 +344,24 @@ void test('draft recovery selects the newest valid journal slot', () => {
   assert.equal(restored.project.title, 'Newest valid draft');
 });
 
+void test('draft recovery honors the active journal slot when timestamps tie', () => {
+  const slotA = createDefaultProject();
+  slotA.title = 'Slot A';
+  slotA.updatedAt = '2026-08-29T00:02:00.000Z';
+  const slotB = createDefaultProject();
+  slotB.title = 'Slot B';
+  slotB.updatedAt = slotA.updatedAt;
+
+  const restored = restoreNewestProject([
+    { source: 'slot-a', value: JSON.stringify(slotA), priority: 0 },
+    { source: 'slot-b', value: JSON.stringify(slotB), priority: 1 },
+  ]);
+
+  assert.ok(restored);
+  assert.equal(restored.source, 'slot-b');
+  assert.equal(restored.project.title, 'Slot B');
+});
+
 void test('draft recovery returns null when every candidate is invalid', () => {
   assert.equal(
     restoreNewestProject([
@@ -351,6 +370,24 @@ void test('draft recovery returns null when every candidate is invalid', () => {
     ]),
     null,
   );
+});
+
+void test('editor selection resolves stale scene and layer references', () => {
+  const project = createDefaultProject();
+  assert.deepEqual(
+    resolveEditorSelection(project, 'scene-2', 'scene-2-orb'),
+    { sceneId: 'scene-2', elementId: 'scene-2-orb' },
+  );
+  assert.deepEqual(
+    resolveEditorSelection(project, 'deleted-scene', 'deleted-layer'),
+    { sceneId: 'scene-1', elementId: 'scene-1-speech' },
+  );
+
+  const blank = createBlankProject('blank');
+  assert.deepEqual(resolveEditorSelection(blank, 'missing', 'missing'), {
+    sceneId: 'blank-scene-1',
+    elementId: '',
+  });
 });
 
 void test('scene ordering moves one scene without mutating the source list', () => {
