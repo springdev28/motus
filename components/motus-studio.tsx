@@ -57,9 +57,11 @@ import {
   createDefaultProject,
   createElement,
   createPublicationRevision,
+  detectImageFormat,
   reorderScenes,
   restoreNewestProject,
   restoreProject,
+  validateImageAsset,
   type ContentRating,
   type Easing,
   type ElementType,
@@ -91,6 +93,39 @@ function uniqueId(prefix: string) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+async function decodeImageDimensions(file: File) {
+  if (typeof createImageBitmap === 'function') {
+    const bitmap = await createImageBitmap(file);
+    const dimensions = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return dimensions;
+  }
+
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+      image.onerror = () => reject(new Error('Image decoding failed'));
+      image.src = url;
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function readFileAsDataUrl(file: File) {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      typeof reader.result === 'string'
+        ? resolve(reader.result)
+        : reject(new Error('Image reading failed'));
+    reader.onerror = () => reject(reader.error ?? new Error('Image reading failed'));
+    reader.readAsDataURL(file);
+  });
 }
 
 const toolItems = [
@@ -490,31 +525,46 @@ export function MotusStudio() {
     if (toolId === 'motion') setInspectorTab('motion');
   };
 
-  const uploadImage = (file?: File) => {
+  const uploadImage = async (file?: File) => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setNotice('Choose an image file');
+    const envelopeError = validateImageAsset({ mime: file.type, size: file.size });
+    if (envelopeError) {
+      setNotice(envelopeError);
       return;
     }
-    if (file.size > 750_000) {
-      setNotice('Images must be under 750 KB for this local prototype');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') {
-        setNotice('Image could not be read');
+
+    try {
+      const header = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+      const detectedMime = detectImageFormat(header);
+      if (!detectedMime || detectedMime !== file.type) {
+        setNotice('Image contents do not match a valid PNG or WebP');
         return;
       }
+
+      const dimensions = await decodeImageDimensions(file);
+      const decodedError = validateImageAsset({
+        mime: detectedMime,
+        size: file.size,
+        ...dimensions,
+      });
+      if (decodedError) {
+        setNotice(decodedError);
+        return;
+      }
+
+      const src = await readFileAsDataUrl(file);
+      const scale = Math.min(420 / dimensions.width, 420 / dimensions.height);
       addElement('image', {
         name: file.name,
-        src: reader.result,
-        width: 360,
-        height: 300,
+        src,
+        width: Math.max(8, Math.round(dimensions.width * scale)),
+        height: Math.max(8, Math.round(dimensions.height * scale)),
         fill: '#ffffff',
       });
-    };
-    reader.readAsDataURL(file);
+      setNotice(`${file.name} added · ${dimensions.width}×${dimensions.height}`);
+    } catch {
+      setNotice('Image could not be decoded');
+    }
   };
 
   const importProject = (file?: File) => {
@@ -744,9 +794,12 @@ export function MotusStudio() {
   return (
     <main className="studio-shell">
       <input
-        accept="image/*"
+        accept=".png,.webp,image/png,image/webp"
         className="sr-only"
-        onChange={(event) => uploadImage(event.target.files?.[0])}
+        onChange={(event) => {
+          void uploadImage(event.target.files?.[0]);
+          event.target.value = '';
+        }}
         ref={imageInput}
         type="file"
       />

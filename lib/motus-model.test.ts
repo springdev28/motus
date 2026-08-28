@@ -7,9 +7,11 @@ import {
   compileElementMotion,
   createDefaultProject,
   createPublicationRevision,
+  detectImageFormat,
   reorderScenes,
   restoreNewestProject,
   restoreProject,
+  validateImageAsset,
 } from './motus-model.ts';
 
 void test('motion compilation is deterministic and produces a final element state', () => {
@@ -171,5 +173,35 @@ void test('scene ordering keeps boundary scenes in place', () => {
   assert.deepEqual(
     reorderScenes(scenes, 'scene-3', 1).map((scene) => scene.id),
     ['scene-1', 'scene-2', 'scene-3'],
+  );
+});
+
+void test('image signatures identify PNG and WebP content', () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const webp = new Uint8Array([
+    0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
+  ]);
+
+  assert.equal(detectImageFormat(png), 'image/png');
+  assert.equal(detectImageFormat(webp), 'image/webp');
+  assert.equal(detectImageFormat(new Uint8Array([0xff, 0xd8, 0xff])), null);
+});
+
+void test('image validation enforces format, storage, and decoded dimensions', () => {
+  assert.equal(
+    validateImageAsset({ mime: 'image/jpeg', size: 100 }),
+    'Use a PNG or WebP image',
+  );
+  assert.equal(
+    validateImageAsset({ mime: 'image/png', size: 800_000 }),
+    'Images must be under 750 KB',
+  );
+  assert.equal(
+    validateImageAsset({ mime: 'image/webp', size: 100, width: 5_000, height: 10 }),
+    'Images must be at most 4096px per side and 12 megapixels',
+  );
+  assert.equal(
+    validateImageAsset({ mime: 'image/png', size: 100, width: 2_000, height: 2_000 }),
+    null,
   );
 });

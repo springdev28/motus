@@ -5,6 +5,67 @@ export type ElementType = 'shape' | 'text' | 'speech' | 'image';
 export type Easing = 'linear' | 'ease-out' | 'ease-in-out';
 export type ContentRating = 'all-ages' | 'teen' | 'mature';
 export type PublicationVisibility = 'private' | 'public';
+export type SupportedImageMime = 'image/png' | 'image/webp';
+
+export const MAX_IMAGE_BYTES = 750_000;
+export const MAX_IMAGE_DIMENSION = 4_096;
+export const MAX_IMAGE_PIXELS = 12_000_000;
+
+export type ImageAssetMetadata = {
+  mime: string;
+  size: number;
+  width?: number;
+  height?: number;
+};
+
+export function detectImageFormat(bytes: Uint8Array): SupportedImageMime | null {
+  const isPng =
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a;
+  if (isPng) return 'image/png';
+
+  const isWebp =
+    bytes.length >= 12 &&
+    String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
+    String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP';
+  return isWebp ? 'image/webp' : null;
+}
+
+export function validateImageAsset(metadata: ImageAssetMetadata): string | null {
+  if (metadata.mime !== 'image/png' && metadata.mime !== 'image/webp') {
+    return 'Use a PNG or WebP image';
+  }
+  if (!Number.isFinite(metadata.size) || metadata.size <= 0) {
+    return 'The image file is empty';
+  }
+  if (metadata.size > MAX_IMAGE_BYTES) {
+    return 'Images must be under 750 KB';
+  }
+  if (metadata.width === undefined || metadata.height === undefined) return null;
+  if (
+    !Number.isInteger(metadata.width) ||
+    !Number.isInteger(metadata.height) ||
+    metadata.width <= 0 ||
+    metadata.height <= 0
+  ) {
+    return 'The image dimensions are invalid';
+  }
+  if (
+    metadata.width > MAX_IMAGE_DIMENSION ||
+    metadata.height > MAX_IMAGE_DIMENSION ||
+    metadata.width * metadata.height > MAX_IMAGE_PIXELS
+  ) {
+    return 'Images must be at most 4096px per side and 12 megapixels';
+  }
+  return null;
+}
 
 export type ElementMotion = {
   schemaVersion: typeof MOTION_SCHEMA_VERSION;
