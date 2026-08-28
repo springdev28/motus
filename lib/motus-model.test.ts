@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  CANVAS_HEIGHT,
+  CANVAS_WIDTH,
+  MIN_ELEMENT_HEIGHT,
+  MIN_ELEMENT_WIDTH,
   MOTION_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
   compileElementMotion,
+  constrainElementToCanvas,
   createDefaultProject,
   createPublicationRevision,
   detectImageFormat,
@@ -13,6 +18,63 @@ import {
   restoreProject,
   validateImageAsset,
 } from './motus-model.ts';
+
+void test('element geometry is constrained without mutating the source', () => {
+  const source = createDefaultProject().scenes[0].elements[0];
+  source.x = -80;
+  source.y = 2_000;
+  source.width = CANVAS_WIDTH + 400;
+  source.height = 0;
+  source.rotation = 450;
+  source.opacity = 4;
+
+  const constrained = constrainElementToCanvas(source);
+
+  assert.equal(source.x, -80);
+  assert.notEqual(constrained, source);
+  assert.deepEqual(
+    {
+      x: constrained.x,
+      y: constrained.y,
+      width: constrained.width,
+      height: constrained.height,
+      rotation: constrained.rotation,
+      opacity: constrained.opacity,
+    },
+    {
+      x: 0,
+      y: CANVAS_HEIGHT - MIN_ELEMENT_HEIGHT,
+      width: CANVAS_WIDTH,
+      height: MIN_ELEMENT_HEIGHT,
+      rotation: 180,
+      opacity: 1,
+    },
+  );
+});
+
+void test('restored drafts normalize invalid element geometry', () => {
+  const project = createDefaultProject();
+  const element = project.scenes[0].elements[0];
+  element.x = Number.NaN;
+  element.y = -20;
+  element.width = MIN_ELEMENT_WIDTH - 1;
+  element.height = CANVAS_HEIGHT + 1;
+  element.opacity = -1;
+
+  const restored = restoreProject(JSON.stringify(project));
+
+  assert.ok(restored);
+  assert.deepEqual(
+    {
+      x: restored.scenes[0].elements[0].x,
+      y: restored.scenes[0].elements[0].y,
+      width: restored.scenes[0].elements[0].width,
+      height: restored.scenes[0].elements[0].height,
+      opacity: restored.scenes[0].elements[0].opacity,
+    },
+    { x: 0, y: 0, width: MIN_ELEMENT_WIDTH, height: CANVAS_HEIGHT, opacity: 0 },
+  );
+});
 
 void test('motion compilation is deterministic and produces a final element state', () => {
   const element = createDefaultProject().scenes[0].elements[0];

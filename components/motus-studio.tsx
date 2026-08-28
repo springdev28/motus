@@ -52,8 +52,13 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  CANVAS_HEIGHT,
+  CANVAS_WIDTH,
+  MIN_ELEMENT_HEIGHT,
+  MIN_ELEMENT_WIDTH,
   cloneProject,
   compileElementMotion,
+  constrainElementToCanvas,
   createDefaultProject,
   createElement,
   createPublicationRevision,
@@ -76,8 +81,6 @@ const LEGACY_STORAGE_KEY = 'motus.project.v2';
 const DRAFT_SLOT_A_KEY = 'motus.project.slot.a.v4';
 const DRAFT_SLOT_B_KEY = 'motus.project.slot.b.v4';
 const DRAFT_POINTER_KEY = 'motus.project.active-slot.v4';
-const CANVAS_WIDTH = 1080;
-const CANVAS_HEIGHT = 1440;
 
 const sceneBackgrounds = [
   { name: 'Amethyst fog', value: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)' },
@@ -441,7 +444,10 @@ export function MotusStudio() {
   ) => {
     commitProject((draft) => {
       const element = findElement(draft, activeScene.id, elementId);
-      if (element) mutate(element);
+      if (element) {
+        mutate(element);
+        Object.assign(element, constrainElementToCanvas(element));
+      }
     });
   };
 
@@ -712,12 +718,13 @@ export function MotusStudio() {
         const target = findElement(next, activeScene.id, elementId);
         if (!target) return current;
         if (mode === 'move') {
-          target.x = Math.round(Math.max(0, Math.min(CANVAS_WIDTH - target.width, origin.x + deltaX)));
-          target.y = Math.round(Math.max(0, Math.min(CANVAS_HEIGHT - target.height, origin.y + deltaY)));
+          target.x = Math.round(origin.x + deltaX);
+          target.y = Math.round(origin.y + deltaY);
         } else {
-          target.width = Math.round(Math.max(60, Math.min(CANVAS_WIDTH - target.x, origin.width + deltaX)));
-          target.height = Math.round(Math.max(50, Math.min(CANVAS_HEIGHT - target.y, origin.height + deltaY)));
+          target.width = Math.round(origin.width + deltaX);
+          target.height = Math.round(origin.height + deltaY);
         }
+        Object.assign(target, constrainElementToCanvas(target));
         next.updatedAt = new Date().toISOString();
         return next;
       });
@@ -1025,7 +1032,7 @@ export function MotusStudio() {
                     ) : null}
                     <div className="property-grid">
                       {(['x', 'y', 'width', 'height'] as const).map((property) => (
-                        <label key={property}><span>{property.toUpperCase()}</span><Input min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item[property] = Math.max(0, Number(event.target.value)); })} type="number" value={Math.round(selectedElement[property])} /></label>
+                        <label key={property}><span>{property.toUpperCase()}</span><Input max={property === 'x' ? CANVAS_WIDTH - selectedElement.width : property === 'y' ? CANVAS_HEIGHT - selectedElement.height : property === 'width' ? CANVAS_WIDTH : CANVAS_HEIGHT} min={property === 'width' ? MIN_ELEMENT_WIDTH : property === 'height' ? MIN_ELEMENT_HEIGHT : 0} onChange={(event) => updateElement(selectedElement.id, (item) => { item[property] = Number(event.target.value); })} type="number" value={Math.round(selectedElement[property])} /></label>
                       ))}
                     </div>
                     <label className="range-control"><span>Rotation</span><output>{selectedElement.rotation}°</output><input max="180" min="-180" onChange={(event) => updateElement(selectedElement.id, (item) => { item.rotation = Number(event.target.value); })} type="range" value={selectedElement.rotation} /></label>

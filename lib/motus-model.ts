@@ -1,5 +1,9 @@
 export const PROJECT_SCHEMA_VERSION = 4 as const;
 export const MOTION_SCHEMA_VERSION = 1 as const;
+export const CANVAS_WIDTH = 1_080;
+export const CANVAS_HEIGHT = 1_440;
+export const MIN_ELEMENT_WIDTH = 60;
+export const MIN_ELEMENT_HEIGHT = 50;
 
 export type ElementType = 'shape' | 'text' | 'speech' | 'image';
 export type Easing = 'linear' | 'ease-out' | 'ease-in-out';
@@ -197,6 +201,27 @@ function migrateMotion(value: Partial<ElementMotion> | undefined): ElementMotion
   };
 }
 
+export function constrainElementToCanvas(
+  element: MotusElement,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): MotusElement {
+  const safeCanvasWidth = Math.max(MIN_ELEMENT_WIDTH, finite(canvasWidth, CANVAS_WIDTH));
+  const safeCanvasHeight = Math.max(MIN_ELEMENT_HEIGHT, finite(canvasHeight, CANVAS_HEIGHT));
+  const width = clamp(finite(element.width, MIN_ELEMENT_WIDTH), MIN_ELEMENT_WIDTH, safeCanvasWidth);
+  const height = clamp(finite(element.height, MIN_ELEMENT_HEIGHT), MIN_ELEMENT_HEIGHT, safeCanvasHeight);
+
+  return {
+    ...element,
+    x: clamp(finite(element.x, 0), 0, safeCanvasWidth - width),
+    y: clamp(finite(element.y, 0), 0, safeCanvasHeight - height),
+    width,
+    height,
+    rotation: clamp(finite(element.rotation, 0), -180, 180),
+    opacity: clamp(finite(element.opacity, 1), 0, 1),
+  };
+}
+
 export function compileElementMotion(element: MotusElement): CompiledElementMotion {
   const instruction = migrateMotion(element.motion);
   return {
@@ -234,7 +259,7 @@ export function createElement(
     image: 'Image',
   };
 
-  return {
+  return constrainElementToCanvas({
     id: `${type}-${Date.now()}-${index}`,
     name: `${labels[type]} ${index}`,
     type,
@@ -255,7 +280,7 @@ export function createElement(
     locked: false,
     motion: motion(80, 0, 900, 0.15),
     ...overrides,
-  };
+  });
 }
 
 const scene = (
@@ -441,6 +466,18 @@ export function restoreProject(value: string | null): MotusProject | null {
     }
 
     const restored = candidate as unknown as MotusProject;
+    const normalizeScenes = (scenes: MotusScene[]) =>
+      scenes.map((item) => ({
+        ...item,
+        elements: item.elements.map((element) =>
+          constrainElementToCanvas({
+            ...element,
+            visible: element.visible !== false,
+            locked: Boolean(element.locked),
+            motion: migrateMotion(element.motion),
+          }),
+        ),
+      }));
     const publications = Array.isArray(restored.publications)
       ? restored.publications.filter(
           (revision) =>
@@ -473,16 +510,11 @@ export function restoreProject(value: string | null): MotusProject | null {
           : 'all-ages',
       visibility: restored.visibility === 'public' ? 'public' : 'private',
       publishedRevision,
-      publications: structuredClone(publications),
-      scenes: restored.scenes.map((item) => ({
-        ...item,
-        elements: item.elements.map((element) => ({
-          ...element,
-          visible: element.visible !== false,
-          locked: Boolean(element.locked),
-          motion: migrateMotion(element.motion),
-        })),
+      publications: publications.map((revision) => ({
+        ...structuredClone(revision),
+        scenes: normalizeScenes(revision.scenes),
       })),
+      scenes: normalizeScenes(restored.scenes),
     };
   } catch {
     return null;
