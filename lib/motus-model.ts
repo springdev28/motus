@@ -290,6 +290,29 @@ export function cloneProject(project: MotusProject): MotusProject {
   return structuredClone(project);
 }
 
+export type RestoredDraft = {
+  source: string;
+  project: MotusProject;
+};
+
+export function restoreNewestProject(
+  candidates: Array<{ source: string; value: string | null }>,
+): RestoredDraft | null {
+  const restored = candidates.flatMap(({ source, value }) => {
+    const project = restoreProject(value);
+    return project ? [{ source, project }] : [];
+  });
+
+  return (
+    restored.sort((left, right) => {
+      const leftTime = Date.parse(left.project.updatedAt);
+      const rightTime = Date.parse(right.project.updatedAt);
+      return (Number.isFinite(rightTime) ? rightTime : 0) -
+        (Number.isFinite(leftTime) ? leftTime : 0);
+    })[0] ?? null
+  );
+}
+
 export function createPublicationRevision(
   project: MotusProject,
   createdAt = new Date().toISOString(),

@@ -7,6 +7,7 @@ import {
   compileElementMotion,
   createDefaultProject,
   createPublicationRevision,
+  restoreNewestProject,
   restoreProject,
 } from './motus-model.ts';
 
@@ -115,4 +116,33 @@ void test('version 3 drafts receive safe publication defaults', () => {
   assert.equal(restored.contentRating, 'all-ages');
   assert.equal(restored.visibility, 'private');
   assert.deepEqual(restored.publications, []);
+});
+
+void test('draft recovery selects the newest valid journal slot', () => {
+  const older = createDefaultProject();
+  older.title = 'Older valid draft';
+  older.updatedAt = '2026-08-29T00:01:00.000Z';
+  const newer = createDefaultProject();
+  newer.title = 'Newest valid draft';
+  newer.updatedAt = '2026-08-29T00:02:00.000Z';
+
+  const restored = restoreNewestProject([
+    { source: 'corrupt', value: '{bad json' },
+    { source: 'slot-a', value: JSON.stringify(older) },
+    { source: 'slot-b', value: JSON.stringify(newer) },
+  ]);
+
+  assert.ok(restored);
+  assert.equal(restored.source, 'slot-b');
+  assert.equal(restored.project.title, 'Newest valid draft');
+});
+
+void test('draft recovery returns null when every candidate is invalid', () => {
+  assert.equal(
+    restoreNewestProject([
+      { source: 'empty', value: null },
+      { source: 'corrupt', value: 'not json' },
+    ]),
+    null,
+  );
 });

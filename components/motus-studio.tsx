@@ -55,6 +55,7 @@ import {
   createDefaultProject,
   createElement,
   createPublicationRevision,
+  restoreNewestProject,
   restoreProject,
   type ContentRating,
   type Easing,
@@ -66,7 +67,10 @@ import {
   type PublicationVisibility,
 } from '@/lib/motus-model';
 
-const STORAGE_KEY = 'motus.project.v2';
+const LEGACY_STORAGE_KEY = 'motus.project.v2';
+const DRAFT_SLOT_A_KEY = 'motus.project.slot.a.v4';
+const DRAFT_SLOT_B_KEY = 'motus.project.slot.b.v4';
+const DRAFT_POINTER_KEY = 'motus.project.active-slot.v4';
 const CANVAS_WIDTH = 1080;
 const CANVAS_HEIGHT = 1440;
 
@@ -255,16 +259,40 @@ export function MotusStudio() {
     [activeScene.elements, selectedElementId],
   );
 
+  function persistProject(candidate: MotusProject, announce = true) {
+    try {
+      const activeSlot = window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
+      const nextSlot = activeSlot === 'a' ? 'b' : 'a';
+      const nextKey = nextSlot === 'a' ? DRAFT_SLOT_A_KEY : DRAFT_SLOT_B_KEY;
+      const encoded = JSON.stringify(candidate);
+
+      window.localStorage.setItem(nextKey, encoded);
+      if (!restoreProject(window.localStorage.getItem(nextKey))) {
+        throw new Error('Draft verification failed');
+      }
+      window.localStorage.setItem(DRAFT_POINTER_KEY, nextSlot);
+      if (announce) setNotice('Saved with recovery');
+      return true;
+    } catch {
+      if (announce) setNotice('Save failed — export a backup');
+      return false;
+    }
+  }
+
   useEffect(() => {
     let active = true;
     queueMicrotask(() => {
       if (!active) return;
-      const saved = restoreProject(window.localStorage.getItem(STORAGE_KEY));
-      if (saved) {
-        setProject(saved);
-        setActiveSceneId(saved.scenes[0].id);
-        setSelectedElementId(saved.scenes[0].elements.at(-1)?.id ?? '');
-        setNotice('Draft restored');
+      const restored = restoreNewestProject([
+        { source: 'legacy', value: window.localStorage.getItem(LEGACY_STORAGE_KEY) },
+        { source: 'slot-a', value: window.localStorage.getItem(DRAFT_SLOT_A_KEY) },
+        { source: 'slot-b', value: window.localStorage.getItem(DRAFT_SLOT_B_KEY) },
+      ]);
+      if (restored) {
+        setProject(restored.project);
+        setActiveSceneId(restored.project.scenes[0].id);
+        setSelectedElementId(restored.project.scenes[0].elements.at(-1)?.id ?? '');
+        setNotice(restored.source === 'legacy' ? 'Legacy draft recovered' : 'Saved draft recovered');
       }
       setHydrated(true);
     });
@@ -276,10 +304,18 @@ export function MotusStudio() {
   useEffect(() => {
     if (!hydrated) return;
     const timer = window.setTimeout(() => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
-      setNotice('Saved locally');
+      persistProject(project);
     }, 180);
     return () => window.clearTimeout(timer);
+  }, [hydrated, project]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const flush = () => {
+      persistProject(project, false);
+    };
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
   }, [hydrated, project]);
 
   const commitProject = (mutate: (draft: MotusProject) => void) => {
@@ -661,7 +697,7 @@ export function MotusStudio() {
         />
 
         <div className="topbar-actions">
-          <span className="save-state"><Cloud />{notice}</span>
+          <button className="save-state" onClick={() => persistProject(project)} title="Save draft now" type="button"><Cloud />{notice}</button>
           <Button aria-label="Undo" onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
           <Button aria-label="Redo" onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
           <Button onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
