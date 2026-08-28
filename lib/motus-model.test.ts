@@ -15,6 +15,7 @@ import {
   detectImageFormat,
   reorderScenes,
   restoreNewestProject,
+  restorePublicationToDraft,
   restoreProject,
   validateImageAsset,
 } from './motus-model.ts';
@@ -157,6 +158,31 @@ void test('published revisions remain immutable when the draft changes', () => {
   assert.equal(revision.title, 'Signal in the Fog');
   assert.deepEqual(revision.tags, ['science fiction', 'mystery']);
   assert.equal(revision.scenes[0].elements[0].text, 'Something moved beyond the fog.');
+});
+
+void test('a published revision can be recovered as a new editable draft', () => {
+  const project = createDefaultProject();
+  const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+  project.publications.push(revision);
+  project.publishedRevision = revision.revision;
+  project.title = 'Later draft';
+  project.scenes[0].elements[0].text = 'Later scene copy';
+
+  const restored = restorePublicationToDraft(
+    project,
+    revision.id,
+    '2026-08-29T01:00:00.000Z',
+  );
+
+  assert.ok(restored);
+  assert.equal(restored.title, revision.title);
+  assert.equal(restored.scenes[0].elements[0].text, revision.scenes[0].elements[0].text);
+  assert.equal(restored.updatedAt, '2026-08-29T01:00:00.000Z');
+  assert.equal(restored.publishedRevision, 1);
+  assert.equal(restored.publications.length, 1);
+  restored.scenes[0].elements[0].text = 'Editable restored scene';
+  assert.equal(revision.scenes[0].elements[0].text, 'Something moved beyond the fog.');
+  assert.equal(restorePublicationToDraft(project, 'missing-revision'), null);
 });
 
 void test('version 3 drafts receive safe publication defaults', () => {

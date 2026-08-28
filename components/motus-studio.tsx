@@ -30,6 +30,7 @@ import {
   Play,
   Plus,
   Redo2,
+  RotateCcw,
   Send,
   Sparkles,
   Square,
@@ -65,6 +66,7 @@ import {
   detectImageFormat,
   reorderScenes,
   restoreNewestProject,
+  restorePublicationToDraft,
   restoreProject,
   validateImageAsset,
   type ContentRating,
@@ -691,6 +693,21 @@ export function MotusStudio() {
     setNotice(`Revision ${revision.revision} published`);
   };
 
+  const restoreRevision = (revision: MotusPublicationRevision) => {
+    const restored = restorePublicationToDraft(project, revision.id, nowIso());
+    if (!restored) {
+      setNotice('Revision could not be restored');
+      return;
+    }
+    undoStack.current = [...undoStack.current, cloneProject(project)].slice(-50);
+    redoStack.current = [];
+    setProject(restored);
+    setActiveSceneId(restored.scenes[0].id);
+    setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
+    setPublishOpen(false);
+    setNotice(`Revision ${revision.revision} restored to draft`);
+  };
+
   const beginPointerAction = (
     event: ReactPointerEvent<HTMLElement>,
     elementId: string,
@@ -1162,7 +1179,10 @@ export function MotusStudio() {
                         <strong>Revision {revision.revision}</strong>
                         <small>{revision.createdAt.slice(0, 16).replace('T', ' ')} · {revision.scenes.length} scenes</small>
                       </div>
-                      <Button onClick={() => { setPublishOpen(false); openReader(revision); }} size="sm" variant="outline">View</Button>
+                      <div className="revision-actions">
+                        <Button onClick={() => { setPublishOpen(false); openReader(revision); }} size="sm" variant="outline">View</Button>
+                        <Button aria-label={`Restore revision ${revision.revision} as the editable draft`} onClick={() => restoreRevision(revision)} size="sm" variant="outline"><RotateCcw />Restore</Button>
+                      </div>
                     </div>
                   ))}
                 </div>

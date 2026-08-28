@@ -401,6 +401,8 @@
 .revision-row > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .revision-row strong { font-size: 10px; }
 .revision-row small { color: #827b87; font-family: var(--font-mono); font-size: 8px; }
+.revision-actions { display: flex; flex: none; gap: 5px; }
+.revision-actions svg { width: 12px; height: 12px; }
 .publish-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-top: 1px solid #e2dcd5; padding-top: 14px; }
 .publish-actions span { color: #77707c; font-family: var(--font-mono); font-size: 9px; }
 

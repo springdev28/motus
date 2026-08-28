@@ -431,6 +431,26 @@ export function createPublicationRevision(
   };
 }
 
+export function restorePublicationToDraft(
+  project: MotusProject,
+  revisionId: string,
+  updatedAt = new Date().toISOString(),
+): MotusProject | null {
+  const revision = project.publications.find((item) => item.id === revisionId);
+  if (!revision) return null;
+
+  const restored = cloneProject(project);
+  restored.title = revision.title;
+  restored.description = revision.description;
+  restored.tags = [...revision.tags];
+  restored.language = revision.language;
+  restored.contentRating = revision.contentRating;
+  restored.visibility = revision.visibility;
+  restored.scenes = structuredClone(revision.scenes);
+  restored.updatedAt = updatedAt;
+  return restored;
+}
+
 export function restoreProject(value: string | null): MotusProject | null {
   if (!value) return null;
 
