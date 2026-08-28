@@ -67,6 +67,7 @@ import {
   createProjectBackupFileName,
   createPublicationRevision,
   detectImageFormat,
+  recordProjectHistory,
   reorderScenes,
   restoreNewestProject,
   restorePublicationToDraft,
@@ -358,8 +359,11 @@ export function MotusStudio() {
     useState<MotusPublicationRevision | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [notice, setNotice] = useState('Ready');
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
   const undoStack = useRef<MotusProject[]>([]);
   const redoStack = useRef<MotusProject[]>([]);
+  const historyTransaction = useRef<string | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
 
@@ -433,9 +437,23 @@ export function MotusStudio() {
     return () => window.removeEventListener('pagehide', flush);
   }, [hydrated, project]);
 
-  const commitProject = (mutate: (draft: MotusProject) => void) => {
+  const commitProject = (
+    mutate: (draft: MotusProject) => void,
+    transactionKey: string | null = null,
+  ) => {
+    setCanUndo(true);
+    setCanRedo(false);
     setProject((current) => {
-      undoStack.current = [...undoStack.current, cloneProject(current)].slice(-50);
+      const history = recordProjectHistory(
+        {
+          undoStack: undoStack.current,
+          transactionKey: historyTransaction.current,
+        },
+        current,
+        transactionKey,
+      );
+      undoStack.current = history.undoStack;
+      historyTransaction.current = history.transactionKey;
       redoStack.current = [];
       const next = cloneProject(current);
       mutate(next);
@@ -447,6 +465,7 @@ export function MotusStudio() {
   const updateElement = (
     elementId: string,
     mutate: (element: MotusElement) => void,
+    transactionKey: string | null = null,
   ) => {
     commitProject((draft) => {
       const element = findElement(draft, activeScene.id, elementId);
@@ -454,12 +473,19 @@ export function MotusStudio() {
         mutate(element);
         Object.assign(element, constrainElementToCanvas(element));
       }
-    });
+    }, transactionKey);
+  };
+
+  const endHistoryTransaction = () => {
+    historyTransaction.current = null;
   };
 
   const undo = () => {
+    endHistoryTransaction();
     const previous = undoStack.current.pop();
     if (!previous) return;
+    setCanUndo(undoStack.current.length > 0);
+    setCanRedo(true);
     setProject((current) => {
       redoStack.current.push(cloneProject(current));
       return previous;
@@ -468,8 +494,11 @@ export function MotusStudio() {
   };
 
   const redo = () => {
+    endHistoryTransaction();
     const next = redoStack.current.pop();
     if (!next) return;
+    setCanUndo(true);
+    setCanRedo(redoStack.current.length > 0);
     setProject((current) => {
       undoStack.current.push(cloneProject(current));
       return next;
@@ -594,6 +623,9 @@ export function MotusStudio() {
       }
       undoStack.current = [cloneProject(project)];
       redoStack.current = [];
+      endHistoryTransaction();
+      setCanUndo(true);
+      setCanRedo(false);
       setProject(restored);
       setActiveSceneId(restored.scenes[0].id);
       setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
@@ -688,6 +720,9 @@ export function MotusStudio() {
 
     undoStack.current = [cloneProject(project)];
     redoStack.current = [];
+    endHistoryTransaction();
+    setCanUndo(true);
+    setCanRedo(false);
     setProject(blank);
     setActiveSceneId(blank.scenes[0].id);
     setSelectedElementId('');
@@ -728,6 +763,9 @@ export function MotusStudio() {
     }
     undoStack.current = [...undoStack.current, cloneProject(project)].slice(-50);
     redoStack.current = [];
+    endHistoryTransaction();
+    setCanUndo(true);
+    setCanRedo(false);
     setProject(restored);
     setActiveSceneId(restored.scenes[0].id);
     setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
@@ -747,14 +785,21 @@ export function MotusStudio() {
     event.stopPropagation();
     setSelectedElementId(elementId);
 
-    undoStack.current = [...undoStack.current, cloneProject(project)].slice(-50);
-    redoStack.current = [];
     const bounds = artboard.getBoundingClientRect();
     const startX = event.clientX;
     const startY = event.clientY;
     const origin = { x: element.x, y: element.y, width: element.width, height: element.height };
+    let moved = false;
 
     const onMove = (pointer: PointerEvent) => {
+      if (!moved) {
+        undoStack.current = [...undoStack.current, cloneProject(project)].slice(-50);
+        redoStack.current = [];
+        endHistoryTransaction();
+        setCanUndo(true);
+        setCanRedo(false);
+        moved = true;
+      }
       const deltaX = ((pointer.clientX - startX) / bounds.width) * CANVAS_WIDTH;
       const deltaY = ((pointer.clientY - startY) / bounds.height) * CANVAS_HEIGHT;
       setProject((current) => {
@@ -777,7 +822,7 @@ export function MotusStudio() {
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      setNotice(mode === 'move' ? 'Element moved' : 'Element resized');
+      if (moved) setNotice(mode === 'move' ? 'Element moved' : 'Element resized');
     };
 
     window.addEventListener('pointermove', onMove);
@@ -841,6 +886,12 @@ export function MotusStudio() {
   const artboardWidth = Math.round(430 * (zoom / 64));
   const readerScenes = readerRevision?.scenes ?? project.scenes;
   const readerTitle = readerRevision?.title ?? project.title;
+  const textHistoryProps = { onBlur: endHistoryTransaction };
+  const continuousHistoryProps = {
+    onBlur: endHistoryTransaction,
+    onPointerCancel: endHistoryTransaction,
+    onPointerUp: endHistoryTransaction,
+  };
 
   return (
     <main className="studio-shell">
@@ -873,12 +924,13 @@ export function MotusStudio() {
         </div>
 
         <Input
+          {...textHistoryProps}
           aria-label="Project title"
           className="project-title-input"
           onChange={(event) =>
             commitProject((draft) => {
               draft.title = event.target.value;
-            })
+            }, 'project:title')
           }
           value={project.title}
         />
@@ -886,8 +938,8 @@ export function MotusStudio() {
         <div className="topbar-actions">
           <button className="save-state" onClick={() => persistProject(project)} title="Save draft now" type="button"><Cloud />{notice}</button>
           <Button aria-label="Start a new work" onClick={() => setNewWorkOpen(true)} size="icon" variant="outline"><FilePlus2 /></Button>
-          <Button aria-label="Undo" onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
-          <Button aria-label="Redo" onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
+          <Button aria-label="Undo" disabled={!canUndo} onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
+          <Button aria-label="Redo" disabled={!canRedo} onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
           <Button onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
             <Play data-icon="inline-start" fill="currentColor" />Preview
           </Button>
@@ -927,11 +979,12 @@ export function MotusStudio() {
             <label htmlFor="active-scene-name">
               <span>Scene name</span>
               <Input
+                {...textHistoryProps}
                 id="active-scene-name"
                 onChange={(event) => commitProject((draft) => {
                   const scene = draft.scenes.find((item) => item.id === activeScene.id);
                   if (scene) scene.name = event.target.value;
-                })}
+                }, `scene:${activeScene.id}:name`)}
                 value={activeScene.name}
               />
             </label>
@@ -1068,20 +1121,20 @@ export function MotusStudio() {
 
                 {inspectorTab === 'design' ? (
                   <div className="property-stack">
-                    <label htmlFor="selected-layer-name"><span>Layer name</span><Input id="selected-layer-name" onChange={(event) => updateElement(selectedElement.id, (item) => { item.name = event.target.value; })} value={selectedElement.name} /></label>
+                    <label htmlFor="selected-layer-name"><span>Layer name</span><Input {...textHistoryProps} id="selected-layer-name" onChange={(event) => updateElement(selectedElement.id, (item) => { item.name = event.target.value; }, `element:${selectedElement.id}:name`)} value={selectedElement.name} /></label>
                     {(selectedElement.type === 'text' || selectedElement.type === 'speech') ? (
-                      <label htmlFor="selected-layer-text"><span>Text</span><Textarea id="selected-layer-text" onChange={(event) => updateElement(selectedElement.id, (item) => { item.text = event.target.value; })} value={selectedElement.text ?? ''} /></label>
+                      <label htmlFor="selected-layer-text"><span>Text</span><Textarea {...textHistoryProps} id="selected-layer-text" onChange={(event) => updateElement(selectedElement.id, (item) => { item.text = event.target.value; }, `element:${selectedElement.id}:text`)} value={selectedElement.text ?? ''} /></label>
                     ) : null}
                     {selectedElement.type !== 'image' ? (
-                      <label className="color-control"><span>Color</span><input aria-label="Element color" onChange={(event) => updateElement(selectedElement.id, (item) => { item.fill = event.target.value; })} type="color" value={selectedElement.fill} /><output>{selectedElement.fill}</output></label>
+                      <label className="color-control"><span>Color</span><input {...continuousHistoryProps} aria-label="Element color" onChange={(event) => updateElement(selectedElement.id, (item) => { item.fill = event.target.value; }, `element:${selectedElement.id}:fill`)} type="color" value={selectedElement.fill} /><output>{selectedElement.fill}</output></label>
                     ) : null}
                     <div className="property-grid">
                       {(['x', 'y', 'width', 'height'] as const).map((property) => (
-                        <label key={property}><span>{property.toUpperCase()}</span><Input max={property === 'x' ? CANVAS_WIDTH - selectedElement.width : property === 'y' ? CANVAS_HEIGHT - selectedElement.height : property === 'width' ? CANVAS_WIDTH : CANVAS_HEIGHT} min={property === 'width' ? MIN_ELEMENT_WIDTH : property === 'height' ? MIN_ELEMENT_HEIGHT : 0} onChange={(event) => updateElement(selectedElement.id, (item) => { item[property] = Number(event.target.value); })} type="number" value={Math.round(selectedElement[property])} /></label>
+                        <label key={property}><span>{property.toUpperCase()}</span><Input {...continuousHistoryProps} max={property === 'x' ? CANVAS_WIDTH - selectedElement.width : property === 'y' ? CANVAS_HEIGHT - selectedElement.height : property === 'width' ? CANVAS_WIDTH : CANVAS_HEIGHT} min={property === 'width' ? MIN_ELEMENT_WIDTH : property === 'height' ? MIN_ELEMENT_HEIGHT : 0} onChange={(event) => updateElement(selectedElement.id, (item) => { item[property] = Number(event.target.value); }, `element:${selectedElement.id}:${property}`)} type="number" value={Math.round(selectedElement[property])} /></label>
                       ))}
                     </div>
-                    <label className="range-control"><span>Rotation</span><output>{selectedElement.rotation}°</output><input max="180" min="-180" onChange={(event) => updateElement(selectedElement.id, (item) => { item.rotation = Number(event.target.value); })} type="range" value={selectedElement.rotation} /></label>
-                    <label className="range-control"><span>Opacity</span><output>{Math.round(selectedElement.opacity * 100)}%</output><input max="100" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.opacity = Number(event.target.value) / 100; })} type="range" value={Math.round(selectedElement.opacity * 100)} /></label>
+                    <label className="range-control"><span>Rotation</span><output>{selectedElement.rotation}°</output><input {...continuousHistoryProps} max="180" min="-180" onChange={(event) => updateElement(selectedElement.id, (item) => { item.rotation = Number(event.target.value); }, `element:${selectedElement.id}:rotation`)} type="range" value={selectedElement.rotation} /></label>
+                    <label className="range-control"><span>Opacity</span><output>{Math.round(selectedElement.opacity * 100)}%</output><input {...continuousHistoryProps} max="100" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.opacity = Number(event.target.value) / 100; }, `element:${selectedElement.id}:opacity`)} type="range" value={Math.round(selectedElement.opacity * 100)} /></label>
                     <div className="visibility-row">
                       <Button onClick={() => updateElement(selectedElement.id, (item) => { item.visible = !item.visible; })} variant="outline">{selectedElement.visible ? <Eye /> : <EyeOff />}{selectedElement.visible ? 'Visible' : 'Hidden'}</Button>
                       <Button onClick={() => updateElement(selectedElement.id, (item) => { item.locked = !item.locked; })} variant="outline">{selectedElement.locked ? <Lock /> : <Unlock />}{selectedElement.locked ? 'Locked' : 'Unlocked'}</Button>
@@ -1091,13 +1144,13 @@ export function MotusStudio() {
                   <div className="property-stack motion-properties">
                     <div className="motion-summary"><span className="motion-number">01</span><div><small>WHEN</small><strong>Scene enters view</strong></div></div>
                     <div className="motion-summary motion-action"><span className="motion-number">02</span><div><small>MOTION + LOOKS</small><strong>Move · rotate · scale · fade</strong></div></div>
-                    <label className="range-control"><span>Move X</span><output>{selectedElement.motion.moveX}px</output><input max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveX = Number(event.target.value); })} type="range" value={selectedElement.motion.moveX} /></label>
-                    <label className="range-control"><span>Move Y</span><output>{selectedElement.motion.moveY}px</output><input max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveY = Number(event.target.value); })} type="range" value={selectedElement.motion.moveY} /></label>
-                    <label className="range-control"><span>Rotate from</span><output>{selectedElement.motion.fromRotation}°</output><input max="180" min="-180" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromRotation = Number(event.target.value); })} type="range" value={selectedElement.motion.fromRotation} /></label>
-                    <label className="range-control"><span>Scale from</span><output>{selectedElement.motion.fromScale.toFixed(2)}×</output><input max="200" min="20" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromScale = Number(event.target.value) / 100; })} type="range" value={Math.round(selectedElement.motion.fromScale * 100)} /></label>
-                    <label className="range-control"><span>Duration</span><output>{(selectedElement.motion.durationMs / 1000).toFixed(1)}s</output><input max="4000" min="200" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.durationMs = Number(event.target.value); })} step="100" type="range" value={selectedElement.motion.durationMs} /></label>
-                    <label className="range-control"><span>Delay</span><output>{(selectedElement.motion.delayMs / 1000).toFixed(1)}s</output><input max="3000" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.delayMs = Number(event.target.value); })} step="100" type="range" value={selectedElement.motion.delayMs} /></label>
-                    <label className="range-control"><span>Start opacity</span><output>{Math.round(selectedElement.motion.fromOpacity * 100)}%</output><input max="100" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromOpacity = Number(event.target.value) / 100; })} type="range" value={Math.round(selectedElement.motion.fromOpacity * 100)} /></label>
+                    <label className="range-control"><span>Move X</span><output>{selectedElement.motion.moveX}px</output><input {...continuousHistoryProps} max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveX = Number(event.target.value); }, `element:${selectedElement.id}:motion:move-x`)} type="range" value={selectedElement.motion.moveX} /></label>
+                    <label className="range-control"><span>Move Y</span><output>{selectedElement.motion.moveY}px</output><input {...continuousHistoryProps} max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveY = Number(event.target.value); }, `element:${selectedElement.id}:motion:move-y`)} type="range" value={selectedElement.motion.moveY} /></label>
+                    <label className="range-control"><span>Rotate from</span><output>{selectedElement.motion.fromRotation}°</output><input {...continuousHistoryProps} max="180" min="-180" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromRotation = Number(event.target.value); }, `element:${selectedElement.id}:motion:rotation`)} type="range" value={selectedElement.motion.fromRotation} /></label>
+                    <label className="range-control"><span>Scale from</span><output>{selectedElement.motion.fromScale.toFixed(2)}×</output><input {...continuousHistoryProps} max="200" min="20" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromScale = Number(event.target.value) / 100; }, `element:${selectedElement.id}:motion:scale`)} type="range" value={Math.round(selectedElement.motion.fromScale * 100)} /></label>
+                    <label className="range-control"><span>Duration</span><output>{(selectedElement.motion.durationMs / 1000).toFixed(1)}s</output><input {...continuousHistoryProps} max="4000" min="200" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.durationMs = Number(event.target.value); }, `element:${selectedElement.id}:motion:duration`)} step="100" type="range" value={selectedElement.motion.durationMs} /></label>
+                    <label className="range-control"><span>Delay</span><output>{(selectedElement.motion.delayMs / 1000).toFixed(1)}s</output><input {...continuousHistoryProps} max="3000" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.delayMs = Number(event.target.value); }, `element:${selectedElement.id}:motion:delay`)} step="100" type="range" value={selectedElement.motion.delayMs} /></label>
+                    <label className="range-control"><span>Start opacity</span><output>{Math.round(selectedElement.motion.fromOpacity * 100)}%</output><input {...continuousHistoryProps} max="100" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromOpacity = Number(event.target.value) / 100; }, `element:${selectedElement.id}:motion:opacity`)} type="range" value={Math.round(selectedElement.motion.fromOpacity * 100)} /></label>
                     <label htmlFor="selected-layer-easing"><span>Easing</span><NativeSelect className="w-full" id="selected-layer-easing" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.easing = event.target.value as Easing; })} value={selectedElement.motion.easing}><NativeSelectOption value="linear">Linear</NativeSelectOption><NativeSelectOption value="ease-out">Ease out</NativeSelectOption><NativeSelectOption value="ease-in-out">Ease in/out</NativeSelectOption></NativeSelect></label>
                     <Button className="run-motion-button" onClick={() => setPreviewKey((key) => key + 1)}><Play fill="currentColor" />Run animation</Button>
                   </div>
@@ -1166,8 +1219,9 @@ export function MotusStudio() {
             <label className="publish-field" htmlFor="publish-description">
               <span>Description</span>
               <Textarea
+                {...textHistoryProps}
                 id="publish-description"
-                onChange={(event) => commitProject((draft) => { draft.description = event.target.value; })}
+                onChange={(event) => commitProject((draft) => { draft.description = event.target.value; }, 'project:description')}
                 placeholder="What should readers know before they begin?"
                 value={project.description}
               />
@@ -1175,10 +1229,11 @@ export function MotusStudio() {
             <label className="publish-field" htmlFor="publish-tags">
               <span>Tags</span>
               <Input
+                {...textHistoryProps}
                 id="publish-tags"
                 onChange={(event) => commitProject((draft) => {
                   draft.tags = event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 8);
-                })}
+                }, 'project:tags')}
                 placeholder="mystery, science fiction"
                 value={project.tags.join(', ')}
               />

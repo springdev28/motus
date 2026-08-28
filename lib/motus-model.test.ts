@@ -15,10 +15,12 @@ import {
   createProjectBackupFileName,
   createPublicationRevision,
   detectImageFormat,
+  recordProjectHistory,
   reorderScenes,
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
+  type ProjectHistoryState,
   validateImageAsset,
 } from './motus-model.ts';
 
@@ -44,6 +46,27 @@ void test('project backup names are portable and never empty', () => {
     createProjectBackupFileName({ id: 'fallback', title: '✨' }),
     'untitled-work.motus.json',
   );
+});
+
+void test('continuous edit gestures occupy one undo history entry', () => {
+  const project = createDefaultProject();
+  let history: ProjectHistoryState = { undoStack: [], transactionKey: null };
+
+  history = recordProjectHistory(history, project, 'project:title');
+  project.title = 'S';
+  history = recordProjectHistory(history, project, 'project:title');
+  project.title = 'Signal';
+
+  assert.equal(history.undoStack.length, 1);
+  assert.equal(history.undoStack[0].title, 'Signal in the Fog');
+
+  history = recordProjectHistory(history, project, 'project:description');
+  assert.equal(history.undoStack.length, 2);
+  assert.equal(history.undoStack[1].title, 'Signal');
+
+  history = recordProjectHistory(history, project);
+  history = recordProjectHistory(history, project);
+  assert.equal(history.undoStack.length, 4);
 });
 
 void test('element geometry is constrained without mutating the source', () => {

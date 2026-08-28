@@ -416,6 +416,27 @@ export function cloneProject(project: MotusProject): MotusProject {
   return structuredClone(project);
 }
 
+export type ProjectHistoryState = {
+  undoStack: MotusProject[];
+  transactionKey: string | null;
+};
+
+export function recordProjectHistory(
+  history: ProjectHistoryState,
+  project: MotusProject,
+  transactionKey: string | null = null,
+  limit = 50,
+): ProjectHistoryState {
+  const shouldCapture =
+    transactionKey === null || history.transactionKey !== transactionKey;
+  return {
+    undoStack: shouldCapture
+      ? [...history.undoStack, cloneProject(project)].slice(-Math.max(1, limit))
+      : history.undoStack,
+    transactionKey,
+  };
+}
+
 export function reorderScenes(
   scenes: MotusScene[],
   sceneId: string,
