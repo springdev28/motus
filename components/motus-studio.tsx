@@ -10,6 +10,8 @@ import {
 } from 'react';
 import {
   ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ArrowUp,
   Circle,
   Cloud,
@@ -55,6 +57,7 @@ import {
   createDefaultProject,
   createElement,
   createPublicationRevision,
+  reorderScenes,
   restoreNewestProject,
   restoreProject,
   type ContentRating,
@@ -73,6 +76,14 @@ const DRAFT_SLOT_B_KEY = 'motus.project.slot.b.v4';
 const DRAFT_POINTER_KEY = 'motus.project.active-slot.v4';
 const CANVAS_WIDTH = 1080;
 const CANVAS_HEIGHT = 1440;
+
+const sceneBackgrounds = [
+  { name: 'Amethyst fog', value: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)' },
+  { name: 'Rose crossing', value: 'linear-gradient(155deg, #38284c 0%, #1c1729 54%, #7d4e61 100%)' },
+  { name: 'Tidal signal', value: 'linear-gradient(155deg, #22293b 0%, #101d28 54%, #315a63 100%)' },
+  { name: 'Ember night', value: 'linear-gradient(155deg, #3d231e 0%, #1d1518 54%, #6b3d2d 100%)' },
+  { name: 'Electric dusk', value: 'linear-gradient(155deg, #1f2850 0%, #121526 54%, #55438b 100%)' },
+] as const;
 
 function uniqueId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -454,6 +465,18 @@ export function MotusStudio() {
     });
   };
 
+  const moveScene = (direction: -1 | 1) => {
+    const targetIndex = sceneIndex + direction;
+    if (targetIndex < 0 || targetIndex >= project.scenes.length) {
+      setNotice('Scene is already at the edge');
+      return;
+    }
+    commitProject((draft) => {
+      draft.scenes = reorderScenes(draft.scenes, activeScene.id, direction);
+    });
+    setNotice(direction < 0 ? 'Scene moved earlier' : 'Scene moved later');
+  };
+
   const runTool = (toolId: string) => {
     setActiveTool(toolId);
     if (toolId === 'select') return;
@@ -795,6 +818,36 @@ export function MotusStudio() {
             <Button aria-label="Add shape" onClick={() => addElement('shape')} size="icon-sm" variant="outline"><Plus /></Button>
           </div>
 
+          <div className="scene-settings">
+            <label htmlFor="active-scene-name">
+              <span>Scene name</span>
+              <Input
+                id="active-scene-name"
+                onChange={(event) => commitProject((draft) => {
+                  const scene = draft.scenes.find((item) => item.id === activeScene.id);
+                  if (scene) scene.name = event.target.value;
+                })}
+                value={activeScene.name}
+              />
+            </label>
+            <fieldset className="scene-palette">
+              <legend className="sr-only">Scene background</legend>
+              {sceneBackgrounds.map((background) => (
+                <button
+                  aria-label={`Use ${background.name} background`}
+                  data-active={activeScene.background === background.value || undefined}
+                  key={background.name}
+                  onClick={() => commitProject((draft) => {
+                    const scene = draft.scenes.find((item) => item.id === activeScene.id);
+                    if (scene) scene.background = background.value;
+                  })}
+                  style={{ background: background.value }}
+                  type="button"
+                />
+              ))}
+            </fieldset>
+          </div>
+
           <div className="layer-list">
             {[...activeScene.elements].reverse().map((element) => {
               const Icon = elementIcon(element.type);
@@ -883,6 +936,8 @@ export function MotusStudio() {
               </button>
             ))}
             <Button className="scene-action" onClick={addScene} variant="outline"><Plus />New</Button>
+            <Button aria-label="Move scene earlier" className="scene-icon-action" disabled={sceneIndex === 0} onClick={() => moveScene(-1)} size="icon" variant="outline"><ArrowLeft /></Button>
+            <Button aria-label="Move scene later" className="scene-icon-action" disabled={sceneIndex === project.scenes.length - 1} onClick={() => moveScene(1)} size="icon" variant="outline"><ArrowRight /></Button>
             <Button aria-label="Duplicate scene" className="scene-icon-action" onClick={duplicateScene} size="icon" variant="outline"><Copy /></Button>
             <Button aria-label="Delete scene" className="scene-icon-action" onClick={deleteScene} size="icon" variant="destructive"><Trash2 /></Button>
           </footer>

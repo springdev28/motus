@@ -290,6 +290,19 @@ export function cloneProject(project: MotusProject): MotusProject {
   return structuredClone(project);
 }
 
+export function reorderScenes(
+  scenes: MotusScene[],
+  sceneId: string,
+  direction: -1 | 1,
+): MotusScene[] {
+  const ordered = [...scenes];
+  const index = ordered.findIndex((scene) => scene.id === sceneId);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= ordered.length) return ordered;
+  [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+  return ordered;
+}
+
 export type RestoredDraft = {
   source: string;
   project: MotusProject;

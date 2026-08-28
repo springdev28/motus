@@ -7,6 +7,7 @@ import {
   compileElementMotion,
   createDefaultProject,
   createPublicationRevision,
+  reorderScenes,
   restoreNewestProject,
   restoreProject,
 } from './motus-model.ts';
@@ -144,5 +145,31 @@ void test('draft recovery returns null when every candidate is invalid', () => {
       { source: 'corrupt', value: 'not json' },
     ]),
     null,
+  );
+});
+
+void test('scene ordering moves one scene without mutating the source list', () => {
+  const scenes = createDefaultProject().scenes;
+  const originalOrder = scenes.map((scene) => scene.id);
+  const reordered = reorderScenes(scenes, 'scene-2', -1);
+
+  assert.deepEqual(originalOrder, ['scene-1', 'scene-2', 'scene-3']);
+  assert.deepEqual(reordered.map((scene) => scene.id), [
+    'scene-2',
+    'scene-1',
+    'scene-3',
+  ]);
+  assert.notEqual(reordered, scenes);
+});
+
+void test('scene ordering keeps boundary scenes in place', () => {
+  const scenes = createDefaultProject().scenes;
+  assert.deepEqual(
+    reorderScenes(scenes, 'scene-1', -1).map((scene) => scene.id),
+    ['scene-1', 'scene-2', 'scene-3'],
+  );
+  assert.deepEqual(
+    reorderScenes(scenes, 'scene-3', 1).map((scene) => scene.id),
+    ['scene-1', 'scene-2', 'scene-3'],
   );
 });
