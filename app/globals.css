@@ -259,6 +259,17 @@
 .workspace-toolbar { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #c9c3c1; background: rgb(238 235 231 / 94%); padding: 0 14px; }
 .canvas-status { gap: 6px; color: #716a76; font-size: 9px; font-weight: 650; }
 .canvas-status svg { width: 13px; }
+.canvas-status kbd {
+  border: 1px solid #c8c1c3;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #f8f5f1;
+  padding: 2px 5px;
+  color: #756e79;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 700;
+}
 .zoom-control { overflow: hidden; border: 1px solid #c8c1c3; border-radius: 8px; background: #f7f4f0; }
 .zoom-control button { width: 26px; height: 24px; border: 0; background: transparent; color: #514c56; cursor: pointer; }
 .zoom-control span { border-right: 1px solid #d6cfd0; border-left: 1px solid #d6cfd0; padding: 0 8px; font-size: 9px; font-weight: 700; }
@@ -354,6 +365,7 @@
   .studio-topbar { grid-template-columns: 180px 220px 1fr; }
   .studio-grid { grid-template-columns: 60px 190px minmax(400px, 1fr) 260px; }
   .save-state { display: none; }
+  .canvas-status kbd { display: none; }
 }
 
 @media (max-width: 900px) {

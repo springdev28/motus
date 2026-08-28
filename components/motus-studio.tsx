@@ -28,13 +28,13 @@ import {
   Play,
   Plus,
   Redo2,
-  RotateCw,
   Sparkles,
   Square,
   Trash2,
   Type,
   Undo2,
   Unlock,
+  Upload,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -64,6 +64,10 @@ const STORAGE_KEY = 'motus.project.v2';
 const CANVAS_WIDTH = 1080;
 const CANVAS_HEIGHT = 1440;
 
+function uniqueId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 const toolItems = [
   { id: 'select', label: 'Select', icon: MousePointer2 },
   { id: 'image', label: 'Image', icon: ImagePlus },
@@ -88,6 +92,8 @@ function elementIcon(type: ElementType) {
 
 function renderElementContent(element: MotusElement) {
   if (element.type === 'image' && element.src) {
+    // Data URLs from the local project file are not compatible with optimized image loaders.
+    // oxlint-disable-next-line next/no-img-element
     return <img alt="" draggable={false} src={element.src} />;
   }
   if (element.type === 'text' || element.type === 'speech') {
@@ -140,6 +146,8 @@ function SceneView({
         } as CSSProperties;
 
         return (
+          // The role and handlers are conditional because reader scenes are display-only.
+          // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
           <div
             aria-label={element.name}
             className={`canvas-element element-${element.type} ${
@@ -148,16 +156,34 @@ function SceneView({
             data-locked={element.locked || undefined}
             data-selected={selected || undefined}
             key={`${element.id}-${playingKey}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelect?.(element.id);
-            }}
-            onPointerDown={(event) => {
-              if (interactive && !element.locked) {
-                onPointerAction?.(event, element.id, 'move');
-              }
-            }}
-            role={interactive ? 'button' : undefined}
+            onClick={
+              interactive
+                ? (event) => {
+                    event.stopPropagation();
+                    onSelect?.(element.id);
+                  }
+                : undefined
+            }
+            onKeyDown={
+              interactive
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onSelect?.(element.id);
+                    }
+                  }
+                : undefined
+            }
+            onPointerDown={
+              interactive
+                ? (event) => {
+                    if (!element.locked) {
+                      onPointerAction?.(event, element.id, 'move');
+                    }
+                  }
+                : undefined
+            }
+            role={interactive ? 'button' : 'img'}
             style={elementStyle}
             tabIndex={interactive ? 0 : undefined}
           >
@@ -197,6 +223,7 @@ export function MotusStudio() {
   const undoStack = useRef<MotusProject[]>([]);
   const redoStack = useRef<MotusProject[]>([]);
   const imageInput = useRef<HTMLInputElement>(null);
+  const projectInput = useRef<HTMLInputElement>(null);
 
   const activeScene =
     project.scenes.find((scene) => scene.id === activeSceneId) ?? project.scenes[0];
@@ -210,14 +237,21 @@ export function MotusStudio() {
   );
 
   useEffect(() => {
-    const saved = restoreProject(window.localStorage.getItem(STORAGE_KEY));
-    if (saved) {
-      setProject(saved);
-      setActiveSceneId(saved.scenes[0].id);
-      setSelectedElementId(saved.scenes[0].elements.at(-1)?.id ?? '');
-      setNotice('Draft restored');
-    }
-    setHydrated(true);
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      const saved = restoreProject(window.localStorage.getItem(STORAGE_KEY));
+      if (saved) {
+        setProject(saved);
+        setActiveSceneId(saved.scenes[0].id);
+        setSelectedElementId(saved.scenes[0].elements.at(-1)?.id ?? '');
+        setNotice('Draft restored');
+      }
+      setHydrated(true);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -330,9 +364,13 @@ export function MotusStudio() {
     }
     const reader = new FileReader();
     reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        setNotice('Image could not be read');
+        return;
+      }
       addElement('image', {
         name: file.name,
-        src: String(reader.result),
+        src: reader.result,
         width: 360,
         height: 300,
         fill: '#ffffff',
@@ -341,8 +379,48 @@ export function MotusStudio() {
     reader.readAsDataURL(file);
   };
 
+  const importProject = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        setNotice('Project could not be read');
+        return;
+      }
+      const restored = restoreProject(reader.result);
+      if (!restored) {
+        setNotice('That is not a valid Motus project');
+        return;
+      }
+      undoStack.current = [cloneProject(project)];
+      redoStack.current = [];
+      setProject(restored);
+      setActiveSceneId(restored.scenes[0].id);
+      setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
+      setNotice('Project imported');
+    };
+    reader.readAsText(file);
+  };
+
+  const duplicateElement = (elementId: string) => {
+    const source = findElement(project, activeScene.id, elementId);
+    if (!source) return;
+    const copy = structuredClone(source);
+    copy.id = uniqueId(source.type);
+    copy.name = `${source.name} copy`;
+    copy.x = Math.min(CANVAS_WIDTH - copy.width, copy.x + 28);
+    copy.y = Math.min(CANVAS_HEIGHT - copy.height, copy.y + 28);
+    commitProject((draft) => {
+      draft.scenes
+        .find((scene) => scene.id === activeScene.id)
+        ?.elements.push(copy);
+    });
+    setSelectedElementId(copy.id);
+    setNotice('Layer duplicated');
+  };
+
   const addScene = () => {
-    const id = `scene-${Date.now()}`;
+    const id = uniqueId('scene');
     const nextScene: MotusScene = {
       id,
       name: `Scene ${project.scenes.length + 1}`,
@@ -357,7 +435,7 @@ export function MotusStudio() {
 
   const duplicateScene = () => {
     const copy = structuredClone(activeScene);
-    copy.id = `scene-${Date.now()}`;
+    copy.id = uniqueId('scene');
     copy.name = `${activeScene.name} copy`;
     copy.elements = copy.elements.map((element, index) => ({
       ...element,
@@ -453,6 +531,60 @@ export function MotusStudio() {
     window.addEventListener('pointerup', onUp, { once: true });
   };
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isEditing =
+        target?.matches('input, textarea, select') || target?.isContentEditable;
+      if (isEditing) return;
+
+      const command = event.metaKey || event.ctrlKey;
+      if (command && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (command && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        redo();
+        return;
+      }
+      if (command && event.key.toLowerCase() === 'd' && selectedElementId) {
+        event.preventDefault();
+        duplicateElement(selectedElementId);
+        return;
+      }
+      if ((event.key === 'Backspace' || event.key === 'Delete') && selectedElementId) {
+        event.preventDefault();
+        deleteElement(selectedElementId);
+        return;
+      }
+      if (
+        selectedElement &&
+        !selectedElement.locked &&
+        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
+      ) {
+        event.preventDefault();
+        const distance = event.shiftKey ? 10 : 1;
+        updateElement(selectedElement.id, (element) => {
+          if (event.key === 'ArrowLeft') element.x = Math.max(0, element.x - distance);
+          if (event.key === 'ArrowRight') {
+            element.x = Math.min(CANVAS_WIDTH - element.width, element.x + distance);
+          }
+          if (event.key === 'ArrowUp') element.y = Math.max(0, element.y - distance);
+          if (event.key === 'ArrowDown') {
+            element.y = Math.min(CANVAS_HEIGHT - element.height, element.y + distance);
+          }
+        });
+        setNotice(`Nudged ${selectedElement.name}`);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
+
   const artboardWidth = Math.round(430 * (zoom / 64));
 
   return (
@@ -462,6 +594,16 @@ export function MotusStudio() {
         className="sr-only"
         onChange={(event) => uploadImage(event.target.files?.[0])}
         ref={imageInput}
+        type="file"
+      />
+      <input
+        accept=".json,.motus.json,application/json"
+        className="sr-only"
+        onChange={(event) => {
+          importProject(event.target.files?.[0]);
+          event.target.value = '';
+        }}
+        ref={projectInput}
         type="file"
       />
 
@@ -491,6 +633,7 @@ export function MotusStudio() {
             <Play data-icon="inline-start" fill="currentColor" />Preview
           </Button>
           <Button onClick={openReader}><Layers3 data-icon="inline-start" />Reader</Button>
+          <Button aria-label="Import Motus project" onClick={() => projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
           <Button aria-label="Export Motus project" onClick={exportProject} size="icon" variant="outline"><Download /></Button>
         </div>
       </header>
@@ -560,7 +703,7 @@ export function MotusStudio() {
 
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
-            <div className="canvas-status"><Move /><span>Drag elements · resize from the corner</span></div>
+            <div className="canvas-status"><Move /><span>Drag elements · resize from the corner</span><kbd>⌘D duplicate</kbd><kbd>⌫ delete</kbd></div>
             <div className="zoom-control" aria-label="Canvas zoom">
               <button aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(40, value - 8))} type="button">−</button>
               <span>{zoom}%</span>
@@ -568,7 +711,14 @@ export function MotusStudio() {
             </div>
           </div>
 
-          <div className="canvas-stage" onClick={() => setSelectedElementId('')}>
+          <div
+            className="canvas-stage"
+            onClick={() => setSelectedElementId('')}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setSelectedElementId('');
+            }}
+            role="presentation"
+          >
             <div className="artboard-frame" style={{ width: `${artboardWidth}px` }}>
               <SceneView
                 interactive
@@ -620,14 +770,15 @@ export function MotusStudio() {
                 <div className="selected-element-card">
                   <span className={`element-swatch swatch-${selectedElement.type}`} style={{ background: selectedElement.fill }} />
                   <div><small>Selected</small><strong>{selectedElement.name}</strong></div>
+                  <Button aria-label="Duplicate selected element" onClick={() => duplicateElement(selectedElement.id)} size="icon-sm" variant="outline"><Copy /></Button>
                   <Button aria-label="Delete selected element" onClick={() => deleteElement(selectedElement.id)} size="icon-sm" variant="destructive"><Trash2 /></Button>
                 </div>
 
                 {inspectorTab === 'design' ? (
                   <div className="property-stack">
-                    <label><span>Layer name</span><Input onChange={(event) => updateElement(selectedElement.id, (item) => { item.name = event.target.value; })} value={selectedElement.name} /></label>
+                    <label htmlFor="selected-layer-name"><span>Layer name</span><Input id="selected-layer-name" onChange={(event) => updateElement(selectedElement.id, (item) => { item.name = event.target.value; })} value={selectedElement.name} /></label>
                     {(selectedElement.type === 'text' || selectedElement.type === 'speech') ? (
-                      <label><span>Text</span><Textarea onChange={(event) => updateElement(selectedElement.id, (item) => { item.text = event.target.value; })} value={selectedElement.text ?? ''} /></label>
+                      <label htmlFor="selected-layer-text"><span>Text</span><Textarea id="selected-layer-text" onChange={(event) => updateElement(selectedElement.id, (item) => { item.text = event.target.value; })} value={selectedElement.text ?? ''} /></label>
                     ) : null}
                     {selectedElement.type !== 'image' ? (
                       <label className="color-control"><span>Color</span><input aria-label="Element color" onChange={(event) => updateElement(selectedElement.id, (item) => { item.fill = event.target.value; })} type="color" value={selectedElement.fill} /><output>{selectedElement.fill}</output></label>
@@ -652,7 +803,7 @@ export function MotusStudio() {
                     <label className="range-control"><span>Move Y</span><output>{selectedElement.motion.moveY}px</output><input max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveY = Number(event.target.value); })} type="range" value={selectedElement.motion.moveY} /></label>
                     <label className="range-control"><span>Duration</span><output>{(selectedElement.motion.durationMs / 1000).toFixed(1)}s</output><input max="4000" min="200" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.durationMs = Number(event.target.value); })} step="100" type="range" value={selectedElement.motion.durationMs} /></label>
                     <label className="range-control"><span>Start opacity</span><output>{Math.round(selectedElement.motion.fromOpacity * 100)}%</output><input max="100" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromOpacity = Number(event.target.value) / 100; })} type="range" value={Math.round(selectedElement.motion.fromOpacity * 100)} /></label>
-                    <label><span>Easing</span><NativeSelect className="w-full" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.easing = event.target.value as Easing; })} value={selectedElement.motion.easing}><NativeSelectOption value="linear">Linear</NativeSelectOption><NativeSelectOption value="ease-out">Ease out</NativeSelectOption><NativeSelectOption value="ease-in-out">Ease in/out</NativeSelectOption></NativeSelect></label>
+                    <label htmlFor="selected-layer-easing"><span>Easing</span><NativeSelect className="w-full" id="selected-layer-easing" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.easing = event.target.value as Easing; })} value={selectedElement.motion.easing}><NativeSelectOption value="linear">Linear</NativeSelectOption><NativeSelectOption value="ease-out">Ease out</NativeSelectOption><NativeSelectOption value="ease-in-out">Ease in/out</NativeSelectOption></NativeSelect></label>
                     <Button className="run-motion-button" onClick={() => setPreviewKey((key) => key + 1)}><Play fill="currentColor" />Run animation</Button>
                   </div>
                 )}
