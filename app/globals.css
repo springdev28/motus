@@ -367,7 +367,10 @@
 .reader-dialog [data-slot='dialog-description'] { color: #aaa2b7; }
 .reader-scroll { min-height: 0; overflow-y: auto; border-radius: 8px; background: #0f0e16; padding: 28px 18px 56px; }
 .reader-scene { width: min(520px, 92%); margin: 0 auto 28px; }
-.reader-scene-number { display: block; margin-bottom: 7px; color: #9489a6; font-family: var(--font-mono); font-size: 8px; letter-spacing: .12em; }
+.reader-scene-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }
+.reader-scene-number { display: block; color: #9489a6; font-family: var(--font-mono); font-size: 8px; letter-spacing: .12em; }
+.reader-trigger-state { border: 1px solid #4a4359; border-radius: 99px; padding: 3px 7px; color: #8d849c; font-family: var(--font-mono); font-size: 7px; letter-spacing: .04em; }
+.reader-scene[data-played] .reader-trigger-state { border-color: #7762b6; background: #2c2442; color: #c7baff; }
 .reader-scene .artboard { box-shadow: 0 16px 50px rgb(0 0 0 / 42%); }
 
 .publish-dialog {

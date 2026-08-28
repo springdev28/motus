@@ -229,6 +229,66 @@ function SceneView({
   );
 }
 
+type ReaderSceneProps = {
+  scene: MotusScene;
+  index: number;
+  sessionKey: number;
+};
+
+function ReaderScene({ scene, index, sessionKey }: ReaderSceneProps) {
+  const sceneRef = useRef<HTMLElement>(null);
+  const [playingKey, setPlayingKey] = useState(0);
+  const [reducedMotion, setReducedMotion] = useState(false);
+
+  useEffect(() => {
+    const element = sceneRef.current;
+    if (!element) return;
+
+    const prefersReducedMotion = window.matchMedia?.(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    if (prefersReducedMotion) {
+      queueMicrotask(() => setReducedMotion(true));
+      return;
+    }
+
+    if (!('IntersectionObserver' in window)) {
+      queueMicrotask(() => setPlayingKey(sessionKey || 1));
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setPlayingKey(sessionKey || 1);
+        observer.disconnect();
+      },
+      { rootMargin: '0px 0px -12% 0px', threshold: 0.35 },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [sessionKey]);
+
+  return (
+    <article
+      aria-label={`Scene ${index + 1}: ${scene.name}`}
+      className="reader-scene"
+      data-played={playingKey > 0 || undefined}
+      ref={sceneRef}
+    >
+      <div className="reader-scene-meta">
+        <span className="reader-scene-number">
+          SCENE {String(index + 1).padStart(2, '0')}
+        </span>
+        <span className="reader-trigger-state">
+          {reducedMotion ? 'Motion reduced' : playingKey ? 'Played' : 'Plays on view'}
+        </span>
+      </div>
+      <SceneView playingKey={playingKey} scene={scene} />
+    </article>
+  );
+}
+
 export function MotusStudio() {
   const [project, setProject] = useState<MotusProject>(createDefaultProject);
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
@@ -900,10 +960,12 @@ export function MotusStudio() {
           </DialogHeader>
           <div className="reader-scroll">
             {readerScenes.map((scene, index) => (
-              <article className="reader-scene" key={`${scene.id}-${previewKey}`}>
-                <span className="reader-scene-number">SCENE {String(index + 1).padStart(2, '0')}</span>
-                <SceneView playingKey={previewKey || 1} scene={scene} />
-              </article>
+              <ReaderScene
+                index={index}
+                key={`${scene.id}-${previewKey}`}
+                scene={scene}
+                sessionKey={previewKey || 1}
+              />
             ))}
           </div>
         </DialogContent>
