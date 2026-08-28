@@ -50,6 +50,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea';
 import {
   cloneProject,
+  compileElementMotion,
   createDefaultProject,
   createElement,
   restoreProject,
@@ -130,6 +131,7 @@ function SceneView({
       {scene.elements.map((element) => {
         if (!element.visible) return null;
         const selected = selectedId === element.id;
+        const compiledMotion = compileElementMotion(element);
         const elementStyle = {
           left: `${(element.x / CANVAS_WIDTH) * 100}%`,
           top: `${(element.y / CANVAS_HEIGHT) * 100}%`,
@@ -138,11 +140,16 @@ function SceneView({
           transform: `rotate(${element.rotation}deg)`,
           opacity: element.opacity,
           '--element-fill': element.fill,
-          '--motion-x': `${element.motion.moveX}px`,
-          '--motion-y': `${element.motion.moveY}px`,
-          '--motion-duration': `${element.motion.durationMs}ms`,
-          '--motion-opacity': element.motion.fromOpacity,
-          '--motion-easing': element.motion.easing,
+          '--motion-from-x': `${compiledMotion.from.translateX}px`,
+          '--motion-from-y': `${compiledMotion.from.translateY}px`,
+          '--motion-from-opacity': compiledMotion.from.opacity,
+          '--motion-from-scale': compiledMotion.from.scale,
+          '--motion-from-rotation': `${compiledMotion.from.rotation}deg`,
+          '--motion-to-opacity': compiledMotion.to.opacity,
+          '--motion-to-rotation': `${compiledMotion.to.rotation}deg`,
+          '--motion-duration': `${compiledMotion.durationMs}ms`,
+          '--motion-delay': `${compiledMotion.delayMs}ms`,
+          '--motion-easing': compiledMotion.easing,
         } as CSSProperties;
 
         return (
@@ -798,10 +805,13 @@ export function MotusStudio() {
                 ) : (
                   <div className="property-stack motion-properties">
                     <div className="motion-summary"><span className="motion-number">01</span><div><small>WHEN</small><strong>Scene enters view</strong></div></div>
-                    <div className="motion-summary motion-action"><span className="motion-number">02</span><div><small>MOTION + LOOKS</small><strong>Move and fade</strong></div></div>
+                    <div className="motion-summary motion-action"><span className="motion-number">02</span><div><small>MOTION + LOOKS</small><strong>Move · rotate · scale · fade</strong></div></div>
                     <label className="range-control"><span>Move X</span><output>{selectedElement.motion.moveX}px</output><input max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveX = Number(event.target.value); })} type="range" value={selectedElement.motion.moveX} /></label>
                     <label className="range-control"><span>Move Y</span><output>{selectedElement.motion.moveY}px</output><input max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveY = Number(event.target.value); })} type="range" value={selectedElement.motion.moveY} /></label>
+                    <label className="range-control"><span>Rotate from</span><output>{selectedElement.motion.fromRotation}°</output><input max="180" min="-180" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromRotation = Number(event.target.value); })} type="range" value={selectedElement.motion.fromRotation} /></label>
+                    <label className="range-control"><span>Scale from</span><output>{selectedElement.motion.fromScale.toFixed(2)}×</output><input max="200" min="20" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromScale = Number(event.target.value) / 100; })} type="range" value={Math.round(selectedElement.motion.fromScale * 100)} /></label>
                     <label className="range-control"><span>Duration</span><output>{(selectedElement.motion.durationMs / 1000).toFixed(1)}s</output><input max="4000" min="200" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.durationMs = Number(event.target.value); })} step="100" type="range" value={selectedElement.motion.durationMs} /></label>
+                    <label className="range-control"><span>Delay</span><output>{(selectedElement.motion.delayMs / 1000).toFixed(1)}s</output><input max="3000" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.delayMs = Number(event.target.value); })} step="100" type="range" value={selectedElement.motion.delayMs} /></label>
                     <label className="range-control"><span>Start opacity</span><output>{Math.round(selectedElement.motion.fromOpacity * 100)}%</output><input max="100" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromOpacity = Number(event.target.value) / 100; })} type="range" value={Math.round(selectedElement.motion.fromOpacity * 100)} /></label>
                     <label htmlFor="selected-layer-easing"><span>Easing</span><NativeSelect className="w-full" id="selected-layer-easing" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.easing = event.target.value as Easing; })} value={selectedElement.motion.easing}><NativeSelectOption value="linear">Linear</NativeSelectOption><NativeSelectOption value="ease-out">Ease out</NativeSelectOption><NativeSelectOption value="ease-in-out">Ease in/out</NativeSelectOption></NativeSelect></label>
                     <Button className="run-motion-button" onClick={() => setPreviewKey((key) => key + 1)}><Play fill="currentColor" />Run animation</Button>

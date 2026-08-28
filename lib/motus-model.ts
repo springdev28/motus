@@ -1,14 +1,42 @@
-export const PROJECT_SCHEMA_VERSION = 2 as const;
+export const PROJECT_SCHEMA_VERSION = 3 as const;
+export const MOTION_SCHEMA_VERSION = 1 as const;
 
 export type ElementType = 'shape' | 'text' | 'speech' | 'image';
 export type Easing = 'linear' | 'ease-out' | 'ease-in-out';
 
 export type ElementMotion = {
+  schemaVersion: typeof MOTION_SCHEMA_VERSION;
+  event: 'scene-enter';
   moveX: number;
   moveY: number;
   durationMs: number;
+  delayMs: number;
   fromOpacity: number;
+  fromScale: number;
+  fromRotation: number;
   easing: Easing;
+};
+
+export type CompiledElementMotion = {
+  schemaVersion: typeof MOTION_SCHEMA_VERSION;
+  event: 'scene-enter';
+  durationMs: number;
+  delayMs: number;
+  easing: Easing;
+  from: {
+    translateX: number;
+    translateY: number;
+    opacity: number;
+    scale: number;
+    rotation: number;
+  };
+  to: {
+    translateX: 0;
+    translateY: 0;
+    opacity: number;
+    scale: 1;
+    rotation: number;
+  };
 };
 
 export type MotusElement = {
@@ -51,12 +79,66 @@ const motion = (
   durationMs = 900,
   fromOpacity = 1,
 ): ElementMotion => ({
+  schemaVersion: MOTION_SCHEMA_VERSION,
+  event: 'scene-enter',
   moveX,
   moveY,
   durationMs,
+  delayMs: 0,
   fromOpacity,
+  fromScale: 1,
+  fromRotation: 0,
   easing: 'ease-out',
 });
+
+const finite = (value: unknown, fallback: number) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+
+const clamp = (value: number, minimum: number, maximum: number) =>
+  Math.min(maximum, Math.max(minimum, value));
+
+function migrateMotion(value: Partial<ElementMotion> | undefined): ElementMotion {
+  return {
+    schemaVersion: MOTION_SCHEMA_VERSION,
+    event: 'scene-enter',
+    moveX: finite(value?.moveX, 0),
+    moveY: finite(value?.moveY, 0),
+    durationMs: finite(value?.durationMs, 900),
+    delayMs: finite(value?.delayMs, 0),
+    fromOpacity: finite(value?.fromOpacity, 1),
+    fromScale: finite(value?.fromScale, 1),
+    fromRotation: finite(value?.fromRotation, 0),
+    easing:
+      value?.easing === 'linear' || value?.easing === 'ease-in-out'
+        ? value.easing
+        : 'ease-out',
+  };
+}
+
+export function compileElementMotion(element: MotusElement): CompiledElementMotion {
+  const instruction = migrateMotion(element.motion);
+  return {
+    schemaVersion: MOTION_SCHEMA_VERSION,
+    event: 'scene-enter',
+    durationMs: clamp(Math.round(instruction.durationMs), 200, 10_000),
+    delayMs: clamp(Math.round(instruction.delayMs), 0, 5_000),
+    easing: instruction.easing,
+    from: {
+      translateX: clamp(-instruction.moveX, -2_000, 2_000),
+      translateY: clamp(-instruction.moveY, -2_000, 2_000),
+      opacity: clamp(instruction.fromOpacity, 0, 1),
+      scale: clamp(instruction.fromScale, 0.1, 3),
+      rotation: clamp(element.rotation + instruction.fromRotation, -720, 720),
+    },
+    to: {
+      translateX: 0,
+      translateY: 0,
+      opacity: clamp(element.opacity, 0, 1),
+      scale: 1,
+      rotation: clamp(element.rotation, -360, 360),
+    },
+  };
+}
 
 export function createElement(
   type: ElementType,
@@ -185,18 +267,48 @@ export function restoreProject(value: string | null): MotusProject | null {
   if (!value) return null;
 
   try {
-    const candidate = JSON.parse(value) as Partial<MotusProject>;
+    const candidate = JSON.parse(value) as {
+      schemaVersion?: number;
+      title?: unknown;
+      scenes?: MotusScene[];
+      [key: string]: unknown;
+    };
     if (
-      candidate.schemaVersion !== PROJECT_SCHEMA_VERSION ||
+      (candidate.schemaVersion !== 2 && candidate.schemaVersion !== PROJECT_SCHEMA_VERSION) ||
       typeof candidate.title !== 'string' ||
       !Array.isArray(candidate.scenes) ||
       candidate.scenes.length === 0 ||
-      candidate.scenes.some((item) => !Array.isArray(item.elements))
+      candidate.scenes.some(
+        (item) =>
+          !item ||
+          typeof item !== 'object' ||
+          !Array.isArray(item.elements) ||
+          item.elements.some(
+            (element) =>
+              !element ||
+              typeof element !== 'object' ||
+              typeof element.id !== 'string' ||
+              typeof element.type !== 'string',
+          ),
+      )
     ) {
       return null;
     }
 
-    return candidate as MotusProject;
+    const restored = candidate as unknown as MotusProject;
+    return {
+      ...restored,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      scenes: restored.scenes.map((item) => ({
+        ...item,
+        elements: item.elements.map((element) => ({
+          ...element,
+          visible: element.visible !== false,
+          locked: Boolean(element.locked),
+          motion: migrateMotion(element.motion),
+        })),
+      })),
+    };
   } catch {
     return null;
   }
