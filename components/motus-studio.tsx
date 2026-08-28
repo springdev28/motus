@@ -56,6 +56,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  MAX_PROJECT_FILE_BYTES,
   MIN_ELEMENT_HEIGHT,
   MIN_ELEMENT_WIDTH,
   cloneProject,
@@ -72,6 +73,7 @@ import {
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
+  restoreProjectWithError,
   validateImageAsset,
   type ContentRating,
   type Easing,
@@ -610,17 +612,22 @@ export function MotusStudio() {
 
   const importProject = (file?: File) => {
     if (!file) return;
+    if (file.size > MAX_PROJECT_FILE_BYTES) {
+      setNotice('Project files must be 12 MB or smaller');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== 'string') {
         setNotice('Project could not be read');
         return;
       }
-      const restored = restoreProject(reader.result);
-      if (!restored) {
-        setNotice('That is not a valid Motus project');
+      const result = restoreProjectWithError(reader.result);
+      if (!result.project) {
+        setNotice(result.error);
         return;
       }
+      const restored = result.project;
       undoStack.current = [cloneProject(project)];
       redoStack.current = [];
       endHistoryTransaction();
@@ -631,6 +638,7 @@ export function MotusStudio() {
       setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
       setNotice('Project imported');
     };
+    reader.onerror = () => setNotice('Project file could not be read');
     reader.readAsText(file);
   };
 
@@ -1047,6 +1055,7 @@ export function MotusStudio() {
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
             <div className="canvas-status"><Move /><span>Drag elements · resize from the corner</span><kbd>⌘D duplicate</kbd><kbd>⌫ delete</kbd></div>
+            <output aria-live="polite" className="workspace-notice">{notice}</output>
             <div className="zoom-control" aria-label="Canvas zoom">
               <button aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(40, value - 8))} type="button">−</button>
               <span>{zoom}%</span>

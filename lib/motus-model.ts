@@ -14,6 +14,10 @@ export type SupportedImageMime = 'image/png' | 'image/webp';
 export const MAX_IMAGE_BYTES = 750_000;
 export const MAX_IMAGE_DIMENSION = 4_096;
 export const MAX_IMAGE_PIXELS = 12_000_000;
+export const MAX_PROJECT_FILE_BYTES = 12_000_000;
+const MAX_PROJECT_SCENES = 100;
+const MAX_SCENE_ELEMENTS = 500;
+const MAX_ELEMENT_TEXT_LENGTH = 50_000;
 
 export type ImageAssetMetadata = {
   mime: string;
@@ -512,92 +516,287 @@ export function restorePublicationToDraft(
   return restored;
 }
 
-export function restoreProject(value: string | null): MotusProject | null {
-  if (!value) return null;
+type UnknownRecord = Record<string, unknown>;
 
-  try {
-    const candidate = JSON.parse(value) as {
-      schemaVersion?: number;
-      title?: unknown;
-      scenes?: MotusScene[];
-      [key: string]: unknown;
-    };
-    if (
-      (candidate.schemaVersion !== 2 &&
-        candidate.schemaVersion !== 3 &&
-        candidate.schemaVersion !== PROJECT_SCHEMA_VERSION) ||
-      typeof candidate.title !== 'string' ||
-      !Array.isArray(candidate.scenes) ||
-      candidate.scenes.length === 0 ||
-      candidate.scenes.some(
-        (item) =>
-          !item ||
-          typeof item !== 'object' ||
-          !Array.isArray(item.elements) ||
-          item.elements.some(
-            (element) =>
-              !element ||
-              typeof element !== 'object' ||
-              typeof element.id !== 'string' ||
-              typeof element.type !== 'string',
-          ),
-      )
-    ) {
-      return null;
+export type ProjectRestoreResult =
+  | { project: MotusProject; error: null }
+  | { project: null; error: string };
+
+const defaultSceneBackground =
+  'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)';
+
+const isRecord = (value: unknown): value is UnknownRecord =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const isElementType = (value: unknown): value is ElementType =>
+  value === 'shape' || value === 'text' || value === 'speech' || value === 'image';
+
+const isSafeColor = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value);
+
+const isSafeSceneBackground = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  (/^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value) ||
+    (value.length <= 500 && /^linear-gradient\([^;{}]+\)$/i.test(value)));
+
+const isSafeImageSource = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length <= Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 128 &&
+  /^data:image\/(?:png|webp);base64,[a-z0-9+/=\s]+$/i.test(value);
+
+function validateMotion(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) return 'Project contains invalid motion instructions';
+  if (
+    value.schemaVersion !== undefined &&
+    value.schemaVersion !== MOTION_SCHEMA_VERSION
+  ) {
+    return 'Project uses an unsupported motion version';
+  }
+  if (value.event !== undefined && value.event !== 'scene-enter') {
+    return 'Project uses an unsupported motion trigger';
+  }
+  return null;
+}
+
+function validateScenes(value: unknown, context: string): string | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return `${context} needs at least one scene`;
+  }
+  if (value.length > MAX_PROJECT_SCENES) {
+    return `${context} has more than ${MAX_PROJECT_SCENES} scenes`;
+  }
+
+  const sceneIds = new Set<string>();
+  for (const sceneValue of value) {
+    if (!isRecord(sceneValue) || typeof sceneValue.id !== 'string' || !sceneValue.id) {
+      return `${context} contains an invalid scene`;
+    }
+    if (sceneIds.has(sceneValue.id)) return `${context} has duplicate scene IDs`;
+    sceneIds.add(sceneValue.id);
+    if (!Array.isArray(sceneValue.elements)) {
+      return `${context} contains a scene with invalid layers`;
+    }
+    if (sceneValue.elements.length > MAX_SCENE_ELEMENTS) {
+      return `${context} has a scene with more than ${MAX_SCENE_ELEMENTS} layers`;
     }
 
-    const restored = candidate as unknown as MotusProject;
-    const normalizeScenes = (scenes: MotusScene[]) =>
-      scenes.map((item) => ({
-        ...item,
-        elements: item.elements.map((element) =>
-          constrainElementToCanvas({
-            ...element,
-            visible: element.visible !== false,
-            locked: Boolean(element.locked),
-            motion: migrateMotion(element.motion),
-          }),
-        ),
-      }));
-    const publications = Array.isArray(restored.publications)
-      ? restored.publications.filter(
-          (revision) =>
-            revision &&
-            typeof revision.id === 'string' &&
-            Number.isInteger(revision.revision) &&
-            revision.revision > 0 &&
-            typeof revision.createdAt === 'string' &&
-            typeof revision.title === 'string' &&
-            Array.isArray(revision.scenes),
-        )
-      : [];
-    const publishedRevision = Math.max(
-      0,
-      finite(restored.publishedRevision, 0),
-      ...publications.map((revision) => revision.revision),
-    );
-    return {
-      ...restored,
-      schemaVersion: PROJECT_SCHEMA_VERSION,
-      description:
-        typeof restored.description === 'string' ? restored.description : '',
-      tags: Array.isArray(restored.tags)
-        ? restored.tags.filter((tag): tag is string => typeof tag === 'string')
-        : [],
-      language: typeof restored.language === 'string' ? restored.language : 'en',
-      contentRating:
-        restored.contentRating === 'teen' || restored.contentRating === 'mature'
-          ? restored.contentRating
-          : 'all-ages',
-      visibility: restored.visibility === 'public' ? 'public' : 'private',
-      publishedRevision,
-      publications: publications.map((revision) => ({
-        ...structuredClone(revision),
-        scenes: normalizeScenes(revision.scenes),
-      })),
-      scenes: normalizeScenes(restored.scenes),
-    };
-  } catch {
-    return null;
+    const elementIds = new Set<string>();
+    for (const elementValue of sceneValue.elements) {
+      if (
+        !isRecord(elementValue) ||
+        typeof elementValue.id !== 'string' ||
+        !elementValue.id
+      ) {
+        return `${context} contains an invalid layer`;
+      }
+      if (elementIds.has(elementValue.id)) return `${context} has duplicate layer IDs`;
+      elementIds.add(elementValue.id);
+      if (!isElementType(elementValue.type)) {
+        return `${context} contains an unsupported layer type`;
+      }
+      const motionError = validateMotion(elementValue.motion);
+      if (motionError) return motionError;
+      if (
+        elementValue.text !== undefined &&
+        (typeof elementValue.text !== 'string' ||
+          elementValue.text.length > MAX_ELEMENT_TEXT_LENGTH)
+      ) {
+        return `${context} contains invalid or oversized text`;
+      }
+      if (
+        elementValue.type === 'image' &&
+        elementValue.src !== undefined &&
+        !isSafeImageSource(elementValue.src)
+      ) {
+        return `${context} contains an unsafe or oversized image source`;
+      }
+    }
   }
+  return null;
+}
+
+function normalizeScenes(value: unknown[]): MotusScene[] {
+  return value.map((sceneValue) => {
+    const item = sceneValue as UnknownRecord;
+    return {
+      id: item.id as string,
+      name: typeof item.name === 'string' ? item.name : 'Untitled scene',
+      background: isSafeSceneBackground(item.background)
+        ? item.background
+        : defaultSceneBackground,
+      elements: (item.elements as UnknownRecord[]).map((elementValue) => {
+        const type = elementValue.type as ElementType;
+        const defaults = {
+          width: type === 'text' ? 440 : 260,
+          height: type === 'text' ? 120 : 220,
+          fill: type === 'speech' ? '#fffaf0' : '#8c74ff',
+        };
+        return constrainElementToCanvas({
+          id: elementValue.id as string,
+          name:
+            typeof elementValue.name === 'string'
+              ? elementValue.name
+              : `${type[0].toUpperCase()}${type.slice(1)}`,
+          type,
+          x: finite(elementValue.x, 0),
+          y: finite(elementValue.y, 0),
+          width: finite(elementValue.width, defaults.width),
+          height: finite(elementValue.height, defaults.height),
+          rotation: finite(elementValue.rotation, 0),
+          opacity: finite(elementValue.opacity, 1),
+          fill: isSafeColor(elementValue.fill) ? elementValue.fill : defaults.fill,
+          text:
+            typeof elementValue.text === 'string' ? elementValue.text : undefined,
+          src:
+            type === 'image' && isSafeImageSource(elementValue.src)
+              ? elementValue.src
+              : undefined,
+          visible: elementValue.visible !== false,
+          locked: Boolean(elementValue.locked),
+          motion: migrateMotion(
+            isRecord(elementValue.motion)
+              ? (elementValue.motion as Partial<ElementMotion>)
+              : undefined,
+          ),
+        });
+      }),
+    };
+  });
+}
+
+function normalizeTags(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((tag): tag is string => typeof tag === 'string').slice(0, 8)
+    : [];
+}
+
+function normalizeContentRating(value: unknown): ContentRating {
+  return value === 'teen' || value === 'mature' ? value : 'all-ages';
+}
+
+function normalizeVisibility(value: unknown): PublicationVisibility {
+  return value === 'public' ? 'public' : 'private';
+}
+
+export function restoreProjectWithError(value: string | null): ProjectRestoreResult {
+  if (!value) return { project: null, error: 'Project file is empty' };
+
+  let candidate: UnknownRecord;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed)) {
+      return { project: null, error: 'Project file must contain one Motus project' };
+    }
+    candidate = parsed;
+  } catch {
+    return { project: null, error: 'Project file is not valid JSON' };
+  }
+
+  if (
+    candidate.schemaVersion !== 2 &&
+    candidate.schemaVersion !== 3 &&
+    candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
+  ) {
+    return { project: null, error: 'Project uses an unsupported schema version' };
+  }
+  if (typeof candidate.title !== 'string') {
+    return { project: null, error: 'Project title is missing' };
+  }
+
+  const sceneError = validateScenes(candidate.scenes, 'Project');
+  if (sceneError) return { project: null, error: sceneError };
+
+  const publicationValues = candidate.publications ?? [];
+  if (!Array.isArray(publicationValues)) {
+    return { project: null, error: 'Project publication history is invalid' };
+  }
+  const publicationIds = new Set<string>();
+  const publicationNumbers = new Set<number>();
+  for (const publicationValue of publicationValues) {
+    if (
+      !isRecord(publicationValue) ||
+      typeof publicationValue.id !== 'string' ||
+      !publicationValue.id ||
+      !Number.isInteger(publicationValue.revision) ||
+      (publicationValue.revision as number) <= 0 ||
+      typeof publicationValue.createdAt !== 'string' ||
+      typeof publicationValue.title !== 'string'
+    ) {
+      return { project: null, error: 'Project publication history is invalid' };
+    }
+    const revision = publicationValue.revision as number;
+    if (publicationIds.has(publicationValue.id) || publicationNumbers.has(revision)) {
+      return { project: null, error: 'Project has duplicate publication revisions' };
+    }
+    publicationIds.add(publicationValue.id);
+    publicationNumbers.add(revision);
+    const revisionError = validateScenes(
+      publicationValue.scenes,
+      `Publication revision ${revision}`,
+    );
+    if (revisionError) return { project: null, error: revisionError };
+  }
+
+  const publications: MotusPublicationRevision[] = publicationValues.map(
+    (publicationValue) => {
+      const revision = publicationValue as UnknownRecord;
+      return {
+        id: revision.id as string,
+        revision: revision.revision as number,
+        createdAt: revision.createdAt as string,
+        title: revision.title as string,
+        description:
+          typeof revision.description === 'string' ? revision.description : '',
+        tags: normalizeTags(revision.tags),
+        language: typeof revision.language === 'string' ? revision.language : 'en',
+        contentRating: normalizeContentRating(revision.contentRating),
+        visibility: normalizeVisibility(revision.visibility),
+        scenes: normalizeScenes(revision.scenes as unknown[]),
+      };
+    },
+  );
+  const publishedRevision = Math.floor(
+    Math.max(
+      0,
+      finite(candidate.publishedRevision, 0),
+      ...publications.map((revision) => revision.revision),
+    ),
+  );
+  const updatedAt =
+    typeof candidate.updatedAt === 'string' &&
+    Number.isFinite(Date.parse(candidate.updatedAt))
+      ? candidate.updatedAt
+      : new Date().toISOString();
+  const fallbackId = createProjectBackupFileName({
+    id: 'imported-work',
+    title: candidate.title,
+  }).replace(/\.motus\.json$/, '');
+
+  return {
+    error: null,
+    project: {
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      id:
+        typeof candidate.id === 'string' && candidate.id.trim()
+          ? candidate.id
+          : fallbackId,
+      title: candidate.title,
+      description:
+        typeof candidate.description === 'string' ? candidate.description : '',
+      tags: normalizeTags(candidate.tags),
+      language: typeof candidate.language === 'string' ? candidate.language : 'en',
+      contentRating: normalizeContentRating(candidate.contentRating),
+      visibility: normalizeVisibility(candidate.visibility),
+      publishedRevision,
+      publications,
+      scenes: normalizeScenes(candidate.scenes as unknown[]),
+      updatedAt,
+    },
+  };
+}
+
+export function restoreProject(value: string | null): MotusProject | null {
+  return restoreProjectWithError(value).project;
 }

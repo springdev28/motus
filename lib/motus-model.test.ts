@@ -20,6 +20,7 @@ import {
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
+  restoreProjectWithError,
   type ProjectHistoryState,
   validateImageAsset,
 } from './motus-model.ts';
@@ -192,6 +193,71 @@ void test('version 2 drafts migrate without losing scenes or element motion', ()
 void test('invalid project data is rejected', () => {
   assert.equal(restoreProject('{"schemaVersion":4,"title":"Broken","scenes":[]}'), null);
   assert.equal(restoreProject('not json'), null);
+});
+
+void test('project import reports schema, layer, motion, and asset failures precisely', () => {
+  assert.equal(
+    restoreProjectWithError('not json').error,
+    'Project file is not valid JSON',
+  );
+  assert.equal(
+    restoreProjectWithError('{"schemaVersion":99,"title":"Future","scenes":[]}').error,
+    'Project uses an unsupported schema version',
+  );
+
+  const unsupportedLayer = createDefaultProject() as unknown as {
+    scenes: Array<{ elements: Array<Record<string, unknown>> }>;
+  };
+  unsupportedLayer.scenes[0].elements[0].type = 'video';
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(unsupportedLayer)).error,
+    'Project contains an unsupported layer type',
+  );
+
+  const unsupportedMotion = createDefaultProject();
+  unsupportedMotion.scenes[0].elements[0].motion.schemaVersion =
+    2 as typeof MOTION_SCHEMA_VERSION;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(unsupportedMotion)).error,
+    'Project uses an unsupported motion version',
+  );
+
+  const unsafeImage = createDefaultProject();
+  unsafeImage.scenes[0].elements.push({
+    ...unsafeImage.scenes[0].elements[0],
+    id: 'unsafe-image',
+    type: 'image',
+    src: 'https://tracker.example/private.png',
+  });
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(unsafeImage)).error,
+    'Project contains an unsafe or oversized image source',
+  );
+});
+
+void test('project import normalizes optional metadata without losing history', () => {
+  const project = createDefaultProject();
+  const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+  project.publications.push(revision);
+  project.publishedRevision = 1;
+  const candidate = structuredClone(project) as unknown as Record<string, unknown>;
+  delete candidate.id;
+  delete candidate.updatedAt;
+  const publications = candidate.publications as Array<Record<string, unknown>>;
+  delete publications[0].description;
+  delete publications[0].tags;
+  delete publications[0].visibility;
+
+  const result = restoreProjectWithError(JSON.stringify(candidate));
+
+  assert.ok(result.project);
+  assert.equal(result.error, null);
+  assert.equal(result.project.id, 'signal-in-the-fog');
+  assert.equal(result.project.publications.length, 1);
+  assert.equal(result.project.publications[0].description, '');
+  assert.deepEqual(result.project.publications[0].tags, []);
+  assert.equal(result.project.publications[0].visibility, 'private');
+  assert.ok(Number.isFinite(Date.parse(result.project.updatedAt)));
 });
 
 void test('published revisions remain immutable when the draft changes', () => {
