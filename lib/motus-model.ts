@@ -21,6 +21,8 @@ export const MAX_PROJECT_TAG_LENGTH = 40;
 export const MAX_PROJECT_SCENES = 100;
 export const MAX_SCENE_ELEMENTS = 500;
 export const MAX_ELEMENT_TEXT_LENGTH = 50_000;
+export const MAX_PROJECT_HISTORY_ENTRIES = 50;
+export const MAX_PROJECT_HISTORY_BYTES = 24_000_000;
 
 export type ImageAssetMetadata = {
   mime: string;
@@ -635,6 +637,7 @@ export type EditorSelection = {
 export type ProjectHistoryEntry = {
   project: MotusProject;
   selection: EditorSelection;
+  bytes: number;
 };
 
 export type ProjectHistoryState = {
@@ -650,14 +653,35 @@ export function createProjectHistoryEntry(
   project: MotusProject,
   selection: EditorSelection,
 ): ProjectHistoryEntry {
+  const snapshot = cloneProject(project);
   return {
-    project: cloneProject(project),
+    project: snapshot,
     selection: resolveEditorSelection(
       project,
       selection.sceneId,
       selection.elementId,
     ),
+    bytes: getProjectStorageBytes(snapshot),
   };
+}
+
+export function trimProjectHistory(
+  entries: ProjectHistoryEntry[],
+  entryLimit = MAX_PROJECT_HISTORY_ENTRIES,
+  byteLimit = MAX_PROJECT_HISTORY_BYTES,
+): ProjectHistoryEntry[] {
+  const candidates = entries.slice(-Math.max(1, Math.floor(entryLimit)));
+  const safeByteLimit = Math.max(1, Math.floor(byteLimit));
+  const kept: ProjectHistoryEntry[] = [];
+  let bytes = 0;
+
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const entry = candidates[index];
+    if (kept.length > 0 && bytes + entry.bytes > safeByteLimit) break;
+    kept.unshift(entry);
+    bytes += entry.bytes;
+  }
+  return kept;
 }
 
 export function recordProjectHistory(
@@ -665,14 +689,17 @@ export function recordProjectHistory(
   project: MotusProject,
   selection: EditorSelection,
   transactionKey: string | null = null,
-  limit = 50,
+  limit = MAX_PROJECT_HISTORY_ENTRIES,
+  byteLimit = MAX_PROJECT_HISTORY_BYTES,
 ): ProjectHistoryState {
   const shouldCapture =
     transactionKey === null || history.transactionKey !== transactionKey;
   return {
     undoStack: shouldCapture
-      ? [...history.undoStack, createProjectHistoryEntry(project, selection)].slice(
-          -Math.max(1, limit),
+      ? trimProjectHistory(
+          [...history.undoStack, createProjectHistoryEntry(project, selection)],
+          limit,
+          byteLimit,
         )
       : history.undoStack,
     transactionKey,

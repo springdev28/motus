@@ -99,6 +99,7 @@ import {
   restoreProjectWithError,
   shouldAutosaveDraft,
   shouldWarnBeforeDraftExit,
+  trimProjectHistory,
   transformElementByPointer,
   validateImageAsset,
   writeDraftJournal,
@@ -769,12 +770,13 @@ export function MotusStudio() {
     endHistoryTransaction();
     const previous = undoStack.current.pop();
     if (!previous) return;
-    redoStack.current.push(
+    redoStack.current = trimProjectHistory([
+      ...redoStack.current,
       createProjectHistoryEntry(project, {
         sceneId: activeScene.id,
         elementId: selectedElementId,
       }),
-    );
+    ]);
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
     setIsDirty(true);
@@ -790,12 +792,13 @@ export function MotusStudio() {
     endHistoryTransaction();
     const next = redoStack.current.pop();
     if (!next) return;
-    undoStack.current.push(
+    undoStack.current = trimProjectHistory([
+      ...undoStack.current,
       createProjectHistoryEntry(project, {
         sceneId: activeScene.id,
         elementId: selectedElementId,
       }),
-    );
+    ]);
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
     setIsDirty(true);
@@ -1252,13 +1255,13 @@ export function MotusStudio() {
       setNotice('Revision could not be restored');
       return;
     }
-    undoStack.current = [
+    undoStack.current = trimProjectHistory([
       ...undoStack.current,
       createProjectHistoryEntry(project, {
         sceneId: activeScene.id,
         elementId: selectedElementId,
       }),
-    ].slice(-50);
+    ]);
     redoStack.current = [];
     endHistoryTransaction();
     setCanUndo(true);
@@ -1296,13 +1299,13 @@ export function MotusStudio() {
     function onMove(pointer: PointerEvent) {
       if (pointer.pointerId !== pointerId) return;
       if (!moved) {
-        undoStack.current = [
+        undoStack.current = trimProjectHistory([
           ...undoStack.current,
           createProjectHistoryEntry(project, {
             sceneId: activeScene.id,
             elementId,
           }),
-        ].slice(-50);
+        ]);
         redoStack.current = [];
         endHistoryTransaction();
         setCanUndo(true);

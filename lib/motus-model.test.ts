@@ -39,6 +39,7 @@ import {
   restoreProjectWithError,
   shouldAutosaveDraft,
   shouldWarnBeforeDraftExit,
+  trimProjectHistory,
   transformElementByPointer,
   type ProjectHistoryState,
   validateImageAsset,
@@ -198,6 +199,35 @@ void test('history entries clone projects and repair stale selection', () => {
     sceneId: 'scene-1',
     elementId: 'scene-1-speech',
   });
+  assert.equal(entry.bytes, getProjectStorageBytes(entry.project));
+});
+
+void test('history pruning keeps the newest contiguous snapshots within budget', () => {
+  const projects = ['Oldest', 'Middle', 'Newest'].map((title) => {
+    const project = createDefaultProject();
+    project.title = title;
+    return project;
+  });
+  const entries = projects.map((project) => createProjectHistoryEntry(project, {
+    sceneId: 'scene-1',
+    elementId: 'scene-1-orb',
+  }));
+  const newestPairBytes = entries[1].bytes + entries[2].bytes;
+
+  const budgeted = trimProjectHistory(entries, 50, newestPairBytes);
+  assert.deepEqual(
+    budgeted.map((entry) => entry.project.title),
+    ['Middle', 'Newest'],
+  );
+  assert.deepEqual(
+    trimProjectHistory(entries, 1).map((entry) => entry.project.title),
+    ['Newest'],
+  );
+  assert.deepEqual(
+    trimProjectHistory([entries[2]], 50, 1).map((entry) => entry.project.title),
+    ['Newest'],
+  );
+  assert.equal(entries.length, 3);
 });
 
 void test('external draft adoption clears undo, redo, and open transactions', () => {
