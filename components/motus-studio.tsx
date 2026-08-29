@@ -468,6 +468,7 @@ export function MotusStudio() {
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const canvasStage = useRef<HTMLDivElement>(null);
+  const readerScroll = useRef<HTMLDivElement>(null);
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
@@ -1567,6 +1568,11 @@ export function MotusStudio() {
     setPreviewKey((key) => key + 1);
     setNotice('Preview replayed');
   };
+  const replayReader = () => {
+    readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
+    setPreviewKey((key) => key + 1);
+    setNotice('Reader replayed from the first scene');
+  };
   const requestNewWork = () => {
     activePointerCleanup.current?.();
     endHistoryTransaction();
@@ -2187,15 +2193,23 @@ export function MotusStudio() {
               </div>
             </section>
           ) : (
-            <div className="reader-scroll">
-              {readerSource.scenes.map((scene, index) => (
-                <ReaderScene
-                  index={index}
-                  key={`${scene.id}-${previewKey}`}
-                  scene={scene}
-                  sessionKey={previewKey || 1}
-                />
-              ))}
+            <div className="reader-content">
+              <div className="reader-toolbar">
+                <span>Motion plays as each scene enters view.</span>
+                <Button onClick={replayReader} size="sm" variant="secondary">
+                  <Play fill="currentColor" />Replay from start
+                </Button>
+              </div>
+              <div className="reader-scroll" ref={readerScroll}>
+                {readerSource.scenes.map((scene, index) => (
+                  <ReaderScene
+                    index={index}
+                    key={`${scene.id}-${previewKey}`}
+                    scene={scene}
+                    sessionKey={previewKey || 1}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </DialogContent>
