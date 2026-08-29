@@ -212,7 +212,6 @@
 .layer-select:focus-visible,
 .layer-actions button:focus-visible,
 .zoom-control button:focus-visible,
-.resize-handle:focus-visible,
 .scene-thumbnail:focus-visible {
   position: relative;
   z-index: 2;

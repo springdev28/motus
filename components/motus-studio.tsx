@@ -348,18 +348,19 @@ function SceneView({
           >
             {renderElementContent(element)}
             {selected && interactive && !element.locked ? (
-              <button
-                aria-label={`Resize ${element.name}`}
+              // Pointer resize stays visual-only; keyboard users resize through the inspector fields.
+              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+              <span
+                aria-hidden="true"
                 className="resize-handle"
-                onClick={(event) => event.stopPropagation()}
                 onPointerDown={(event) => {
                   event.stopPropagation();
                   onPointerAction?.(event, element.id, 'resize');
                 }}
-                type="button"
+                title={`Drag to resize ${element.name}`}
               >
                 <Maximize2 />
-              </button>
+              </span>
             ) : null}
           </div>
         );
