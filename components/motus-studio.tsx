@@ -110,6 +110,7 @@ import {
   restoreProject,
   restoreProjectWithError,
   shouldAutosaveDraft,
+  shouldEndContinuousHistoryOnKey,
   shouldWarnBeforeDraftExit,
   trimProjectHistory,
   transformElementByPointer,
@@ -1580,6 +1581,9 @@ export function MotusStudio() {
   const textHistoryProps = { onBlur: endHistoryTransaction };
   const continuousHistoryProps = {
     onBlur: endHistoryTransaction,
+    onKeyUp: (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (shouldEndContinuousHistoryOnKey(event.key)) endHistoryTransaction();
+    },
     onPointerCancel: endHistoryTransaction,
     onPointerUp: endHistoryTransaction,
   };

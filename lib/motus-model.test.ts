@@ -41,6 +41,7 @@ import {
   restoreProject,
   restoreProjectWithError,
   shouldAutosaveDraft,
+  shouldEndContinuousHistoryOnKey,
   shouldWarnBeforeDraftExit,
   trimProjectHistory,
   transformElementByPointer,
@@ -322,6 +323,24 @@ void test('keyboard nudges use precise and accelerated canvas steps', () => {
   const moved = transformElementByPointer(source, 'move', delta.x, delta.y);
   assert.equal(moved.x, 0);
   assert.equal(moved.y, 0);
+});
+
+void test('continuous controls close undo transactions after adjustment keys', () => {
+  for (const key of [
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+    'ArrowUp',
+    'End',
+    'Home',
+    'PageDown',
+    'PageUp',
+  ]) {
+    assert.equal(shouldEndContinuousHistoryOnKey(key), true, key);
+  }
+
+  assert.equal(shouldEndContinuousHistoryOnKey('1'), false);
+  assert.equal(shouldEndContinuousHistoryOnKey('Enter'), false);
 });
 
 void test('restored drafts normalize invalid element geometry', () => {

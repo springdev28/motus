@@ -442,6 +442,19 @@ export function getKeyboardNudgeDelta(
   return null;
 }
 
+export function shouldEndContinuousHistoryOnKey(key: string): boolean {
+  return [
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+    'ArrowUp',
+    'End',
+    'Home',
+    'PageDown',
+    'PageUp',
+  ].includes(key);
+}
+
 export function compileElementMotion(element: MotusElement): CompiledElementMotion {
   const instruction = migrateMotion(element.motion);
   return {
