@@ -23,6 +23,7 @@ import {
   hasUnpublishedChanges,
   getPublicationReadiness,
   getDraftSaveStatus,
+  getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
   getTabIndexForKey,
@@ -323,6 +324,13 @@ void test('keyboard nudges use precise and accelerated canvas steps', () => {
   const moved = transformElementByPointer(source, 'move', delta.x, delta.y);
   assert.equal(moved.x, 0);
   assert.equal(moved.y, 0);
+});
+
+void test('canvas fit sizing respects both workspace axes and safe fallbacks', () => {
+  assert.equal(getFitCanvasWidth(800, 600, 48, 48), 414);
+  assert.equal(getFitCanvasWidth(500, 1_000, 48, 48), 452);
+  assert.equal(getFitCanvasWidth(160, 160, 24, 24), 180);
+  assert.equal(getFitCanvasWidth(Number.NaN, 600), 430);
 });
 
 void test('continuous controls close undo transactions after adjustment keys', () => {

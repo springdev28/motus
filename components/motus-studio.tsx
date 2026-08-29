@@ -90,6 +90,7 @@ import {
   detectImageFormat,
   getPublicationReadiness,
   getDraftSaveStatus,
+  getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
   getTabIndexForKey,
@@ -435,7 +436,8 @@ export function MotusStudio() {
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
   const [selectedElementId, setSelectedElementId] = useState('scene-1-orb');
   const [inspectorTab, setInspectorTab] = useState<'design' | 'motion'>('design');
-  const [zoom, setZoom] = useState(64);
+  const [zoom, setZoom] = useState(100);
+  const [fitCanvasWidth, setFitCanvasWidth] = useState(430);
   const [previewKey, setPreviewKey] = useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
@@ -465,6 +467,7 @@ export function MotusStudio() {
   const historyTransaction = useRef<string | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
+  const canvasStage = useRef<HTMLDivElement>(null);
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
@@ -1506,7 +1509,33 @@ export function MotusStudio() {
     };
   });
 
-  const artboardWidth = Math.round(430 * (zoom / 64));
+  useEffect(() => {
+    const stage = canvasStage.current;
+    if (!stage) return;
+
+    const updateFitWidth = () => {
+      const style = window.getComputedStyle(stage);
+      const horizontalPadding =
+        Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+      const verticalPadding =
+        Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+      const nextWidth = getFitCanvasWidth(
+        stage.clientWidth,
+        stage.clientHeight,
+        horizontalPadding,
+        verticalPadding,
+      );
+      setFitCanvasWidth((current) => current === nextWidth ? current : nextWidth);
+    };
+
+    updateFitWidth();
+    if (!('ResizeObserver' in window)) return;
+    const observer = new ResizeObserver(updateFitWidth);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
+
+  const artboardWidth = Math.round(fitCanvasWidth * (zoom / 100));
   const publicationHasChanges = hasUnpublishedChanges(project);
   const publicationReadiness = getPublicationReadiness(project);
   const draftSaveStatus = getDraftSaveStatus({
@@ -1776,11 +1805,12 @@ export function MotusStudio() {
           <div className="workspace-toolbar">
             <div className="canvas-status"><Move /><span id="canvas-instructions">Drag or use arrow keys · Shift moves 10 px</span><kbd>⌘D duplicate</kbd><kbd>⌫ delete</kbd></div>
             <output aria-live="polite" className="workspace-notice">{displayedNotice}</output>
-            <div className="zoom-control" aria-label="Canvas zoom">
-              <button aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(40, value - 8))} type="button">−</button>
+            <fieldset className="zoom-control" aria-label="Canvas zoom">
+              <button aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 10))} type="button">−</button>
               <span>{zoom}%</span>
-              <button aria-label="Zoom in" onClick={() => setZoom((value) => Math.min(96, value + 8))} type="button">+</button>
-            </div>
+              <button aria-label="Zoom in" disabled={zoom >= 160} onClick={() => setZoom((value) => Math.min(160, value + 10))} type="button">+</button>
+              <button aria-label="Fit canvas" className="zoom-fit" disabled={zoom === 100} onClick={() => setZoom(100)} type="button">Fit</button>
+            </fieldset>
           </div>
 
           <div
@@ -1790,6 +1820,7 @@ export function MotusStudio() {
             onKeyDown={(event) => {
               if (event.key === 'Escape') setSelectedElementId('');
             }}
+            ref={canvasStage}
             role="presentation"
           >
             <div className="artboard-frame" style={{ width: `${artboardWidth}px` }}>

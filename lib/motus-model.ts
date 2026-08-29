@@ -442,6 +442,38 @@ export function getKeyboardNudgeDelta(
   return null;
 }
 
+export function getFitCanvasWidth(
+  containerWidth: number,
+  containerHeight: number,
+  horizontalPadding = 0,
+  verticalPadding = 0,
+): number {
+  if (
+    !Number.isFinite(containerWidth) ||
+    !Number.isFinite(containerHeight) ||
+    containerWidth <= 0 ||
+    containerHeight <= 0
+  ) {
+    return 430;
+  }
+
+  const safeHorizontalPadding = Number.isFinite(horizontalPadding)
+    ? Math.max(0, horizontalPadding)
+    : 0;
+  const safeVerticalPadding = Number.isFinite(verticalPadding)
+    ? Math.max(0, verticalPadding)
+    : 0;
+  const availableWidth = Math.max(0, containerWidth - safeHorizontalPadding);
+  const availableHeight = Math.max(0, containerHeight - safeVerticalPadding);
+  const fittedWidth = Math.min(
+    availableWidth,
+    availableHeight * (CANVAS_WIDTH / CANVAS_HEIGHT),
+    CANVAS_WIDTH,
+  );
+
+  return Math.max(180, Math.floor(fittedWidth));
+}
+
 export function shouldEndContinuousHistoryOnKey(key: string): boolean {
   return [
     'ArrowDown',
