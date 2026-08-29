@@ -8,6 +8,8 @@ import {
   MIN_ELEMENT_WIDTH,
   MOTION_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
+  canAddElementToScene,
+  canAddSceneToProject,
   compileElementMotion,
   createBlankProject,
   constrainElementToCanvas,
@@ -615,6 +617,20 @@ void test('scene ordering keeps boundary scenes in place', () => {
     reorderScenes(scenes, 'scene-3', 1).map((scene) => scene.id),
     ['scene-1', 'scene-2', 'scene-3'],
   );
+});
+
+void test('editor capacity matches project validation limits', () => {
+  const project = createDefaultProject();
+  const scene = project.scenes[0];
+
+  assert.equal(canAddSceneToProject(project), true);
+  assert.equal(canAddElementToScene(scene), true);
+
+  project.scenes = Array.from({ length: 100 }, () => scene);
+  scene.elements = Array.from({ length: 500 }, () => scene.elements[0]);
+
+  assert.equal(canAddSceneToProject(project), false);
+  assert.equal(canAddElementToScene(scene), false);
 });
 
 void test('layer deletion selects the adjacent layer without mutating the list', () => {

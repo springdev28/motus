@@ -18,9 +18,9 @@ export const MAX_PROJECT_FILE_BYTES = 12_000_000;
 export const MAX_PROJECT_TITLE_LENGTH = 160;
 export const MAX_PROJECT_TAGS = 8;
 export const MAX_PROJECT_TAG_LENGTH = 40;
-const MAX_PROJECT_SCENES = 100;
-const MAX_SCENE_ELEMENTS = 500;
-const MAX_ELEMENT_TEXT_LENGTH = 50_000;
+export const MAX_PROJECT_SCENES = 100;
+export const MAX_SCENE_ELEMENTS = 500;
+export const MAX_ELEMENT_TEXT_LENGTH = 50_000;
 
 export type ImageAssetMetadata = {
   mime: string;
@@ -585,6 +585,14 @@ export function reorderScenes(
   if (index < 0 || target < 0 || target >= ordered.length) return ordered;
   [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
   return ordered;
+}
+
+export function canAddSceneToProject(project: Pick<MotusProject, 'scenes'>): boolean {
+  return project.scenes.length < MAX_PROJECT_SCENES;
+}
+
+export function canAddElementToScene(scene: Pick<MotusScene, 'elements'>): boolean {
+  return scene.elements.length < MAX_SCENE_ELEMENTS;
 }
 
 export function resolveSelectionAfterElementDeletion(

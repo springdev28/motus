@@ -59,10 +59,15 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  MAX_ELEMENT_TEXT_LENGTH,
   MAX_PROJECT_FILE_BYTES,
+  MAX_PROJECT_SCENES,
   MAX_PROJECT_TITLE_LENGTH,
+  MAX_SCENE_ELEMENTS,
   MIN_ELEMENT_HEIGHT,
   MIN_ELEMENT_WIDTH,
+  canAddElementToScene,
+  canAddSceneToProject,
   cloneProject,
   compileElementMotion,
   constrainElementToCanvas,
@@ -709,6 +714,10 @@ export function MotusStudio() {
   };
 
   const addElement = (type: ElementType, overrides: Partial<MotusElement> = {}) => {
+    if (!canAddElementToScene(activeScene)) {
+      setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
+      return;
+    }
     const index = activeScene.elements.length + 1;
     const element = createElement(type, index, overrides);
     commitProject((draft) => {
@@ -772,6 +781,13 @@ export function MotusStudio() {
   const runTool = (toolId: string) => {
     setActiveTool(toolId);
     if (toolId === 'select') return;
+    if (
+      ['image', 'text', 'shape', 'speech'].includes(toolId) &&
+      !canAddElementToScene(activeScene)
+    ) {
+      setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
+      return;
+    }
     if (toolId === 'image') {
       imageInput.current?.click();
       return;
@@ -869,6 +885,10 @@ export function MotusStudio() {
   };
 
   const duplicateElement = (elementId: string) => {
+    if (!canAddElementToScene(activeScene)) {
+      setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
+      return;
+    }
     const source = findElement(project, activeScene.id, elementId);
     if (!source) return;
     const copy = structuredClone(source);
@@ -886,6 +906,10 @@ export function MotusStudio() {
   };
 
   const addScene = () => {
+    if (!canAddSceneToProject(project)) {
+      setNotice(`This work has reached the ${MAX_PROJECT_SCENES}-scene limit`);
+      return;
+    }
     const id = uniqueId('scene');
     const nextScene: MotusScene = {
       id,
@@ -900,6 +924,10 @@ export function MotusStudio() {
   };
 
   const duplicateScene = () => {
+    if (!canAddSceneToProject(project)) {
+      setNotice(`This work has reached the ${MAX_PROJECT_SCENES}-scene limit`);
+      return;
+    }
     const copy = structuredClone(activeScene);
     copy.id = uniqueId('scene');
     copy.name = `${activeScene.name} copy`;
@@ -1508,7 +1536,7 @@ export function MotusStudio() {
                   <div className="property-stack">
                     <label htmlFor="selected-layer-name"><span>Layer name</span><Input {...textHistoryProps} id="selected-layer-name" onChange={(event) => updateElement(selectedElement.id, (item) => { item.name = event.target.value; }, `element:${selectedElement.id}:name`)} value={selectedElement.name} /></label>
                     {(selectedElement.type === 'text' || selectedElement.type === 'speech') ? (
-                      <label htmlFor="selected-layer-text"><span>Text</span><Textarea {...textHistoryProps} id="selected-layer-text" onChange={(event) => updateElement(selectedElement.id, (item) => { item.text = event.target.value; }, `element:${selectedElement.id}:text`)} value={selectedElement.text ?? ''} /></label>
+                      <label htmlFor="selected-layer-text"><span>Text</span><Textarea {...textHistoryProps} id="selected-layer-text" maxLength={MAX_ELEMENT_TEXT_LENGTH} onChange={(event) => updateElement(selectedElement.id, (item) => { item.text = event.target.value; }, `element:${selectedElement.id}:text`)} value={selectedElement.text ?? ''} /></label>
                     ) : null}
                     {selectedElement.type !== 'image' ? (
                       <label className="color-control"><span>Color</span><input {...continuousHistoryProps} aria-label="Element color" onChange={(event) => updateElement(selectedElement.id, (item) => { item.fill = event.target.value; }, `element:${selectedElement.id}:fill`)} type="color" value={selectedElement.fill} /><output>{selectedElement.fill}</output></label>
