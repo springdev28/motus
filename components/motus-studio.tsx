@@ -301,6 +301,7 @@ function DraggableBlockPaletteCard({
       data-disabled={disabled || undefined}
       data-dragging={isDragging || undefined}
       ref={setNodeRef}
+      title={entry.description}
     >
       <button
         aria-label={`Add ${entry.label} block. ${entry.description}`}
@@ -316,14 +317,13 @@ function DraggableBlockPaletteCard({
         </span>
         <span className="block-palette-card-copy">
           <strong>{entry.label}</strong>
-          <small>{entry.description}</small>
-          <span className="block-palette-card-fields">
+          <small className="block-palette-card-fields">
             {entry.parameters.length
               ? entry.parameters.map((parameter) => parameter.label).join(' · ')
               : entry.kind === 'wait'
                 ? 'Editable wait time'
                 : 'Editable duration and easing'}
-          </span>
+          </small>
         </span>
         <Plus aria-hidden="true" />
       </button>
@@ -442,7 +442,7 @@ function MotionProgramDropzone({
         {children}
         <li aria-hidden={!active} className="block-program-drop-hint">
           <Plus aria-hidden="true" />
-          <span>{active ? 'Drop to add at the end' : 'Drag blocks here'}</span>
+          <span>{active ? 'Drop at end' : 'Add block'}</span>
         </li>
       </ol>
     </SortableContext>
@@ -859,10 +859,7 @@ function BouncePathPreview({ jumps }: { jumps: BounceJump[] }) {
           </g>
         ))}
       </svg>
-      <figcaption>
-        Each arc is independent—reverse it, raise it, or widen it without
-        automatic decay.
-      </figcaption>
+      <figcaption>{jumps.length} jump path</figcaption>
     </figure>
   );
 }
@@ -1170,6 +1167,9 @@ export function MotusStudio() {
   const [blockPaletteSearch, setBlockPaletteSearch] = useState('');
   const [activeMotionDrag, setActiveMotionDrag] =
     useState<ActiveMotionDrag | null>(null);
+  const [expandedMotionBlockId, setExpandedMotionBlockId] = useState<
+    string | null
+  >(null);
   const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
   const [publishTagsInput, setPublishTagsInput] = useState(
     'science fiction, mystery',
@@ -1851,6 +1851,7 @@ export function MotusStudio() {
         ? `${block.label} block inserted into the program`
         : `${block.label} block added`,
     );
+    setExpandedMotionBlockId(kind === 'bounce' ? block.id : null);
   };
 
   const startMotionDrag = (event: DragStartEvent) => {
@@ -3476,11 +3477,17 @@ export function MotusStudio() {
             <div className="canvas-status">
               <Move />
               <span id="canvas-instructions">
-                Drag, paste, or use arrow keys · Shift moves 10 px
+                {inspectorTab === 'motion'
+                  ? 'Stage preview'
+                  : 'Drag, paste, or use arrow keys · Shift moves 10 px'}
               </span>
-              <kbd>⌘/Ctrl+S save</kbd>
-              <kbd>⌘/Ctrl+C/X/V layer</kbd>
-              <kbd>⌫ delete</kbd>
+              {inspectorTab === 'design' ? (
+                <>
+                  <kbd>⌘/Ctrl+S save</kbd>
+                  <kbd>⌘/Ctrl+C/X/V layer</kbd>
+                  <kbd>⌫ delete</kbd>
+                </>
+              ) : null}
             </div>
             <output aria-live="polite" className="workspace-notice">
               {displayedNotice}
@@ -3972,6 +3979,7 @@ export function MotusStudio() {
                       },
                     }}
                     collisionDetection={closestCenter}
+                    id={`motion-program-${selectedElement.id}`}
                     onDragCancel={cancelMotionDrag}
                     onDragEnd={finishMotionDrag}
                     onDragStart={startMotionDrag}
@@ -3979,16 +3987,18 @@ export function MotusStudio() {
                   >
                     <div className="property-stack motion-properties">
                       <section className="block-workspace-intro">
-                        <Code2 aria-hidden="true" />
                         <div>
-                          <span>BLOCK WORKSPACE</span>
-                          <strong>Build motion like a program</strong>
-                          <p>
-                            Drag blocks into the stack, snap them into order,
-                            and edit every value. Preview and reader run the
-                            same sequence.
-                          </p>
+                          <span>BLOCKS</span>
+                          <strong>{selectedElement.name}</strong>
                         </div>
+                        <small>
+                          {selectedElement.motion.blocks.length} blocks ·{' '}
+                          {
+                            compileElementMotion(selectedElement)
+                              .sequenceDurationMs
+                          }{' '}
+                          ms
+                        </small>
                         <Button
                           onClick={() => setPreviewKey((key) => key + 1)}
                           size="sm"
@@ -4004,16 +4014,22 @@ export function MotusStudio() {
                       >
                         <header className="block-palette-header">
                           <div>
-                            <span>BLOCK LIBRARY</span>
+                            <span>LIBRARY</span>
                             <h2 id="block-palette-title">
-                              {ADDABLE_MOTION_BLOCK_CATALOG.length} editable
-                              blocks
+                              {normalizedBlockPaletteSearch
+                                ? 'Search results'
+                                : blockPaletteCategory === 'all'
+                                  ? 'All blocks'
+                                  : (ADDABLE_MOTION_BLOCK_CATEGORIES.find(
+                                      (category) =>
+                                        category.id === blockPaletteCategory,
+                                    )?.label ?? 'Blocks')}
                             </h2>
                           </div>
                           <small>
                             {MAX_MOTION_BLOCKS -
                               selectedElement.motion.blocks.length}{' '}
-                            slots left
+                            left
                           </small>
                         </header>
 
@@ -4035,7 +4051,7 @@ export function MotusStudio() {
                                 setBlockPaletteSearch('');
                               }
                             }}
-                            placeholder={`Search ${ADDABLE_MOTION_BLOCK_CATALOG.length} blocks…`}
+                            placeholder="Search blocks"
                             type="search"
                             value={blockPaletteSearch}
                           />
@@ -4206,14 +4222,14 @@ export function MotusStudio() {
                             variant="outline"
                           >
                             <LibraryBig />
-                            Browse editable presets
+                            Presets
                           </Button>
                         </footer>
                       </section>
 
                       <div className="block-program-heading">
                         <div>
-                          <span>PROGRAM STACK</span>
+                          <span>SCRIPT</span>
                           <strong>
                             {selectedElement.motion.blocks.length} blocks ·{' '}
                             {
@@ -4223,7 +4239,7 @@ export function MotusStudio() {
                             ms
                           </strong>
                         </div>
-                        <small>Drag to reorder · runs top to bottom</small>
+                        <small>{selectedElement.name}</small>
                       </div>
 
                       <MotionProgramDropzone
@@ -4245,359 +4261,212 @@ export function MotusStudio() {
                             );
                             const renderBlock = (
                               dragHandle: MotionBlockDragHandle | null,
-                            ) => (
-                              <>
-                                <div className="motion-block-head">
-                                  {dragHandle ? (
-                                    <button
-                                      {...dragHandle.attributes}
-                                      {...(dragHandle.listeners ?? {})}
-                                      aria-label={`Drag ${block.label}, step ${blockIndex}. Use arrow keys after picking it up, or use the move earlier and later buttons.`}
-                                      className="motion-block-grip motion-block-drag-handle"
-                                      data-dragging={
-                                        dragHandle.isDragging || undefined
-                                      }
-                                      ref={dragHandle.setActivatorNodeRef}
-                                      title="Drag to reorder"
-                                      type="button"
-                                    >
-                                      {String(blockIndex + 1).padStart(2, '0')}
-                                    </button>
-                                  ) : (
-                                    <span className="motion-block-grip">
-                                      {String(blockIndex + 1).padStart(2, '0')}
-                                    </span>
-                                  )}
-                                  <div>
-                                    <small>
-                                      {block.category.toUpperCase()}
-                                    </small>
-                                    <strong>{block.label}</strong>
-                                  </div>
-                                  {!isEvent ? (
-                                    <div className="motion-block-actions">
-                                      <button
-                                        aria-label={`${block.enabled ? 'Disable' : 'Enable'} ${block.label}`}
-                                        aria-pressed={block.enabled}
-                                        className="motion-block-toggle"
-                                        onClick={() =>
-                                          updateMotionBlock(
-                                            block.id,
-                                            (item) => {
-                                              item.enabled = !item.enabled;
-                                            },
-                                          )
-                                        }
-                                        title={
-                                          block.enabled
-                                            ? 'Disable block'
-                                            : 'Enable block'
-                                        }
-                                        type="button"
-                                      >
-                                        {block.enabled ? <Eye /> : <EyeOff />}
-                                      </button>
-                                      <button
-                                        aria-label={`Move ${block.label} earlier`}
-                                        disabled={blockIndex <= 1}
-                                        onClick={() =>
-                                          moveMotionBlock(block.id, -1)
-                                        }
-                                        type="button"
-                                      >
-                                        <ArrowUp />
-                                      </button>
-                                      <button
-                                        aria-label={`Move ${block.label} later`}
-                                        disabled={
-                                          blockIndex ===
-                                          selectedElement.motion.blocks.length -
-                                            1
-                                        }
-                                        onClick={() =>
-                                          moveMotionBlock(block.id, 1)
-                                        }
-                                        type="button"
-                                      >
-                                        <ArrowDown />
-                                      </button>
-                                      <button
-                                        aria-label={`Duplicate ${block.label}`}
-                                        onClick={() =>
-                                          duplicateMotionBlock(block.id)
-                                        }
-                                        type="button"
-                                      >
-                                        <Copy />
-                                      </button>
-                                      <button
-                                        aria-label={`Remove ${block.label}`}
-                                        onClick={() =>
-                                          removeMotionBlock(block.id)
-                                        }
-                                        type="button"
-                                      >
-                                        <Trash2 />
-                                      </button>
-                                    </div>
-                                  ) : null}
-                                </div>
+                            ) => {
+                              const bounceExpanded =
+                                isBounce && expandedMotionBlockId === block.id;
+                              const bounceDuration = block.jumps.reduce(
+                                (total, jump) => total + jump.durationMs,
+                                0,
+                              );
 
-                                {isEvent ? (
-                                  <p>
-                                    Reader and preview use the same viewport
-                                    trigger.
-                                  </p>
-                                ) : null}
-                                {isBounce ? (
-                                  <>
-                                    <div className="block-summary-chips">
-                                      <span>
-                                        {block.jumps.length}{' '}
-                                        {block.jumps.length === 1
-                                          ? 'jump'
-                                          : 'jumps'}
+                              return (
+                                <>
+                                  <div className="motion-block-head">
+                                    {dragHandle ? (
+                                      <button
+                                        {...dragHandle.attributes}
+                                        {...(dragHandle.listeners ?? {})}
+                                        aria-label={`Drag ${block.label}, step ${blockIndex}. Use arrow keys after picking it up, or use the move menu.`}
+                                        className="motion-block-grip motion-block-drag-handle"
+                                        data-dragging={
+                                          dragHandle.isDragging || undefined
+                                        }
+                                        ref={dragHandle.setActivatorNodeRef}
+                                        title="Drag to reorder"
+                                        type="button"
+                                      >
+                                        {String(blockIndex + 1).padStart(
+                                          2,
+                                          '0',
+                                        )}
+                                      </button>
+                                    ) : (
+                                      <span className="motion-block-grip">
+                                        {String(blockIndex + 1).padStart(
+                                          2,
+                                          '0',
+                                        )}
                                       </span>
-                                      <span>
-                                        {block.jumps.reduce(
-                                          (total, jump) =>
-                                            total + jump.durationMs,
-                                          0,
-                                        )}{' '}
-                                        ms total
-                                      </span>
-                                      <span>
-                                        {
-                                          block.jumps.filter(
-                                            (jump) =>
-                                              jump.direction === 'right',
-                                          ).length
-                                        }{' '}
-                                        reversed
-                                      </span>
+                                    )}
+
+                                    <div className="motion-block-title">
+                                      <small>
+                                        {block.category.toUpperCase()}
+                                      </small>
+                                      <strong>{block.label}</strong>
                                     </div>
-                                    <BouncePathPreview jumps={block.jumps} />
-                                    <div className="bounce-jumps">
-                                      <div className="bounce-jumps-heading">
-                                        <div>
-                                          <strong>Jumps</strong>
-                                          <small>
-                                            Count comes from this list
-                                          </small>
-                                        </div>
-                                        <Button
-                                          disabled={
-                                            block.jumps.length >=
-                                            MAX_BOUNCE_JUMPS
-                                          }
-                                          onClick={() =>
-                                            addBounceJump(block.id)
-                                          }
-                                          size="sm"
-                                          variant="secondary"
-                                        >
-                                          <Plus />
-                                          Add jump
-                                        </Button>
-                                      </div>
-                                      {block.jumps.map((jump, jumpIndex) => (
-                                        <section
-                                          className="bounce-jump"
-                                          key={jump.id}
-                                        >
-                                          <div className="bounce-jump-head">
-                                            <strong>
-                                              Jump {jumpIndex + 1}
-                                            </strong>
-                                            <div>
-                                              <button
-                                                aria-label={`Move jump ${jumpIndex + 1} earlier`}
-                                                disabled={jumpIndex === 0}
-                                                onClick={() =>
-                                                  moveBounceJump(
-                                                    block.id,
-                                                    jump.id,
-                                                    -1,
-                                                  )
-                                                }
-                                                type="button"
-                                              >
-                                                <ArrowUp />
-                                              </button>
-                                              <button
-                                                aria-label={`Move jump ${jumpIndex + 1} later`}
-                                                disabled={
-                                                  jumpIndex ===
-                                                  block.jumps.length - 1
-                                                }
-                                                onClick={() =>
-                                                  moveBounceJump(
-                                                    block.id,
-                                                    jump.id,
-                                                    1,
-                                                  )
-                                                }
-                                                type="button"
-                                              >
-                                                <ArrowDown />
-                                              </button>
-                                              <button
-                                                aria-label={`Duplicate jump ${jumpIndex + 1}`}
-                                                disabled={
-                                                  block.jumps.length >=
-                                                  MAX_BOUNCE_JUMPS
-                                                }
-                                                onClick={() =>
-                                                  duplicateBounceJump(
-                                                    block.id,
-                                                    jump.id,
-                                                  )
-                                                }
-                                                type="button"
-                                              >
-                                                <Copy />
-                                              </button>
-                                              <button
-                                                aria-label={`Remove jump ${jumpIndex + 1}`}
-                                                disabled={
-                                                  block.jumps.length <= 1
-                                                }
-                                                onClick={() =>
-                                                  removeBounceJump(
-                                                    block.id,
-                                                    jump.id,
-                                                  )
-                                                }
-                                                type="button"
-                                              >
-                                                <Trash2 />
-                                              </button>
-                                            </div>
-                                          </div>
-                                          <div className="bounce-jump-controls">
-                                            <label
-                                              htmlFor={`jump-${jump.id}-direction`}
-                                            >
+
+                                    <div className="motion-block-inline-fields">
+                                      {isEvent ? (
+                                        <span className="motion-inline-token">
+                                          scene enters view
+                                        </span>
+                                      ) : isBounce ? (
+                                        <>
+                                          <span className="motion-inline-token">
+                                            {block.jumps.length}{' '}
+                                            {block.jumps.length === 1
+                                              ? 'jump'
+                                              : 'jumps'}
+                                          </span>
+                                          <span className="motion-inline-token">
+                                            {bounceDuration} ms
+                                          </span>
+                                          <button
+                                            aria-controls={`bounce-editor-${block.id}`}
+                                            aria-expanded={bounceExpanded}
+                                            className="motion-inline-edit"
+                                            onClick={() =>
+                                              setExpandedMotionBlockId(
+                                                bounceExpanded
+                                                  ? null
+                                                  : block.id,
+                                              )
+                                            }
+                                            type="button"
+                                          >
+                                            <Pencil aria-hidden="true" />
+                                            Path
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <>
+                                          {catalogEntry?.usesDirection ? (
+                                            <div className="motion-inline-field motion-inline-direction">
                                               <span>Direction</span>
                                               <NativeSelect
-                                                id={`jump-${jump.id}-direction`}
+                                                aria-label={`${block.label} direction`}
                                                 onChange={(event) =>
-                                                  updateBounceJump(
+                                                  updateMotionBlock(
                                                     block.id,
-                                                    jump.id,
                                                     (item) => {
                                                       item.direction = event
                                                         .target
-                                                        .value as BounceJump['direction'];
+                                                        .value as MotionBlock['direction'];
                                                     },
                                                   )
                                                 }
-                                                value={jump.direction}
+                                                size="sm"
+                                                value={block.direction}
                                               >
                                                 <NativeSelectOption value="left">
-                                                  ← Left
+                                                  Left
                                                 </NativeSelectOption>
                                                 <NativeSelectOption value="right">
-                                                  Right →
+                                                  Right
+                                                </NativeSelectOption>
+                                                <NativeSelectOption value="up">
+                                                  Up
+                                                </NativeSelectOption>
+                                                <NativeSelectOption value="down">
+                                                  Down
                                                 </NativeSelectOption>
                                               </NativeSelect>
-                                            </label>
-                                            <label
-                                              htmlFor={`jump-${jump.id}-height`}
-                                            >
-                                              <span>Height</span>
+                                            </div>
+                                          ) : null}
+                                          {catalogEntry?.parameters.map(
+                                            (parameter) => (
+                                              <label
+                                                className="motion-inline-field"
+                                                key={parameter.field}
+                                              >
+                                                <span>{parameter.label}</span>
+                                                <span className="motion-inline-number">
+                                                  <Input
+                                                    {...continuousHistoryProps}
+                                                    aria-label={`${block.label} ${parameter.label}`}
+                                                    max={parameter.max}
+                                                    min={parameter.min}
+                                                    onChange={(event) =>
+                                                      updateMotionBlock(
+                                                        block.id,
+                                                        (item) => {
+                                                          item[
+                                                            parameter.field
+                                                          ] = Number(
+                                                            event.target.value,
+                                                          );
+                                                        },
+                                                        `block:${block.id}:${parameter.field}`,
+                                                      )
+                                                    }
+                                                    step={parameter.step}
+                                                    type="number"
+                                                    value={
+                                                      block[parameter.field]
+                                                    }
+                                                  />
+                                                  {parameter.unit ? (
+                                                    <small aria-hidden="true">
+                                                      {parameter.unit}
+                                                    </small>
+                                                  ) : null}
+                                                </span>
+                                              </label>
+                                            ),
+                                          )}
+                                          <label className="motion-inline-field">
+                                            <span>
+                                              {block.kind === 'wait'
+                                                ? 'Wait'
+                                                : 'Duration'}
+                                            </span>
+                                            <span className="motion-inline-number motion-inline-duration">
                                               <Input
                                                 {...continuousHistoryProps}
-                                                id={`jump-${jump.id}-height`}
-                                                max="2000"
-                                                min="0"
-                                                onChange={(event) =>
-                                                  updateBounceJump(
-                                                    block.id,
-                                                    jump.id,
-                                                    (item) => {
-                                                      item.height = Number(
-                                                        event.target.value,
-                                                      );
-                                                    },
-                                                    `jump:${jump.id}:height`,
-                                                  )
-                                                }
-                                                step="5"
-                                                type="number"
-                                                value={jump.height}
-                                              />
-                                            </label>
-                                            <label
-                                              htmlFor={`jump-${jump.id}-spread`}
-                                            >
-                                              <span>Spread</span>
-                                              <Input
-                                                {...continuousHistoryProps}
-                                                id={`jump-${jump.id}-spread`}
-                                                max="2000"
-                                                min="0"
-                                                onChange={(event) =>
-                                                  updateBounceJump(
-                                                    block.id,
-                                                    jump.id,
-                                                    (item) => {
-                                                      item.spread = Number(
-                                                        event.target.value,
-                                                      );
-                                                    },
-                                                    `jump:${jump.id}:spread`,
-                                                  )
-                                                }
-                                                step="5"
-                                                type="number"
-                                                value={jump.spread}
-                                              />
-                                            </label>
-                                            <label
-                                              htmlFor={`jump-${jump.id}-duration`}
-                                            >
-                                              <span>Time ms</span>
-                                              <Input
-                                                {...continuousHistoryProps}
-                                                id={`jump-${jump.id}-duration`}
+                                                aria-label={`${block.label} ${block.kind === 'wait' ? 'wait' : 'duration'}`}
                                                 max="10000"
-                                                min="80"
+                                                min={
+                                                  block.kind === 'wait'
+                                                    ? 0
+                                                    : 100
+                                                }
                                                 onChange={(event) =>
-                                                  updateBounceJump(
+                                                  updateMotionBlock(
                                                     block.id,
-                                                    jump.id,
                                                     (item) => {
                                                       item.durationMs = Number(
                                                         event.target.value,
                                                       );
                                                     },
-                                                    `jump:${jump.id}:duration`,
+                                                    `block:${block.id}:duration`,
                                                   )
                                                 }
-                                                step="20"
+                                                step="50"
                                                 type="number"
-                                                value={jump.durationMs}
+                                                value={block.durationMs}
                                               />
-                                            </label>
-                                            <label
-                                              className="bounce-easing"
-                                              htmlFor={`jump-${jump.id}-easing`}
-                                            >
+                                              <small aria-hidden="true">
+                                                ms
+                                              </small>
+                                            </span>
+                                          </label>
+                                          {isAction ? (
+                                            <div className="motion-inline-field motion-inline-easing">
                                               <span>Easing</span>
                                               <NativeSelect
-                                                id={`jump-${jump.id}-easing`}
+                                                aria-label={`${block.label} easing`}
                                                 onChange={(event) =>
-                                                  updateBounceJump(
+                                                  updateMotionBlock(
                                                     block.id,
-                                                    jump.id,
                                                     (item) => {
                                                       item.easing = event.target
                                                         .value as Easing;
                                                     },
                                                   )
                                                 }
-                                                value={jump.easing}
+                                                size="sm"
+                                                value={block.easing}
                                               >
                                                 <NativeSelectOption value="linear">
                                                   Linear
@@ -4609,158 +4478,355 @@ export function MotusStudio() {
                                                   Ease in/out
                                                 </NativeSelectOption>
                                               </NativeSelect>
-                                            </label>
-                                          </div>
-                                        </section>
-                                      ))}
+                                            </div>
+                                          ) : null}
+                                        </>
+                                      )}
                                     </div>
-                                  </>
-                                ) : null}
-                                {!isEvent && !isBounce && catalogEntry ? (
-                                  <div className="motion-block-grid motion-block-parameters">
-                                    {catalogEntry.usesDirection ? (
-                                      <label
-                                        htmlFor={`motion-${block.id}-direction`}
-                                      >
-                                        <span>Direction</span>
-                                        <NativeSelect
-                                          id={`motion-${block.id}-direction`}
-                                          onChange={(event) =>
+
+                                    {!isEvent ? (
+                                      <div className="motion-block-actions">
+                                        <button
+                                          aria-label={`${block.enabled ? 'Disable' : 'Enable'} ${block.label}`}
+                                          aria-pressed={block.enabled}
+                                          className="motion-block-toggle"
+                                          onClick={() =>
                                             updateMotionBlock(
                                               block.id,
                                               (item) => {
-                                                item.direction = event.target
-                                                  .value as MotionBlock['direction'];
+                                                item.enabled = !item.enabled;
                                               },
                                             )
                                           }
-                                          value={block.direction}
+                                          title={
+                                            block.enabled
+                                              ? 'Disable block'
+                                              : 'Enable block'
+                                          }
+                                          type="button"
                                         >
-                                          <NativeSelectOption value="left">
-                                            Left
-                                          </NativeSelectOption>
-                                          <NativeSelectOption value="right">
-                                            Right
-                                          </NativeSelectOption>
-                                          <NativeSelectOption value="up">
-                                            Top
-                                          </NativeSelectOption>
-                                          <NativeSelectOption value="down">
-                                            Bottom
-                                          </NativeSelectOption>
-                                        </NativeSelect>
-                                      </label>
-                                    ) : null}
-                                    {catalogEntry.parameters.map(
-                                      (parameter) => (
-                                        <label
-                                          htmlFor={`motion-${block.id}-${parameter.field}`}
-                                          key={parameter.field}
-                                        >
-                                          <span>{parameter.label}</span>
-                                          <div className="motion-parameter-input">
-                                            <Input
-                                              {...continuousHistoryProps}
-                                              id={`motion-${block.id}-${parameter.field}`}
-                                              max={parameter.max}
-                                              min={parameter.min}
-                                              onChange={(event) =>
-                                                updateMotionBlock(
-                                                  block.id,
-                                                  (item) => {
-                                                    item[parameter.field] =
-                                                      Number(
-                                                        event.target.value,
-                                                      );
-                                                  },
-                                                  `block:${block.id}:${parameter.field}`,
-                                                )
+                                          {block.enabled ? <Eye /> : <EyeOff />}
+                                        </button>
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger
+                                            render={
+                                              <button
+                                                aria-label={`More actions for ${block.label}`}
+                                                type="button"
+                                              />
+                                            }
+                                          >
+                                            <Ellipsis />
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent
+                                            align="end"
+                                            className="min-w-44"
+                                            sideOffset={6}
+                                          >
+                                            <DropdownMenuItem
+                                              className="min-h-9 px-2.5"
+                                              disabled={blockIndex <= 1}
+                                              onClick={() =>
+                                                moveMotionBlock(block.id, -1)
                                               }
-                                              step={parameter.step}
-                                              type="number"
-                                              value={block[parameter.field]}
-                                            />
-                                            {parameter.unit ? (
-                                              <small aria-hidden="true">
-                                                {parameter.unit}
-                                              </small>
-                                            ) : null}
-                                          </div>
-                                        </label>
-                                      ),
-                                    )}
+                                            >
+                                              <ArrowUp />
+                                              Move earlier
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              className="min-h-9 px-2.5"
+                                              disabled={
+                                                blockIndex ===
+                                                selectedElement.motion.blocks
+                                                  .length -
+                                                  1
+                                              }
+                                              onClick={() =>
+                                                moveMotionBlock(block.id, 1)
+                                              }
+                                            >
+                                              <ArrowDown />
+                                              Move later
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                              className="min-h-9 px-2.5"
+                                              onClick={() =>
+                                                duplicateMotionBlock(block.id)
+                                              }
+                                            >
+                                              <Copy />
+                                              Duplicate
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem
+                                              className="min-h-9 px-2.5"
+                                              onClick={() => {
+                                                if (bounceExpanded)
+                                                  setExpandedMotionBlockId(
+                                                    null,
+                                                  );
+                                                removeMotionBlock(block.id);
+                                              }}
+                                              variant="destructive"
+                                            >
+                                              <Trash2 />
+                                              Delete
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
+                                      </div>
+                                    ) : null}
                                   </div>
-                                ) : null}
-                                {!isEvent && !isBounce ? (
-                                  <div className="motion-block-grid">
-                                    <label
-                                      htmlFor={`motion-${block.id}-duration`}
+
+                                  {isBounce && bounceExpanded ? (
+                                    <section
+                                      className="bounce-editor-panel"
+                                      id={`bounce-editor-${block.id}`}
                                     >
-                                      <span>
-                                        {block.kind === 'wait'
-                                          ? 'Wait'
-                                          : 'Duration'}
-                                      </span>
-                                      <Input
-                                        {...continuousHistoryProps}
-                                        id={`motion-${block.id}-duration`}
-                                        max="10000"
-                                        min={block.kind === 'wait' ? 0 : 100}
-                                        onChange={(event) =>
-                                          updateMotionBlock(
-                                            block.id,
-                                            (item) => {
-                                              item.durationMs = Number(
-                                                event.target.value,
-                                              );
-                                            },
-                                            `block:${block.id}:duration`,
-                                          )
-                                        }
-                                        step="50"
-                                        type="number"
-                                        value={block.durationMs}
-                                      />
-                                    </label>
-                                    {isAction ? (
-                                      <label
-                                        htmlFor={`motion-${block.id}-easing`}
-                                      >
-                                        <span>Easing</span>
-                                        <NativeSelect
-                                          className="w-full"
-                                          id={`motion-${block.id}-easing`}
-                                          onChange={(event) =>
-                                            updateMotionBlock(
-                                              block.id,
-                                              (item) => {
-                                                item.easing = event.target
-                                                  .value as Easing;
-                                              },
-                                            )
-                                          }
-                                          value={block.easing}
-                                        >
-                                          <NativeSelectOption value="linear">
-                                            Linear
-                                          </NativeSelectOption>
-                                          <NativeSelectOption value="ease-out">
-                                            Ease out
-                                          </NativeSelectOption>
-                                          <NativeSelectOption value="ease-in-out">
-                                            Ease in/out
-                                          </NativeSelectOption>
-                                        </NativeSelect>
-                                      </label>
-                                    ) : (
-                                      <span className="motion-unit">
-                                        milliseconds
-                                      </span>
-                                    )}
-                                  </div>
-                                ) : null}
-                              </>
-                            );
+                                      <div className="bounce-editor-preview">
+                                        <BouncePathPreview
+                                          jumps={block.jumps}
+                                        />
+                                        <div className="bounce-jumps-heading">
+                                          <div>
+                                            <strong>Jump path</strong>
+                                            <small>
+                                              {block.jumps.length} jumps ·{' '}
+                                              {bounceDuration} ms
+                                            </small>
+                                          </div>
+                                          <Button
+                                            disabled={
+                                              block.jumps.length >=
+                                              MAX_BOUNCE_JUMPS
+                                            }
+                                            onClick={() =>
+                                              addBounceJump(block.id)
+                                            }
+                                            size="sm"
+                                            variant="secondary"
+                                          >
+                                            <Plus />
+                                            Add jump
+                                          </Button>
+                                        </div>
+                                      </div>
+                                      <div className="bounce-jumps">
+                                        {block.jumps.map((jump, jumpIndex) => (
+                                          <section
+                                            className="bounce-jump"
+                                            key={jump.id}
+                                          >
+                                            <div className="bounce-jump-head">
+                                              <strong>
+                                                {String(jumpIndex + 1).padStart(
+                                                  2,
+                                                  '0',
+                                                )}
+                                              </strong>
+                                              <div>
+                                                <button
+                                                  aria-label={`Move jump ${jumpIndex + 1} earlier`}
+                                                  disabled={jumpIndex === 0}
+                                                  onClick={() =>
+                                                    moveBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                      -1,
+                                                    )
+                                                  }
+                                                  type="button"
+                                                >
+                                                  <ArrowUp />
+                                                </button>
+                                                <button
+                                                  aria-label={`Move jump ${jumpIndex + 1} later`}
+                                                  disabled={
+                                                    jumpIndex ===
+                                                    block.jumps.length - 1
+                                                  }
+                                                  onClick={() =>
+                                                    moveBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                      1,
+                                                    )
+                                                  }
+                                                  type="button"
+                                                >
+                                                  <ArrowDown />
+                                                </button>
+                                                <button
+                                                  aria-label={`Duplicate jump ${jumpIndex + 1}`}
+                                                  disabled={
+                                                    block.jumps.length >=
+                                                    MAX_BOUNCE_JUMPS
+                                                  }
+                                                  onClick={() =>
+                                                    duplicateBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                    )
+                                                  }
+                                                  type="button"
+                                                >
+                                                  <Copy />
+                                                </button>
+                                                <button
+                                                  aria-label={`Remove jump ${jumpIndex + 1}`}
+                                                  disabled={
+                                                    block.jumps.length <= 1
+                                                  }
+                                                  onClick={() =>
+                                                    removeBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                    )
+                                                  }
+                                                  type="button"
+                                                >
+                                                  <Trash2 />
+                                                </button>
+                                              </div>
+                                            </div>
+                                            <div className="bounce-jump-controls">
+                                              <div>
+                                                <span>Direction</span>
+                                                <NativeSelect
+                                                  aria-label={`Jump ${jumpIndex + 1} direction`}
+                                                  onChange={(event) =>
+                                                    updateBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                      (item) => {
+                                                        item.direction = event
+                                                          .target
+                                                          .value as BounceJump['direction'];
+                                                      },
+                                                    )
+                                                  }
+                                                  size="sm"
+                                                  value={jump.direction}
+                                                >
+                                                  <NativeSelectOption value="left">
+                                                    ← Left
+                                                  </NativeSelectOption>
+                                                  <NativeSelectOption value="right">
+                                                    Right →
+                                                  </NativeSelectOption>
+                                                </NativeSelect>
+                                              </div>
+                                              <div>
+                                                <span>Height</span>
+                                                <Input
+                                                  {...continuousHistoryProps}
+                                                  aria-label={`Jump ${jumpIndex + 1} height`}
+                                                  max="2000"
+                                                  min="0"
+                                                  onChange={(event) =>
+                                                    updateBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                      (item) => {
+                                                        item.height = Number(
+                                                          event.target.value,
+                                                        );
+                                                      },
+                                                      `jump:${jump.id}:height`,
+                                                    )
+                                                  }
+                                                  step="5"
+                                                  type="number"
+                                                  value={jump.height}
+                                                />
+                                              </div>
+                                              <div>
+                                                <span>Spread</span>
+                                                <Input
+                                                  {...continuousHistoryProps}
+                                                  aria-label={`Jump ${jumpIndex + 1} spread`}
+                                                  max="2000"
+                                                  min="0"
+                                                  onChange={(event) =>
+                                                    updateBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                      (item) => {
+                                                        item.spread = Number(
+                                                          event.target.value,
+                                                        );
+                                                      },
+                                                      `jump:${jump.id}:spread`,
+                                                    )
+                                                  }
+                                                  step="5"
+                                                  type="number"
+                                                  value={jump.spread}
+                                                />
+                                              </div>
+                                              <div>
+                                                <span>Time</span>
+                                                <Input
+                                                  {...continuousHistoryProps}
+                                                  aria-label={`Jump ${jumpIndex + 1} duration`}
+                                                  max="10000"
+                                                  min="80"
+                                                  onChange={(event) =>
+                                                    updateBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                      (item) => {
+                                                        item.durationMs =
+                                                          Number(
+                                                            event.target.value,
+                                                          );
+                                                      },
+                                                      `jump:${jump.id}:duration`,
+                                                    )
+                                                  }
+                                                  step="20"
+                                                  type="number"
+                                                  value={jump.durationMs}
+                                                />
+                                              </div>
+                                              <div className="bounce-easing">
+                                                <span>Easing</span>
+                                                <NativeSelect
+                                                  aria-label={`Jump ${jumpIndex + 1} easing`}
+                                                  onChange={(event) =>
+                                                    updateBounceJump(
+                                                      block.id,
+                                                      jump.id,
+                                                      (item) => {
+                                                        item.easing = event
+                                                          .target
+                                                          .value as Easing;
+                                                      },
+                                                    )
+                                                  }
+                                                  size="sm"
+                                                  value={jump.easing}
+                                                >
+                                                  <NativeSelectOption value="linear">
+                                                    Linear
+                                                  </NativeSelectOption>
+                                                  <NativeSelectOption value="ease-out">
+                                                    Ease out
+                                                  </NativeSelectOption>
+                                                  <NativeSelectOption value="ease-in-out">
+                                                    Ease in/out
+                                                  </NativeSelectOption>
+                                                </NativeSelect>
+                                              </div>
+                                            </div>
+                                          </section>
+                                        ))}
+                                      </div>
+                                    </section>
+                                  ) : null}
+                                </>
+                              );
+                            };
                             return isEvent ? (
                               <StaticMotionBlock block={block} key={block.id}>
                                 {renderBlock(null)}
