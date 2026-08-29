@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -68,6 +69,7 @@ import {
   createElement,
   createProjectBackupFileName,
   createPublicationRevision,
+  describeElementForAccessibility,
   detectImageFormat,
   hasUnpublishedChanges,
   parseProjectTags,
@@ -95,6 +97,12 @@ const LEGACY_STORAGE_KEY = 'motus.project.v2';
 const DRAFT_SLOT_A_KEY = 'motus.project.slot.a.v4';
 const DRAFT_SLOT_B_KEY = 'motus.project.slot.b.v4';
 const DRAFT_POINTER_KEY = 'motus.project.active-slot.v4';
+
+type DeletionUndo = {
+  message: string;
+  sceneId: string;
+  elementId: string;
+};
 
 const sceneBackgrounds = [
   { name: 'Amethyst fog', value: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)' },
@@ -232,7 +240,7 @@ function SceneView({
           // The role and handlers are conditional because reader scenes are display-only.
           // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
           <div
-            aria-label={element.name}
+            aria-label={describeElementForAccessibility(element)}
             className={`canvas-element element-${element.type} ${
               playingKey ? 'is-playing' : ''
             }`}
@@ -373,6 +381,7 @@ export function MotusStudio() {
   const [hydrated, setHydrated] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [notice, setNotice] = useState('Ready');
+  const [deletionUndo, setDeletionUndo] = useState<DeletionUndo | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const undoStack = useRef<MotusProject[]>([]);
@@ -380,6 +389,26 @@ export function MotusStudio() {
   const historyTransaction = useRef<string | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
+  const deletionUndoTimer = useRef<number | null>(null);
+
+  const clearDeletionUndo = useCallback(() => {
+    if (deletionUndoTimer.current !== null) {
+      window.clearTimeout(deletionUndoTimer.current);
+      deletionUndoTimer.current = null;
+    }
+    setDeletionUndo(null);
+  }, []);
+
+  const showDeletionUndo = useCallback((recovery: DeletionUndo) => {
+    if (deletionUndoTimer.current !== null) {
+      window.clearTimeout(deletionUndoTimer.current);
+    }
+    setDeletionUndo(recovery);
+    deletionUndoTimer.current = window.setTimeout(() => {
+      deletionUndoTimer.current = null;
+      setDeletionUndo(null);
+    }, 8_000);
+  }, []);
 
   const activeScene =
     project.scenes.find((scene) => scene.id === activeSceneId) ?? project.scenes[0];
@@ -433,6 +462,14 @@ export function MotusStudio() {
       },
     ]);
   }
+
+  useEffect(() => {
+    return () => {
+      if (deletionUndoTimer.current !== null) {
+        window.clearTimeout(deletionUndoTimer.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -489,6 +526,7 @@ export function MotusStudio() {
           );
           setActiveSceneId(selection.sceneId);
           setSelectedElementId(selection.elementId);
+          clearDeletionUndo();
           setProject(saved.project);
           setIsDirty(false);
           setExternalDraftChange(false);
@@ -503,12 +541,13 @@ export function MotusStudio() {
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, [activeSceneId, hydrated, isDirty, selectedElementId]);
+  }, [activeSceneId, clearDeletionUndo, hydrated, isDirty, selectedElementId]);
 
   const commitProject = (
     mutate: (draft: MotusProject) => void,
     transactionKey: string | null = null,
   ) => {
+    clearDeletionUndo();
     setIsDirty(true);
     setCanUndo(true);
     setCanRedo(false);
@@ -560,6 +599,7 @@ export function MotusStudio() {
   };
 
   const undo = () => {
+    clearDeletionUndo();
     endHistoryTransaction();
     const previous = undoStack.current.pop();
     if (!previous) return;
@@ -575,6 +615,7 @@ export function MotusStudio() {
   };
 
   const redo = () => {
+    clearDeletionUndo();
     endHistoryTransaction();
     const next = redoStack.current.pop();
     if (!next) return;
@@ -587,6 +628,14 @@ export function MotusStudio() {
       return next;
     });
     setNotice('Redid change');
+  };
+
+  const undoDeletion = () => {
+    if (!deletionUndo) return;
+    const recovery = deletionUndo;
+    undo();
+    setActiveSceneId(recovery.sceneId);
+    setSelectedElementId(recovery.elementId);
   };
 
   const addElement = (type: ElementType, overrides: Partial<MotusElement> = {}) => {
@@ -603,6 +652,8 @@ export function MotusStudio() {
   };
 
   const deleteElement = (elementId: string) => {
+    const deletedName =
+      findElement(project, activeScene.id, elementId)?.name ?? 'Layer';
     commitProject((draft) => {
       const scene = draft.scenes.find((item) => item.id === activeScene.id);
       if (!scene) return;
@@ -611,6 +662,11 @@ export function MotusStudio() {
     const remaining = activeScene.elements.filter((element) => element.id !== elementId);
     setSelectedElementId(remaining.at(-1)?.id ?? '');
     setNotice('Layer deleted');
+    showDeletionUndo({
+      message: `${deletedName} deleted`,
+      sceneId: activeScene.id,
+      elementId,
+    });
   };
 
   const moveLayer = (elementId: string, direction: -1 | 1) => {
@@ -719,6 +775,7 @@ export function MotusStudio() {
       endHistoryTransaction();
       setCanUndo(true);
       setCanRedo(false);
+      clearDeletionUndo();
       setProject(restored);
       setIsDirty(false);
       setActiveSceneId(restored.scenes[0].id);
@@ -786,6 +843,11 @@ export function MotusStudio() {
     setActiveSceneId(nextScene.id);
     setSelectedElementId(nextScene.elements.at(-1)?.id ?? '');
     setNotice('Scene deleted');
+    showDeletionUndo({
+      message: `${activeScene.name} deleted`,
+      sceneId: activeScene.id,
+      elementId: selectedElementId,
+    });
   };
 
   const downloadProject = (candidate: MotusProject) => {
@@ -822,6 +884,7 @@ export function MotusStudio() {
     endHistoryTransaction();
     setCanUndo(true);
     setCanRedo(false);
+    clearDeletionUndo();
     reconcileSelection(resolved);
     setProject(resolved);
     setIsDirty(false);
@@ -861,6 +924,7 @@ export function MotusStudio() {
     endHistoryTransaction();
     setCanUndo(true);
     setCanRedo(false);
+    clearDeletionUndo();
     setProject(blank);
     setIsDirty(false);
     setActiveSceneId(blank.scenes[0].id);
@@ -913,6 +977,7 @@ export function MotusStudio() {
     endHistoryTransaction();
     setCanUndo(true);
     setCanRedo(false);
+    clearDeletionUndo();
     setProject(restored);
     setIsDirty(true);
     setActiveSceneId(restored.scenes[0].id);
@@ -946,6 +1011,7 @@ export function MotusStudio() {
         endHistoryTransaction();
         setCanUndo(true);
         setCanRedo(false);
+        clearDeletionUndo();
         setIsDirty(true);
         moved = true;
       }
@@ -1331,6 +1397,13 @@ export function MotusStudio() {
           </div>
         </aside>
       </div>
+
+      {deletionUndo ? (
+        <div aria-atomic="true" aria-live="polite" className="deletion-undo">
+          <span>{deletionUndo.message}</span>
+          <Button onClick={undoDeletion} size="sm" variant="secondary"><Undo2 />Undo</Button>
+        </div>
+      ) : null}
 
       <Dialog onOpenChange={setConflictOpen} open={conflictOpen}>
         <DialogContent className="conflict-dialog">

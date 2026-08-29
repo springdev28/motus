@@ -14,6 +14,7 @@ import {
   createDefaultProject,
   createProjectBackupFileName,
   createPublicationRevision,
+  describeElementForAccessibility,
   detectImageFormat,
   hasUnpublishedChanges,
   parseProjectTags,
@@ -64,6 +65,23 @@ void test('project tags preserve normal comma-separated entry safely', () => {
     8,
   );
   assert.equal(parseProjectTags('x'.repeat(80))[0].length, 40);
+});
+
+void test('comic text is included in concise accessible element labels', () => {
+  const project = createDefaultProject();
+  const text = project.scenes[0].elements[0];
+  const shape = project.scenes[0].elements[1];
+
+  text.text = '  Something moved\n beyond the fog.  ';
+  assert.equal(
+    describeElementForAccessibility(text),
+    'Scene title: Something moved beyond the fog.',
+  );
+  assert.equal(describeElementForAccessibility(shape), 'Signal orb');
+
+  text.text = 'x'.repeat(300);
+  assert.equal(describeElementForAccessibility(text).endsWith('…'), true);
+  assert.equal(describeElementForAccessibility(text).length, 'Scene title: '.length + 240);
 });
 
 void test('continuous edit gestures occupy one undo history entry', () => {

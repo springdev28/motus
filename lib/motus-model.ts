@@ -130,6 +130,14 @@ export type MotusElement = {
   motion: ElementMotion;
 };
 
+export function describeElementForAccessibility(element: MotusElement): string {
+  if (element.type !== 'text' && element.type !== 'speech') return element.name;
+  const content = element.text?.trim().replace(/\s+/g, ' ') ?? '';
+  if (!content) return element.name;
+  const summary = content.length > 240 ? `${content.slice(0, 239)}…` : content;
+  return `${element.name}: ${summary}`;
+}
+
 export type MotusScene = {
   id: string;
   name: string;

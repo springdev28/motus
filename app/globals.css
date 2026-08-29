@@ -419,6 +419,8 @@
 .conflict-warning strong { display: block; font-size: 12px; }
 .conflict-warning p { margin: 4px 0 0; color: #74664e; font-size: 10px; line-height: 1.5; }
 .conflict-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.deletion-undo { position: fixed; z-index: 45; bottom: 18px; left: 50%; display: flex; align-items: center; gap: 16px; transform: translateX(-50%); border: 1px solid #4d465b; border-radius: 10px; background: #211e2c; padding: 8px 9px 8px 13px; color: #f7f2ff; box-shadow: 0 16px 40px rgb(18 14 26 / 34%); font-size: 10px; font-weight: 700; }
+.deletion-undo button { flex: none; }
 
 @media (max-width: 1120px) {
   .studio-topbar { grid-template-columns: 180px 220px 1fr; }
