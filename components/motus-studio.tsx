@@ -39,6 +39,9 @@ import {
 import { CSS as DndCss } from '@dnd-kit/utilities';
 import {
   Activity,
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -112,6 +115,12 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  ELEMENT_FONT_PRESETS,
+  ELEMENT_FONT_WEIGHTS,
+  ELEMENT_TEXT_ALIGNMENTS,
+  MAX_ELEMENT_FONT_SIZE,
+  MAX_ELEMENT_LETTER_SPACING,
+  MAX_ELEMENT_LINE_HEIGHT,
   MAX_BOUNCE_JUMPS,
   MAX_MOTION_BLOCKS,
   MOTION_BLOCK_CATEGORIES,
@@ -126,6 +135,9 @@ import {
   MAX_SCENE_NAME_LENGTH,
   MAX_SCENE_THUMBNAIL_ELEMENTS,
   MIN_ELEMENT_HEIGHT,
+  MIN_ELEMENT_FONT_SIZE,
+  MIN_ELEMENT_LETTER_SPACING,
+  MIN_ELEMENT_LINE_HEIGHT,
   MIN_ELEMENT_WIDTH,
   canAddElementToScene,
   canAddSceneToProject,
@@ -148,6 +160,7 @@ import {
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
+  getDefaultElementTypography,
   getEditorShortcut,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
@@ -159,6 +172,7 @@ import {
   hasUnpublishedChanges,
   insertMotionActionBefore,
   normalizeBounceJumpNumericField,
+  normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
   recordProjectHistory,
@@ -184,6 +198,10 @@ import {
   type ContentRating,
   type Easing,
   type ElementPointerTransformMode,
+  type ElementFontPreset,
+  type ElementFontWeight,
+  type ElementTextAlignment,
+  type ElementTypography,
   type ElementType,
   type MotusElement,
   type MotionBlock,
@@ -241,6 +259,50 @@ const ELEMENT_RESIZE_HANDLES = [
   'sw',
   'w',
 ] as const;
+
+const ELEMENT_FONT_LABELS: Record<ElementFontPreset, string> = {
+  editorial: 'Editorial serif',
+  modern: 'Modern sans',
+  comic: 'Comic hand',
+  condensed: 'Condensed display',
+  mono: 'Monospace',
+};
+
+const ELEMENT_FONT_STACKS: Record<ElementFontPreset, string> = {
+  editorial: "Georgia, 'Times New Roman', serif",
+  modern:
+    "Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  comic: "'Comic Sans MS', 'Bradley Hand', 'Chalkboard SE', cursive",
+  condensed: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif",
+  mono: "var(--font-mono), 'SFMono-Regular', Consolas, monospace",
+};
+
+const ELEMENT_WEIGHT_LABELS: Record<ElementFontWeight, string> = {
+  400: 'Regular',
+  500: 'Medium',
+  600: 'Semibold',
+  700: 'Bold',
+  800: 'Extra bold',
+  900: 'Black',
+};
+
+const ELEMENT_ALIGNMENT_ICONS: Record<ElementTextAlignment, typeof AlignLeft> =
+  {
+    left: AlignLeft,
+    center: AlignCenter,
+    right: AlignRight,
+  };
+
+function applyTypographyPatch(
+  element: MotusElement,
+  patch: Partial<ElementTypography>,
+) {
+  const typography = normalizeElementTypography(element.type, {
+    ...element.typography,
+    ...patch,
+  });
+  if (typography) element.typography = typography;
+}
 
 const STUDIO_PANEL_PRESETS: Record<
   'design' | 'motion',
@@ -951,7 +1013,7 @@ function renderElementContent(element: MotusElement) {
     return <img alt="" draggable={false} src={element.src} />;
   }
   if (element.type === 'text' || element.type === 'speech') {
-    return <span>{element.text}</span>;
+    return <span className="element-text-content">{element.text}</span>;
   }
   return <span className="orb-highlight" />;
 }
@@ -1188,6 +1250,10 @@ function SceneView({
         const editingText =
           interactive && textEditable && editingTextId === element.id;
         const compiledMotion = compileElementMotion(element);
+        const typography = normalizeElementTypography(
+          element.type,
+          element.typography,
+        );
         const elementStyle = {
           left: `${(element.x / CANVAS_WIDTH) * 100}%`,
           top: `${(element.y / CANVAS_HEIGHT) * 100}%`,
@@ -1206,6 +1272,23 @@ function SceneView({
           '--motion-duration': `${compiledMotion.durationMs}ms`,
           '--motion-delay': `${compiledMotion.delayMs}ms`,
           '--motion-easing': compiledMotion.easing,
+          ...(typography
+            ? {
+                '--element-font-family':
+                  ELEMENT_FONT_STACKS[typography.fontPreset],
+                '--element-font-size-min': `${typography.fontSize * 0.5}px`,
+                '--element-font-size-fluid': `${typography.fontSize * 0.09}vw`,
+                '--element-font-size-max': `${typography.fontSize}px`,
+                '--element-thumbnail-font-size': `${
+                  typography.fontSize *
+                  (element.type === 'text' ? 4 / 34 : 3 / 16)
+                }px`,
+                '--element-font-weight': typography.fontWeight,
+                '--element-letter-spacing': `${typography.letterSpacing}em`,
+                '--element-line-height': typography.lineHeight,
+                '--element-text-align': typography.textAlign,
+              }
+            : {}),
         } as CSSProperties;
 
         return (
@@ -1625,6 +1708,12 @@ export function MotusStudio() {
       activeScene.elements.find((element) => element.id === selectedElementId),
     [activeScene.elements, selectedElementId],
   );
+  const selectedTypography = selectedElement
+    ? (normalizeElementTypography(
+        selectedElement.type,
+        selectedElement.typography,
+      ) ?? getDefaultElementTypography(selectedElement.type))
+    : undefined;
   const projectImageAssets = useMemo(() => {
     const assets = new Map<string, ProjectImageAsset>();
     for (const scene of project.scenes) {
@@ -3690,6 +3779,68 @@ export function MotusStudio() {
     onPointerUp: endHistoryTransaction,
     value: numericDrafts[key] ?? String(value),
   });
+  // oxlint-disable react/react-compiler -- numeric draft refs intentionally preserve in-progress typography values until commit.
+  const typographyFontSizeDraftProps =
+    selectedElement && selectedTypography
+      ? numericDraftProps(
+          `element:${selectedElement.id}:typography:fontSize`,
+          selectedTypography.fontSize,
+          (candidate) =>
+            normalizeElementTypography(selectedElement.type, {
+              ...selectedTypography,
+              fontSize: candidate,
+            })?.fontSize ?? selectedTypography.fontSize,
+          (candidate) =>
+            updateElement(
+              selectedElement.id,
+              (item) => {
+                applyTypographyPatch(item, { fontSize: candidate });
+              },
+              `element:${selectedElement.id}:typography:fontSize`,
+            ),
+        )
+      : undefined;
+  const typographyLineHeightDraftProps =
+    selectedElement && selectedTypography
+      ? numericDraftProps(
+          `element:${selectedElement.id}:typography:lineHeight`,
+          selectedTypography.lineHeight,
+          (candidate) =>
+            normalizeElementTypography(selectedElement.type, {
+              ...selectedTypography,
+              lineHeight: candidate,
+            })?.lineHeight ?? selectedTypography.lineHeight,
+          (candidate) =>
+            updateElement(
+              selectedElement.id,
+              (item) => {
+                applyTypographyPatch(item, { lineHeight: candidate });
+              },
+              `element:${selectedElement.id}:typography:lineHeight`,
+            ),
+        )
+      : undefined;
+  const typographyLetterSpacingDraftProps =
+    selectedElement && selectedTypography
+      ? numericDraftProps(
+          `element:${selectedElement.id}:typography:letterSpacing`,
+          selectedTypography.letterSpacing,
+          (candidate) =>
+            normalizeElementTypography(selectedElement.type, {
+              ...selectedTypography,
+              letterSpacing: candidate,
+            })?.letterSpacing ?? selectedTypography.letterSpacing,
+          (candidate) =>
+            updateElement(
+              selectedElement.id,
+              (item) => {
+                applyTypographyPatch(item, { letterSpacing: candidate });
+              },
+              `element:${selectedElement.id}:typography:letterSpacing`,
+            ),
+        )
+      : undefined;
+  // oxlint-enable react/react-compiler
   const activePanelLayout = studioPanelLayouts[inspectorTab];
   const activePanelPreset = (
     Object.keys(STUDIO_PANEL_PRESETS[inspectorTab]) as StudioPanelPreset[]
@@ -4809,6 +4960,157 @@ export function MotusStudio() {
                           value={selectedElement.text ?? ''}
                         />
                       </label>
+                    ) : null}
+                    {selectedTypography ? (
+                      <section
+                        aria-labelledby="typography-panel-title"
+                        className="typography-panel"
+                      >
+                        <div className="typography-panel-head">
+                          <div>
+                            <Type aria-hidden="true" />
+                            <strong id="typography-panel-title">
+                              Typography
+                            </strong>
+                          </div>
+                          <span
+                            aria-hidden="true"
+                            className="typography-sample"
+                            style={{
+                              fontFamily:
+                                ELEMENT_FONT_STACKS[
+                                  selectedTypography.fontPreset
+                                ],
+                              fontWeight: selectedTypography.fontWeight,
+                            }}
+                          >
+                            Aa
+                          </span>
+                        </div>
+                        <div className="typography-grid">
+                          <label
+                            className="typography-font-field"
+                            htmlFor="selected-layer-font"
+                          >
+                            <span>Font</span>
+                            <NativeSelect
+                              id="selected-layer-font"
+                              onChange={(event) =>
+                                updateElement(selectedElement.id, (item) => {
+                                  applyTypographyPatch(item, {
+                                    fontPreset: event.target
+                                      .value as ElementFontPreset,
+                                  });
+                                })
+                              }
+                              size="sm"
+                              value={selectedTypography.fontPreset}
+                            >
+                              {ELEMENT_FONT_PRESETS.map((fontPreset) => (
+                                <NativeSelectOption
+                                  key={fontPreset}
+                                  value={fontPreset}
+                                >
+                                  {ELEMENT_FONT_LABELS[fontPreset]}
+                                </NativeSelectOption>
+                              ))}
+                            </NativeSelect>
+                          </label>
+                          <label htmlFor="selected-layer-font-size">
+                            <span>Size</span>
+                            <Input
+                              {...typographyFontSizeDraftProps}
+                              id="selected-layer-font-size"
+                              max={MAX_ELEMENT_FONT_SIZE}
+                              min={MIN_ELEMENT_FONT_SIZE}
+                              step="1"
+                              type="number"
+                            />
+                          </label>
+                          <label htmlFor="selected-layer-font-weight">
+                            <span>Weight</span>
+                            <NativeSelect
+                              id="selected-layer-font-weight"
+                              onChange={(event) =>
+                                updateElement(selectedElement.id, (item) => {
+                                  applyTypographyPatch(item, {
+                                    fontWeight: Number(
+                                      event.target.value,
+                                    ) as ElementFontWeight,
+                                  });
+                                })
+                              }
+                              size="sm"
+                              value={String(selectedTypography.fontWeight)}
+                            >
+                              {ELEMENT_FONT_WEIGHTS.map((fontWeight) => (
+                                <NativeSelectOption
+                                  key={fontWeight}
+                                  value={String(fontWeight)}
+                                >
+                                  {ELEMENT_WEIGHT_LABELS[fontWeight]}
+                                </NativeSelectOption>
+                              ))}
+                            </NativeSelect>
+                          </label>
+                          <fieldset className="typography-alignment-field">
+                            <legend>Alignment</legend>
+                            <div className="typography-alignment-buttons">
+                              {ELEMENT_TEXT_ALIGNMENTS.map((textAlign) => {
+                                const AlignmentIcon =
+                                  ELEMENT_ALIGNMENT_ICONS[textAlign];
+                                return (
+                                  <Button
+                                    aria-label={`Align text ${textAlign}`}
+                                    aria-pressed={
+                                      selectedTypography.textAlign === textAlign
+                                    }
+                                    key={textAlign}
+                                    onClick={() =>
+                                      updateElement(
+                                        selectedElement.id,
+                                        (item) => {
+                                          applyTypographyPatch(item, {
+                                            textAlign,
+                                          });
+                                        },
+                                      )
+                                    }
+                                    size="icon-sm"
+                                    title={`Align ${textAlign}`}
+                                    type="button"
+                                    variant="outline"
+                                  >
+                                    <AlignmentIcon />
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                          </fieldset>
+                          <label htmlFor="selected-layer-line-height">
+                            <span>Line height</span>
+                            <Input
+                              {...typographyLineHeightDraftProps}
+                              id="selected-layer-line-height"
+                              max={MAX_ELEMENT_LINE_HEIGHT}
+                              min={MIN_ELEMENT_LINE_HEIGHT}
+                              step="0.05"
+                              type="number"
+                            />
+                          </label>
+                          <label htmlFor="selected-layer-letter-spacing">
+                            <span>Letter spacing (em)</span>
+                            <Input
+                              {...typographyLetterSpacingDraftProps}
+                              id="selected-layer-letter-spacing"
+                              max={MAX_ELEMENT_LETTER_SPACING}
+                              min={MIN_ELEMENT_LETTER_SPACING}
+                              step="0.01"
+                              type="number"
+                            />
+                          </label>
+                        </div>
+                      </section>
                     ) : null}
                     {selectedElement.type !== 'image' ? (
                       <label className="color-control">

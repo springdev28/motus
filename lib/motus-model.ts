@@ -1,4 +1,4 @@
-export const PROJECT_SCHEMA_VERSION = 5 as const;
+export const PROJECT_SCHEMA_VERSION = 6 as const;
 export const MOTION_SCHEMA_VERSION = 1 as const;
 export const CANVAS_WIDTH = 1_080;
 export const CANVAS_HEIGHT = 1_440;
@@ -6,6 +6,35 @@ export const MIN_ELEMENT_WIDTH = 60;
 export const MIN_ELEMENT_HEIGHT = 50;
 
 export type ElementType = 'shape' | 'text' | 'speech' | 'image';
+export type TextElementType = Extract<ElementType, 'text' | 'speech'>;
+export const ELEMENT_FONT_PRESETS = [
+  'editorial',
+  'modern',
+  'comic',
+  'condensed',
+  'mono',
+] as const;
+export type ElementFontPreset = (typeof ELEMENT_FONT_PRESETS)[number];
+export const ELEMENT_FONT_WEIGHTS = [400, 500, 600, 700, 800, 900] as const;
+export type ElementFontWeight = (typeof ELEMENT_FONT_WEIGHTS)[number];
+export const ELEMENT_TEXT_ALIGNMENTS = ['left', 'center', 'right'] as const;
+export type ElementTextAlignment = (typeof ELEMENT_TEXT_ALIGNMENTS)[number];
+export const MIN_ELEMENT_FONT_SIZE = 8;
+export const MAX_ELEMENT_FONT_SIZE = 200;
+export const MIN_ELEMENT_LINE_HEIGHT = 0.75;
+export const MAX_ELEMENT_LINE_HEIGHT = 3;
+export const MIN_ELEMENT_LETTER_SPACING = -0.2;
+export const MAX_ELEMENT_LETTER_SPACING = 0.5;
+
+export type ElementTypography = {
+  fontPreset: ElementFontPreset;
+  fontSize: number;
+  fontWeight: ElementFontWeight;
+  textAlign: ElementTextAlignment;
+  lineHeight: number;
+  /** Letter spacing expressed in em so it scales with font size. */
+  letterSpacing: number;
+};
 export type ElementPointerTransformMode =
   | 'move'
   | 'resize'
@@ -2165,6 +2194,7 @@ export type MotusElement = {
   opacity: number;
   fill: string;
   text?: string;
+  typography?: ElementTypography;
   src?: string;
   visible: boolean;
   locked: boolean;
@@ -2427,6 +2457,89 @@ const finite = (value: unknown, fallback: number) =>
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value));
+
+const DEFAULT_ELEMENT_TYPOGRAPHY: Record<TextElementType, ElementTypography> = {
+  text: {
+    fontPreset: 'editorial',
+    fontSize: 34,
+    fontWeight: 600,
+    textAlign: 'left',
+    lineHeight: 1.04,
+    letterSpacing: -0.035,
+  },
+  speech: {
+    fontPreset: 'editorial',
+    fontSize: 16,
+    fontWeight: 700,
+    textAlign: 'center',
+    lineHeight: 1.15,
+    letterSpacing: 0,
+  },
+};
+
+export function isTextElementType(type: ElementType): type is TextElementType {
+  return type === 'text' || type === 'speech';
+}
+
+export function getDefaultElementTypography(
+  type: ElementType,
+): ElementTypography | undefined {
+  if (!isTextElementType(type)) return undefined;
+  return { ...DEFAULT_ELEMENT_TYPOGRAPHY[type] };
+}
+
+const isElementFontPreset = (value: unknown): value is ElementFontPreset =>
+  typeof value === 'string' &&
+  (ELEMENT_FONT_PRESETS as readonly string[]).includes(value);
+
+const isElementFontWeight = (value: unknown): value is ElementFontWeight =>
+  typeof value === 'number' &&
+  (ELEMENT_FONT_WEIGHTS as readonly number[]).includes(value);
+
+const isElementTextAlignment = (
+  value: unknown,
+): value is ElementTextAlignment =>
+  typeof value === 'string' &&
+  (ELEMENT_TEXT_ALIGNMENTS as readonly string[]).includes(value);
+
+export function normalizeElementTypography(
+  type: ElementType,
+  value: unknown,
+): ElementTypography | undefined {
+  const fallback = getDefaultElementTypography(type);
+  if (!fallback) return undefined;
+  const candidate =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+
+  return {
+    fontPreset: isElementFontPreset(candidate.fontPreset)
+      ? candidate.fontPreset
+      : fallback.fontPreset,
+    fontSize: clamp(
+      Math.round(finite(candidate.fontSize, fallback.fontSize)),
+      MIN_ELEMENT_FONT_SIZE,
+      MAX_ELEMENT_FONT_SIZE,
+    ),
+    fontWeight: isElementFontWeight(candidate.fontWeight)
+      ? candidate.fontWeight
+      : fallback.fontWeight,
+    textAlign: isElementTextAlignment(candidate.textAlign)
+      ? candidate.textAlign
+      : fallback.textAlign,
+    lineHeight: clamp(
+      finite(candidate.lineHeight, fallback.lineHeight),
+      MIN_ELEMENT_LINE_HEIGHT,
+      MAX_ELEMENT_LINE_HEIGHT,
+    ),
+    letterSpacing: clamp(
+      finite(candidate.letterSpacing, fallback.letterSpacing),
+      MIN_ELEMENT_LETTER_SPACING,
+      MAX_ELEMENT_LETTER_SPACING,
+    ),
+  };
+}
 
 export function normalizeMotionBlockNumericField(
   block: MotionBlock,
@@ -4079,6 +4192,7 @@ export function createElement(
     speech: 'Speech bubble',
     image: 'Image',
   };
+  const typography = normalizeElementTypography(type, overrides.typography);
 
   return constrainElementToCanvas({
     id: `${type}-${Date.now()}-${index}`,
@@ -4101,6 +4215,7 @@ export function createElement(
     locked: false,
     motion: motion(80, 0, 900, 0.15),
     ...overrides,
+    typography,
   });
 }
 
@@ -4793,6 +4908,7 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
             typeof elementValue.text === 'string'
               ? elementValue.text
               : undefined,
+          typography: normalizeElementTypography(type, elementValue.typography),
           src:
             type === 'image' && isSafeImageSource(elementValue.src)
               ? elementValue.src
@@ -4845,6 +4961,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 2 &&
     candidate.schemaVersion !== 3 &&
     candidate.schemaVersion !== 4 &&
+    candidate.schemaVersion !== 5 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {

@@ -4,12 +4,20 @@ import test from 'node:test';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  ELEMENT_FONT_PRESETS,
+  ELEMENT_FONT_WEIGHTS,
+  ELEMENT_TEXT_ALIGNMENTS,
   MAX_BOUNCE_JUMPS,
+  MAX_ELEMENT_FONT_SIZE,
+  MAX_ELEMENT_LETTER_SPACING,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_MOTION_BLOCKS,
   MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_SCENE_NAME_LENGTH,
+  MIN_ELEMENT_FONT_SIZE,
   MIN_ELEMENT_HEIGHT,
+  MIN_ELEMENT_LETTER_SPACING,
+  MIN_ELEMENT_LINE_HEIGHT,
   MIN_ELEMENT_WIDTH,
   MOTION_BLOCK_CATALOG,
   MOTION_BLOCK_CATEGORIES,
@@ -37,6 +45,7 @@ import {
   getDraftSaveStatus,
   getDraftExitAction,
   getEditorShortcut,
+  getDefaultElementTypography,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
@@ -47,6 +56,7 @@ import {
   hasUnpublishedChanges,
   insertMotionActionBefore,
   normalizeBounceJumpNumericField,
+  normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
   recordProjectHistory,
@@ -537,6 +547,14 @@ void test('element copies are independent and stay inside the canvas', () => {
     width: 200,
     height: 100,
     text: 'Original',
+    typography: {
+      fontPreset: 'comic',
+      fontSize: 52,
+      fontWeight: 800,
+      textAlign: 'right',
+      lineHeight: 1.3,
+      letterSpacing: 0.04,
+    },
   });
   const copy = createElementCopy(source, 'copied-layer');
 
@@ -546,8 +564,12 @@ void test('element copies are independent and stay inside the canvas', () => {
   assert.equal(copy.y, CANVAS_HEIGHT - copy.height);
   copy.text = 'Changed';
   copy.motion.moveX = 999;
+  assert.deepEqual(copy.typography, source.typography);
+  assert.ok(copy.typography);
+  copy.typography.fontSize = 88;
   assert.equal(source.text, 'Original');
   assert.notEqual(source.motion.moveX, 999);
+  assert.equal(source.typography?.fontSize, 52);
   assert.equal(
     createCopyName(
       'N'.repeat(MAX_ELEMENT_NAME_LENGTH),
@@ -555,6 +577,82 @@ void test('element copies are independent and stay inside the canvas', () => {
     ),
     `${'N'.repeat(MAX_ELEMENT_NAME_LENGTH - 5)} copy`,
   );
+});
+
+void test('text and speech layers start with legacy-equivalent typography', () => {
+  assert.deepEqual(getDefaultElementTypography('text'), {
+    fontPreset: 'editorial',
+    fontSize: 34,
+    fontWeight: 600,
+    textAlign: 'left',
+    lineHeight: 1.04,
+    letterSpacing: -0.035,
+  });
+  assert.deepEqual(getDefaultElementTypography('speech'), {
+    fontPreset: 'editorial',
+    fontSize: 16,
+    fontWeight: 700,
+    textAlign: 'center',
+    lineHeight: 1.15,
+    letterSpacing: 0,
+  });
+  assert.equal(getDefaultElementTypography('shape'), undefined);
+  assert.deepEqual(
+    createElement('text', 1).typography,
+    getDefaultElementTypography('text'),
+  );
+  assert.deepEqual(
+    createElement('speech', 1).typography,
+    getDefaultElementTypography('speech'),
+  );
+  assert.equal(createElement('image', 1).typography, undefined);
+});
+
+void test('typography normalization allowlists choices and clamps numeric values', () => {
+  assert.equal(new Set(ELEMENT_FONT_PRESETS).size, ELEMENT_FONT_PRESETS.length);
+  assert.equal(new Set(ELEMENT_FONT_WEIGHTS).size, ELEMENT_FONT_WEIGHTS.length);
+  assert.equal(
+    new Set(ELEMENT_TEXT_ALIGNMENTS).size,
+    ELEMENT_TEXT_ALIGNMENTS.length,
+  );
+
+  assert.deepEqual(
+    normalizeElementTypography('text', {
+      fontPreset: 'comic',
+      fontSize: MAX_ELEMENT_FONT_SIZE + 400,
+      fontWeight: 900,
+      textAlign: 'right',
+      lineHeight: 0,
+      letterSpacing: MAX_ELEMENT_LETTER_SPACING + 1,
+    }),
+    {
+      fontPreset: 'comic',
+      fontSize: MAX_ELEMENT_FONT_SIZE,
+      fontWeight: 900,
+      textAlign: 'right',
+      lineHeight: MIN_ELEMENT_LINE_HEIGHT,
+      letterSpacing: MAX_ELEMENT_LETTER_SPACING,
+    },
+  );
+  assert.deepEqual(
+    normalizeElementTypography('speech', {
+      fontPreset: 'url(https://tracker.example/font.woff2)',
+      fontSize: MIN_ELEMENT_FONT_SIZE - 100,
+      fontWeight: 650,
+      textAlign: 'justify',
+      lineHeight: Number.NaN,
+      letterSpacing: MIN_ELEMENT_LETTER_SPACING - 1,
+    }),
+    {
+      fontPreset: 'editorial',
+      fontSize: MIN_ELEMENT_FONT_SIZE,
+      fontWeight: 700,
+      textAlign: 'center',
+      lineHeight: 1.15,
+      letterSpacing: MIN_ELEMENT_LETTER_SPACING,
+    },
+  );
+  assert.equal(normalizeElementTypography('shape', {}), undefined);
 });
 
 void test('canvas fit sizing respects both workspace axes and safe fallbacks', () => {
@@ -603,6 +701,77 @@ void test('restored drafts normalize invalid element geometry', () => {
       opacity: restored.scenes[0].elements[0].opacity,
     },
     { x: 0, y: 0, width: MIN_ELEMENT_WIDTH, height: CANVAS_HEIGHT, opacity: 0 },
+  );
+});
+
+void test('typography survives project and publication round trips', () => {
+  const project = createDefaultProject();
+  const title = project.scenes[0].elements[0];
+  const speech = project.scenes[0].elements[2];
+  title.typography = {
+    fontPreset: 'condensed',
+    fontSize: 72,
+    fontWeight: 900,
+    textAlign: 'center',
+    lineHeight: 0.9,
+    letterSpacing: -0.08,
+  };
+  speech.typography = {
+    fontPreset: 'modern',
+    fontSize: 24,
+    fontWeight: 500,
+    textAlign: 'left',
+    lineHeight: 1.4,
+    letterSpacing: 0.06,
+  };
+  project.publications.push(
+    createPublicationRevision(project, '2026-08-30T00:00:00.000Z'),
+  );
+  project.publishedRevision = 1;
+
+  const restored = restoreProject(JSON.stringify(project));
+
+  assert.ok(restored);
+  assert.deepEqual(restored.scenes[0].elements[0].typography, title.typography);
+  assert.deepEqual(
+    restored.scenes[0].elements[2].typography,
+    speech.typography,
+  );
+  assert.deepEqual(
+    restored.publications[0].scenes[0].elements[0].typography,
+    title.typography,
+  );
+  title.typography.fontSize = 100;
+  assert.equal(
+    restored.publications[0].scenes[0].elements[0].typography?.fontSize,
+    72,
+  );
+});
+
+void test('version 5 drafts without typography preserve the legacy appearance', () => {
+  const legacy = structuredClone(createDefaultProject()) as unknown as {
+    schemaVersion: number;
+    scenes: Array<{
+      elements: Array<Record<string, unknown>>;
+    }>;
+  };
+  legacy.schemaVersion = 5;
+  for (const scene of legacy.scenes) {
+    for (const element of scene.elements) delete element.typography;
+  }
+
+  const restored = restoreProject(JSON.stringify(legacy));
+
+  assert.ok(restored);
+  assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
+  assert.deepEqual(
+    restored.scenes[0].elements[0].typography,
+    getDefaultElementTypography('text'),
+  );
+  assert.equal(restored.scenes[0].elements[1].typography, undefined);
+  assert.deepEqual(
+    restored.scenes[0].elements[2].typography,
+    getDefaultElementTypography('speech'),
   );
 });
 
