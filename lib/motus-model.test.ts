@@ -24,6 +24,7 @@ import {
   parseProjectTags,
   recordProjectHistory,
   reorderScenes,
+  resetProjectTimeline,
   resolveDraftConflict,
   resolveEditorSelection,
   resolveReaderSource,
@@ -125,6 +126,27 @@ void test('history entries clone projects and repair stale selection', () => {
     sceneId: 'scene-1',
     elementId: 'scene-1-speech',
   });
+});
+
+void test('external draft adoption clears undo, redo, and open transactions', () => {
+  const project = createDefaultProject();
+  const entry = createProjectHistoryEntry(project, {
+    sceneId: 'scene-1',
+    elementId: 'scene-1-orb',
+  });
+  const timeline = {
+    undoStack: [entry],
+    redoStack: [entry],
+    transactionKey: 'element:scene-1-orb:x',
+  };
+
+  assert.deepEqual(resetProjectTimeline(timeline), {
+    undoStack: [],
+    redoStack: [],
+    transactionKey: null,
+  });
+  assert.equal(timeline.undoStack.length, 1);
+  assert.equal(timeline.redoStack.length, 1);
 });
 
 void test('element geometry is constrained without mutating the source', () => {

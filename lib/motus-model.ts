@@ -527,6 +527,10 @@ export type ProjectHistoryState = {
   transactionKey: string | null;
 };
 
+export type ProjectTimelineState = ProjectHistoryState & {
+  redoStack: ProjectHistoryEntry[];
+};
+
 export function createProjectHistoryEntry(
   project: MotusProject,
   selection: EditorSelection,
@@ -557,6 +561,16 @@ export function recordProjectHistory(
         )
       : history.undoStack,
     transactionKey,
+  };
+}
+
+export function resetProjectTimeline(
+  _timeline: ProjectTimelineState,
+): ProjectTimelineState {
+  return {
+    undoStack: [],
+    redoStack: [],
+    transactionKey: null,
   };
 }
 

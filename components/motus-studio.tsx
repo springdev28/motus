@@ -80,6 +80,7 @@ import {
   parseProjectTags,
   recordProjectHistory,
   reorderScenes,
+  resetProjectTimeline,
   resolveDraftConflict,
   resolveEditorSelection,
   resolveReaderSource,
@@ -400,6 +401,19 @@ export function MotusStudio() {
   const projectInput = useRef<HTMLInputElement>(null);
   const deletionUndoTimer = useRef<number | null>(null);
 
+  const resetEditorHistory = useCallback(() => {
+    const reset = resetProjectTimeline({
+      undoStack: undoStack.current,
+      redoStack: redoStack.current,
+      transactionKey: historyTransaction.current,
+    });
+    undoStack.current = reset.undoStack;
+    redoStack.current = reset.redoStack;
+    historyTransaction.current = reset.transactionKey;
+    setCanUndo(false);
+    setCanRedo(false);
+  }, []);
+
   const handleInspectorTabKeyDown = (
     event: ReactKeyboardEvent<HTMLButtonElement>,
   ) => {
@@ -513,6 +527,7 @@ export function MotusStudio() {
       if (!active) return;
       const restored = readSavedDraft();
       if (restored) {
+        resetEditorHistory();
         setProject(restored.project);
         setIsDirty(false);
         setActiveSceneId(restored.project.scenes[0].id);
@@ -524,7 +539,7 @@ export function MotusStudio() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [resetEditorHistory]);
 
   useEffect(() => {
     if (!shouldAutosaveDraft({ hydrated, dirty: isDirty, externalChange: externalDraftChange })) return;
@@ -563,12 +578,13 @@ export function MotusStudio() {
           setActiveSceneId(selection.sceneId);
           setSelectedElementId(selection.elementId);
           clearDeletionUndo();
+          resetEditorHistory();
           setProject(saved.project);
           setIsDirty(false);
           setSaveFailed(false);
           setExternalDraftChange(false);
           setConflictOpen(false);
-          setNotice('Draft updated from another tab');
+          setNotice('Draft updated from another tab · undo history reset');
         }
         return;
       }
@@ -578,7 +594,14 @@ export function MotusStudio() {
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, [activeSceneId, clearDeletionUndo, hydrated, isDirty, selectedElementId]);
+  }, [
+    activeSceneId,
+    clearDeletionUndo,
+    hydrated,
+    isDirty,
+    resetEditorHistory,
+    selectedElementId,
+  ]);
 
   const commitProject = (
     mutate: (draft: MotusProject) => void,
@@ -930,17 +953,7 @@ export function MotusStudio() {
       saved.project,
       'load-saved',
     );
-    undoStack.current = [
-      ...undoStack.current,
-      createProjectHistoryEntry(project, {
-        sceneId: activeScene.id,
-        elementId: selectedElementId,
-      }),
-    ].slice(-50);
-    redoStack.current = [];
-    endHistoryTransaction();
-    setCanUndo(true);
-    setCanRedo(false);
+    resetEditorHistory();
     clearDeletionUndo();
     reconcileSelection(resolved);
     setProject(resolved);
@@ -948,7 +961,7 @@ export function MotusStudio() {
     setSaveFailed(false);
     setExternalDraftChange(false);
     setConflictOpen(false);
-    setNotice('Other tab’s draft loaded · this draft downloaded');
+    setNotice('Other tab’s draft loaded · backup downloaded · undo history reset');
   };
 
   const keepCurrentDraft = () => {
