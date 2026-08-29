@@ -247,6 +247,12 @@ export type MotionBlockNumericField =
   | 'secondaryValue'
   | 'repetitions';
 
+export type EditableMotionBlockNumericField =
+  | MotionBlockNumericField
+  | 'durationMs';
+
+export type BounceJumpNumericField = 'height' | 'spread' | 'durationMs';
+
 export type MotionBlockParameterSpec = {
   field: MotionBlockNumericField;
   label: string;
@@ -1868,6 +1874,10 @@ export const MOTION_BLOCK_CATALOG: MotionBlockCatalogEntry[] = [
   ),
 ];
 
+const MOTION_BLOCK_CATALOG_BY_KIND = new Map(
+  MOTION_BLOCK_CATALOG.map((entry) => [entry.kind, entry]),
+);
+
 export function createBounceJump(
   index: number,
   overrides: Partial<BounceJump> = {},
@@ -1890,9 +1900,7 @@ export function createMotionBlock(
   kind: MotionBlockKind,
   id = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 ): MotionBlock {
-  const catalogEntry = MOTION_BLOCK_CATALOG.find(
-    (entry) => entry.kind === kind,
-  )!;
+  const catalogEntry = MOTION_BLOCK_CATALOG_BY_KIND.get(kind)!;
   const block: MotionBlock = {
     id,
     kind,
@@ -2408,6 +2416,59 @@ const finite = (value: unknown, fallback: number) =>
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value));
 
+export function normalizeMotionBlockNumericField(
+  block: MotionBlock,
+  field: EditableMotionBlockNumericField,
+  value: unknown,
+): number {
+  const catalogEntry = MOTION_BLOCK_CATALOG_BY_KIND.get(block.kind);
+  const currentValue = block[field];
+  const fallback = finite(
+    currentValue,
+    field === 'durationMs'
+      ? (catalogEntry?.durationMs ?? 700)
+      : field === 'repetitions'
+        ? 1
+        : 0,
+  );
+  const numericValue = finite(value, fallback);
+
+  if (field === 'durationMs') {
+    if (block.kind === 'scene-enter') return 0;
+    return clamp(
+      Math.round(numericValue),
+      block.kind === 'wait' ? 0 : 100,
+      10_000,
+    );
+  }
+
+  if (field === 'repetitions') {
+    return clamp(Math.round(numericValue), 1, 20);
+  }
+
+  const parameterSpec = catalogEntry?.parameters.find(
+    (parameter) => parameter.field === field,
+  );
+  return parameterSpec
+    ? clamp(numericValue, parameterSpec.min, parameterSpec.max)
+    : numericValue;
+}
+
+export function normalizeBounceJumpNumericField(
+  jump: BounceJump,
+  field: BounceJumpNumericField,
+  value: unknown,
+): number {
+  const fallback = finite(
+    jump[field],
+    field === 'height' ? 80 : field === 'spread' ? 100 : 360,
+  );
+  const numericValue = finite(value, fallback);
+  return field === 'durationMs'
+    ? clamp(Math.round(numericValue), 80, 10_000)
+    : clamp(numericValue, 0, 2_000);
+}
+
 function sanitizeProjectTags(values: unknown[]): string[] {
   const tags: string[] = [];
   const seen = new Set<string>();
@@ -2451,16 +2512,34 @@ function normalizeBounceJumps(value: unknown): BounceJump[] {
       )
         return [];
       const raw = candidate as Partial<BounceJump>;
-      const jump: BounceJump = {
+      const fallbackJump: BounceJump = {
         ...createBounceJump(index, {
           id:
             typeof raw.id === 'string' && raw.id ? raw.id : `jump-${index + 1}`,
         }),
+        height: 80,
+        spread: 100,
+        durationMs: 360,
         direction: raw.direction === 'right' ? 'right' : 'left',
-        height: clamp(finite(raw.height, 80), 0, 2_000),
-        spread: clamp(finite(raw.spread, 100), 0, 2_000),
-        durationMs: clamp(Math.round(finite(raw.durationMs, 360)), 80, 10_000),
         easing: normalizeEasing(raw.easing),
+      };
+      const jump: BounceJump = {
+        ...fallbackJump,
+        height: normalizeBounceJumpNumericField(
+          fallbackJump,
+          'height',
+          raw.height,
+        ),
+        spread: normalizeBounceJumpNumericField(
+          fallbackJump,
+          'spread',
+          raw.spread,
+        ),
+        durationMs: normalizeBounceJumpNumericField(
+          fallbackJump,
+          'durationMs',
+          raw.durationMs,
+        ),
       };
       return [jump];
     })
@@ -2493,33 +2572,31 @@ function normalizeMotionBlocks(
           : `${raw.kind}-${index + 1}`,
       );
       block.enabled = raw.enabled !== false;
-      block.durationMs = finite(raw.durationMs, block.durationMs);
-      block.easing = normalizeEasing(raw.easing);
-      block.x = finite(raw.x, block.x);
-      block.y = finite(raw.y, block.y);
-      block.value = finite(raw.value, block.value);
-      block.secondaryValue = finite(raw.secondaryValue, block.secondaryValue);
-      block.repetitions = clamp(
-        Math.round(finite(raw.repetitions, block.repetitions)),
-        1,
-        20,
+      block.durationMs = normalizeMotionBlockNumericField(
+        block,
+        'durationMs',
+        raw.durationMs,
       );
+      block.easing = normalizeEasing(raw.easing);
+      for (const field of [
+        'x',
+        'y',
+        'value',
+        'secondaryValue',
+        'repetitions',
+      ] as const) {
+        block[field] = normalizeMotionBlockNumericField(
+          block,
+          field,
+          raw[field],
+        );
+      }
       block.direction =
         raw.direction === 'right' ||
         raw.direction === 'up' ||
         raw.direction === 'down'
           ? raw.direction
           : 'left';
-      const definition = MOTION_BLOCK_CATALOG.find(
-        (entry) => entry.kind === block.kind,
-      );
-      for (const parameterSpec of definition?.parameters ?? []) {
-        block[parameterSpec.field] = clamp(
-          finite(raw[parameterSpec.field], block[parameterSpec.field]),
-          parameterSpec.min,
-          parameterSpec.max,
-        );
-      }
       const jumps = normalizeBounceJumps(raw.jumps);
       if (block.kind === 'bounce' && jumps.length > 0) block.jumps = jumps;
       if (seen.has(block.id)) block.id = `${block.id}-${index + 1}`;
@@ -2738,14 +2815,16 @@ const copyMotionState = (state: MotionFrameState): MotionFrameState => ({
 function getBlockDuration(block: MotionBlock): number {
   if (block.kind === 'bounce') {
     return block.jumps.reduce(
-      (total, jump) => total + clamp(Math.round(jump.durationMs), 80, 10_000),
+      (total, jump) =>
+        total +
+        normalizeBounceJumpNumericField(jump, 'durationMs', jump.durationMs),
       0,
     );
   }
-  return clamp(
-    Math.round(block.durationMs),
-    block.kind === 'wait' ? 0 : 100,
-    10_000,
+  return normalizeMotionBlockNumericField(
+    block,
+    'durationMs',
+    block.durationMs,
   );
 }
 
@@ -3141,12 +3220,17 @@ export function compileElementMotion(
       for (const jump of block.jumps) {
         if (localMs >= step.durationMs) break;
         const jumpDuration = Math.min(
-          clamp(Math.round(jump.durationMs), 80, 10_000),
+          normalizeBounceJumpNumericField(jump, 'durationMs', jump.durationMs),
           step.durationMs - localMs,
         );
         const dx =
-          (jump.direction === 'left' ? -1 : 1) * clamp(jump.spread, 0, 2_000);
-        const height = clamp(jump.height, 0, 2_000);
+          (jump.direction === 'left' ? -1 : 1) *
+          normalizeBounceJumpNumericField(jump, 'spread', jump.spread);
+        const height = normalizeBounceJumpNumericField(
+          jump,
+          'height',
+          jump.height,
+        );
         const apex = {
           ...frameState,
           translateX: groundX + dx / 2,
@@ -3182,7 +3266,11 @@ export function compileElementMotion(
       continue;
     }
 
-    const repetitions = clamp(Math.round(block.repetitions), 1, 20);
+    const repetitions = normalizeMotionBlockNumericField(
+      block,
+      'repetitions',
+      block.repetitions,
+    );
     const runRepeatedAccent = (
       mutate: (
         accent: MotionFrameState,
@@ -3216,9 +3304,18 @@ export function compileElementMotion(
     ) {
       runRepeatedAccent((accent, beat, strength) => {
         const sign = beat % 2 === 0 ? 1 : -1;
-        accent.translateX += clamp(block.x, -800, 800) * sign * strength;
+        accent.translateX +=
+          normalizeMotionBlockNumericField(block, 'x', block.x) *
+          sign *
+          strength;
         accent.translateY +=
-          clamp(block.secondaryValue, -800, 800) * -sign * strength;
+          normalizeMotionBlockNumericField(
+            block,
+            'secondaryValue',
+            block.secondaryValue,
+          ) *
+          -sign *
+          strength;
       });
       continue;
     }
@@ -3233,7 +3330,9 @@ export function compileElementMotion(
       runRepeatedAccent((accent, beat, strength) => {
         const direction = block.kind === 'bob' && beat % 2 ? 1 : -1;
         accent.translateY +=
-          direction * Math.abs(clamp(block.y, -800, 800)) * strength;
+          direction *
+          Math.abs(normalizeMotionBlockNumericField(block, 'y', block.y)) *
+          strength;
       });
       continue;
     }
@@ -3358,7 +3457,10 @@ export function compileElementMotion(
               ? 1
               : null;
         const sign = fixedDirection ?? (beat % 2 === 0 ? 1 : -1);
-        accent.rotation += clamp(block.value, -720, 720) * sign * strength;
+        accent.rotation +=
+          normalizeMotionBlockNumericField(block, 'value', block.value) *
+          sign *
+          strength;
       });
       continue;
     }

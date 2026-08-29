@@ -46,6 +46,8 @@ import {
   hasPointerDragStarted,
   hasUnpublishedChanges,
   insertMotionActionBefore,
+  normalizeBounceJumpNumericField,
+  normalizeMotionBlockNumericField,
   parseProjectTags,
   recordProjectHistory,
   removePublicationRevision,
@@ -568,6 +570,11 @@ void test('motion registry is exhaustive, categorized, and has bounded finite de
       entry.durationMs >= 0,
       `${entry.kind} duration cannot be negative`,
     );
+    assert.equal(
+      normalizeMotionBlockNumericField(block, 'durationMs', block.durationMs),
+      block.durationMs,
+      `${entry.kind} valid duration must remain unchanged`,
+    );
 
     for (const [field, value] of Object.entries({
       durationMs: block.durationMs,
@@ -616,8 +623,119 @@ void test('motion registry is exhaustive, categorized, and has bounded finite de
         parameter.defaultValue,
         `${entry.kind}.${parameter.field} must use the catalog default`,
       );
+      assert.equal(
+        normalizeMotionBlockNumericField(
+          block,
+          parameter.field,
+          block[parameter.field],
+        ),
+        block[parameter.field],
+        `${entry.kind}.${parameter.field} valid values must remain unchanged`,
+      );
     }
   }
+});
+
+void test('motion numeric fields normalize to their authored playback bounds', () => {
+  const move = createMotionBlock('move', 'normalized-move');
+  move.x = 135;
+
+  assert.equal(normalizeMotionBlockNumericField(move, 'x', 215), 215);
+  assert.equal(normalizeMotionBlockNumericField(move, 'x', -9_999), -2_000);
+  assert.equal(normalizeMotionBlockNumericField(move, 'x', 9_999), 2_000);
+  assert.equal(normalizeMotionBlockNumericField(move, 'x', Number.NaN), 135);
+  assert.equal(
+    normalizeMotionBlockNumericField(move, 'durationMs', 899.6),
+    900,
+  );
+  assert.equal(normalizeMotionBlockNumericField(move, 'durationMs', 0), 100);
+  assert.equal(
+    normalizeMotionBlockNumericField(move, 'durationMs', 99_999),
+    10_000,
+  );
+
+  const wait = createMotionBlock('wait', 'normalized-wait');
+  assert.equal(normalizeMotionBlockNumericField(wait, 'durationMs', -1), 0);
+
+  const event = createMotionBlock('scene-enter', 'normalized-event');
+  assert.equal(normalizeMotionBlockNumericField(event, 'durationMs', 5_000), 0);
+
+  const shake = createMotionBlock('shake', 'normalized-shake');
+  assert.equal(normalizeMotionBlockNumericField(shake, 'repetitions', 2.6), 3);
+  assert.equal(normalizeMotionBlockNumericField(shake, 'repetitions', 0), 1);
+  assert.equal(normalizeMotionBlockNumericField(shake, 'repetitions', 99), 20);
+});
+
+void test('bounce numeric fields normalize to preview and restore bounds', () => {
+  const bounce = createMotionBlock('bounce', 'normalized-bounce');
+  const jump = bounce.jumps[0];
+  jump.height = 175;
+  jump.spread = 190;
+  jump.durationMs = 460;
+
+  assert.equal(normalizeBounceJumpNumericField(jump, 'height', 240), 240);
+  assert.equal(normalizeBounceJumpNumericField(jump, 'height', -1), 0);
+  assert.equal(normalizeBounceJumpNumericField(jump, 'height', 9_999), 2_000);
+  assert.equal(
+    normalizeBounceJumpNumericField(jump, 'height', Number.NaN),
+    175,
+  );
+  assert.equal(normalizeBounceJumpNumericField(jump, 'spread', -1), 0);
+  assert.equal(normalizeBounceJumpNumericField(jump, 'spread', 9_999), 2_000);
+  assert.equal(normalizeBounceJumpNumericField(jump, 'durationMs', 519.6), 520);
+  assert.equal(normalizeBounceJumpNumericField(jump, 'durationMs', 0), 80);
+  assert.equal(
+    normalizeBounceJumpNumericField(jump, 'durationMs', 99_999),
+    10_000,
+  );
+});
+
+void test('normalized block values survive storage and compile without changing', () => {
+  const project = createDefaultProject();
+  const element = project.scenes[0].elements[0];
+  const move = createMotionBlock('move', 'round-trip-move');
+  const bounce = createMotionBlock('bounce', 'round-trip-bounce');
+  const jump = bounce.jumps[0];
+
+  move.x = normalizeMotionBlockNumericField(move, 'x', 9_999);
+  move.y = normalizeMotionBlockNumericField(move, 'y', -9_999);
+  move.durationMs = normalizeMotionBlockNumericField(move, 'durationMs', 0);
+  jump.height = normalizeBounceJumpNumericField(jump, 'height', 9_999);
+  jump.spread = normalizeBounceJumpNumericField(jump, 'spread', -10);
+  jump.durationMs = normalizeBounceJumpNumericField(jump, 'durationMs', 0);
+  bounce.jumps = [jump];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'round-trip-event'),
+    move,
+    bounce,
+  ];
+
+  const restored = restoreProject(JSON.stringify(project));
+
+  assert.ok(restored);
+  const restoredElement = restored.scenes[0].elements[0];
+  const restoredMove = restoredElement.motion.blocks[1];
+  const restoredBounce = restoredElement.motion.blocks[2];
+  assert.deepEqual(
+    {
+      x: restoredMove.x,
+      y: restoredMove.y,
+      durationMs: restoredMove.durationMs,
+    },
+    { x: 2_000, y: -2_000, durationMs: 100 },
+  );
+  assert.deepEqual(
+    {
+      height: restoredBounce.jumps[0].height,
+      spread: restoredBounce.jumps[0].spread,
+      durationMs: restoredBounce.jumps[0].durationMs,
+    },
+    { height: 2_000, spread: 0, durationMs: 80 },
+  );
+  assert.deepEqual(
+    compileElementMotion(restoredElement).steps.map((step) => step.durationMs),
+    [100, 80],
+  );
 });
 
 void test('motion restore keeps one event hat and respects the total block limit', () => {
@@ -905,6 +1023,92 @@ void test('every exposed block control changes its compiled animation', () => {
           `${entry.kind} easing must affect compiled playback`,
         );
       }
+    }
+  }
+});
+
+void test('every catalog numeric boundary survives restore without playback saturation', () => {
+  const compileParameter = (
+    entry: (typeof MOTION_BLOCK_CATALOG)[number],
+    field: (typeof entry.parameters)[number]['field'],
+    value: number,
+  ) => {
+    const element = createDefaultProject().scenes[0].elements[0];
+    const block = createMotionBlock(entry.kind, `boundary-${entry.kind}`);
+    block[field] = normalizeMotionBlockNumericField(block, field, value);
+    element.motion.blocks = [
+      createMotionBlock('scene-enter', 'boundary-event'),
+      block,
+    ];
+    return JSON.stringify(compileElementMotion(element).keyframes);
+  };
+
+  for (const entry of MOTION_BLOCK_CATALOG) {
+    for (const parameter of entry.parameters) {
+      const block = createMotionBlock(entry.kind, `normalize-${entry.kind}`);
+      const minimum = normalizeMotionBlockNumericField(
+        block,
+        parameter.field,
+        parameter.min,
+      );
+      const maximum = normalizeMotionBlockNumericField(
+        block,
+        parameter.field,
+        parameter.max,
+      );
+      assert.equal(
+        minimum,
+        parameter.min,
+        `${entry.kind}.${parameter.field} must accept its catalog minimum`,
+      );
+      assert.equal(
+        maximum,
+        parameter.max,
+        `${entry.kind}.${parameter.field} must accept its catalog maximum`,
+      );
+
+      for (const boundary of [minimum, maximum]) {
+        const project = createDefaultProject();
+        const boundaryBlock = createMotionBlock(
+          entry.kind,
+          `restore-${entry.kind}`,
+        );
+        boundaryBlock[parameter.field] = boundary;
+        project.scenes[0].elements[0].motion.blocks = [
+          createMotionBlock('scene-enter', 'restore-event'),
+          boundaryBlock,
+        ];
+        const restored = restoreProject(JSON.stringify(project));
+        assert.ok(restored);
+        assert.equal(
+          restored.scenes[0].elements[0].motion.blocks[1][parameter.field],
+          boundary,
+          `${entry.kind}.${parameter.field} boundary must survive restore`,
+        );
+      }
+
+      if (parameter.min === parameter.max) continue;
+      const span = parameter.max - parameter.min;
+      const lowerInterior = normalizeMotionBlockNumericField(
+        block,
+        parameter.field,
+        parameter.min + span * 0.25,
+      );
+      const upperInterior = normalizeMotionBlockNumericField(
+        block,
+        parameter.field,
+        parameter.min + span * 0.75,
+      );
+      assert.notEqual(
+        compileParameter(entry, parameter.field, minimum),
+        compileParameter(entry, parameter.field, lowerInterior),
+        `${entry.kind}.${parameter.field} minimum must not saturate playback`,
+      );
+      assert.notEqual(
+        compileParameter(entry, parameter.field, maximum),
+        compileParameter(entry, parameter.field, upperInterior),
+        `${entry.kind}.${parameter.field} maximum must not saturate playback`,
+      );
     }
   }
 });

@@ -6,7 +6,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent as ReactChangeEvent,
   type CSSProperties,
+  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -52,6 +54,7 @@ import {
   EyeOff,
   FileImage,
   FilePlus2,
+  Flag,
   GripVertical,
   ImagePlus,
   LibraryBig,
@@ -149,6 +152,8 @@ import {
   hasPointerDragStarted,
   hasUnpublishedChanges,
   insertMotionActionBefore,
+  normalizeBounceJumpNumericField,
+  normalizeMotionBlockNumericField,
   parseProjectTags,
   recordProjectHistory,
   removePublicationRevision,
@@ -228,6 +233,16 @@ const sceneBackgrounds = [
 
 type CatalogTab = 'works' | 'assets' | 'templates' | 'motion';
 type ReaderMode = 'scroll' | 'page';
+type PreviewScope = 'selected' | 'scene';
+type MobileStudioPane = 'blocks' | 'stage' | 'layers';
+
+const MOBILE_STUDIO_PANES: MobileStudioPane[] = ['blocks', 'stage', 'layers'];
+
+function formatPreviewDuration(durationMs: number) {
+  if (durationMs < 1_000) return `${durationMs} ms`;
+  const precision = durationMs >= 10_000 ? 1 : 2;
+  return `${Number((durationMs / 1_000).toFixed(precision))} s`;
+}
 
 type AddableMotionBlockCategory = Exclude<MotionBlockCategory, 'event'>;
 type BlockPaletteCategory = 'all' | AddableMotionBlockCategory;
@@ -869,6 +884,8 @@ type SceneViewProps = {
   elementLimit?: number;
   selectedId?: string;
   playingKey?: number;
+  playingElementId?: string;
+  onPlaybackComplete?: () => void;
   interactive?: boolean;
   onSelect?: (id: string) => void;
   onKeyboardNudge?: (
@@ -890,6 +907,8 @@ function SceneView({
   elementLimit,
   selectedId,
   playingKey = 0,
+  playingElementId,
+  onPlaybackComplete,
   interactive = false,
   onSelect,
   onKeyboardNudge,
@@ -899,6 +918,7 @@ function SceneView({
 }: SceneViewProps) {
   const elementNodes = useRef(new Map<string, HTMLDivElement>());
   const runningAnimations = useRef<Animation[]>([]);
+  const onPlaybackCompleteRef = useRef(onPlaybackComplete);
   const renderedElements = useMemo(
     () =>
       elementLimit === undefined
@@ -908,16 +928,38 @@ function SceneView({
   );
 
   useEffect(() => {
+    onPlaybackCompleteRef.current = onPlaybackComplete;
+  }, [onPlaybackComplete]);
+
+  useEffect(() => {
     runningAnimations.current.forEach((animation) => animation.cancel());
     runningAnimations.current = [];
-    if (
-      !playingKey ||
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    ) {
-      return;
+
+    if (!playingKey) return;
+
+    let disposed = false;
+    let completed = false;
+    const animations: Animation[] = [];
+    const completePlayback = () => {
+      if (disposed || completed) return;
+      completed = true;
+      onPlaybackCompleteRef.current?.();
+    };
+    const cleanup = () => {
+      disposed = true;
+      animations.forEach((animation) => animation.cancel());
+      if (runningAnimations.current === animations) {
+        runningAnimations.current = [];
+      }
+    };
+
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      queueMicrotask(completePlayback);
+      return cleanup;
     }
 
     for (const element of renderedElements) {
+      if (playingElementId && element.id !== playingElementId) continue;
       const node = elementNodes.current.get(element.id);
       if (!node?.animate || !element.visible) continue;
       const compiled = compileElementMotion(element);
@@ -945,14 +987,20 @@ function SceneView({
           fill: 'both',
         },
       );
-      runningAnimations.current.push(animation);
+      animations.push(animation);
     }
 
-    return () => {
-      runningAnimations.current.forEach((animation) => animation.cancel());
-      runningAnimations.current = [];
-    };
-  }, [playingKey, renderedElements]);
+    runningAnimations.current = animations;
+    if (animations.length === 0) {
+      queueMicrotask(completePlayback);
+    } else {
+      void Promise.allSettled(
+        animations.map((animation) => animation.finished),
+      ).then(completePlayback);
+    }
+
+    return cleanup;
+  }, [playingElementId, playingKey, renderedElements]);
 
   return (
     <div className="artboard" style={{ background: scene.background }}>
@@ -1153,7 +1201,12 @@ export function MotusStudio() {
   const [zoom, setZoom] = useState(100);
   const [fitCanvasWidth, setFitCanvasWidth] = useState(430);
   const [imageDropActive, setImageDropActive] = useState(false);
-  const [previewKey, setPreviewKey] = useState(0);
+  const [canvasPreviewKey, setCanvasPreviewKey] = useState(0);
+  const [readerPreviewKey, setReaderPreviewKey] = useState(0);
+  const [previewScope, setPreviewScope] = useState<PreviewScope>('selected');
+  const [previewRunning, setPreviewRunning] = useState(false);
+  const [mobileStudioPane, setMobileStudioPane] =
+    useState<MobileStudioPane>('blocks');
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
   const [readerMode, setReaderMode] = useState<ReaderMode>('scroll');
@@ -1165,6 +1218,9 @@ export function MotusStudio() {
   const [blockPaletteCategory, setBlockPaletteCategory] =
     useState<BlockPaletteCategory>('motion');
   const [blockPaletteSearch, setBlockPaletteSearch] = useState('');
+  const [numericDrafts, setNumericDrafts] = useState<Record<string, string>>(
+    {},
+  );
   const [activeMotionDrag, setActiveMotionDrag] =
     useState<ActiveMotionDrag | null>(null);
   const [expandedMotionBlockId, setExpandedMotionBlockId] = useState<
@@ -1238,6 +1294,25 @@ export function MotusStudio() {
     setInspectorTab(nextTab);
     requestAnimationFrame(() => {
       document.getElementById(`inspector-tab-${nextTab}`)?.focus();
+    });
+  };
+
+  const handleMobilePaneKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    const currentIndex = MOBILE_STUDIO_PANES.indexOf(mobileStudioPane);
+    const nextIndex = getTabIndexForKey(
+      currentIndex,
+      MOBILE_STUDIO_PANES.length,
+      event.key,
+    );
+    if (nextIndex === null) return;
+    const nextPane = MOBILE_STUDIO_PANES[nextIndex];
+
+    event.preventDefault();
+    setMobileStudioPane(nextPane);
+    requestAnimationFrame(() => {
+      document.getElementById(`mobile-pane-${nextPane}`)?.focus();
     });
   };
 
@@ -2123,7 +2198,10 @@ export function MotusStudio() {
     });
     setCatalogOpen(false);
     setInspectorTab('motion');
-    setPreviewKey((key) => key + 1);
+    setPreviewScope('selected');
+    setPreviewRunning(true);
+    setMobileStudioPane('stage');
+    setCanvasPreviewKey((key) => key + 1);
     setNotice(
       mode === 'replace'
         ? `${preset.name} replaced ${selectedElement.name}’s program`
@@ -2583,7 +2661,7 @@ export function MotusStudio() {
     setReaderRevision(revision ? structuredClone(revision) : null);
     setReaderMatureConfirmed(false);
     setReaderPageIndex(0);
-    setPreviewKey((key) => key + 1);
+    setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
     setNotice(
       revision ? `Viewing revision ${revision.revision}` : 'Previewing draft',
@@ -2596,7 +2674,7 @@ export function MotusStudio() {
     setReaderRevision(null);
     setReaderMatureConfirmed(false);
     setReaderPageIndex(0);
-    setPreviewKey((key) => key + 1);
+    setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
     setNotice(`Previewing ${work.title}`);
   };
@@ -2635,7 +2713,7 @@ export function MotusStudio() {
     setReaderRevision(revision);
     setReaderMatureConfirmed(false);
     setReaderPageIndex(0);
-    setPreviewKey((key) => key + 1);
+    setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
     setNotice(`Revision ${revision.revision} published`);
   };
@@ -3026,16 +3104,67 @@ export function MotusStudio() {
     Math.max(readerPageIndex, 0),
     Math.max(readerSource.scenes.length - 1, 0),
   );
-  const replayPreview = () => {
+  const selectedPreviewDurationMs = useMemo(() => {
+    if (!selectedElement?.visible) return 0;
+    const compiled = compileElementMotion(selectedElement);
+    return compiled.steps.some((step) => step.kind !== 'wait')
+      ? compiled.sequenceDurationMs
+      : 0;
+  }, [selectedElement]);
+  const scenePreviewDurationMs = useMemo(
+    () =>
+      activeScene.elements.reduce((longestDuration, element) => {
+        if (!element.visible) return longestDuration;
+        const compiled = compileElementMotion(element);
+        if (!compiled.steps.some((step) => step.kind !== 'wait')) {
+          return longestDuration;
+        }
+        return Math.max(longestDuration, compiled.sequenceDurationMs);
+      }, 0),
+    [activeScene.elements],
+  );
+  const previewDurationMs =
+    previewScope === 'selected'
+      ? selectedPreviewDurationMs
+      : scenePreviewDurationMs;
+
+  const finishCanvasPreview = useCallback(() => {
+    setPreviewRunning(false);
+    setCanvasPreviewKey(0);
+    setNotice('Preview finished');
+  }, []);
+
+  const stopCanvasPreview = useCallback(() => {
+    setPreviewRunning(false);
+    setCanvasPreviewKey(0);
+    setNotice('Preview stopped');
+  }, []);
+
+  const startCanvasPreview = (scope: PreviewScope = previewScope) => {
     activePointerCleanup.current?.();
     endHistoryTransaction();
-    setPreviewKey((key) => key + 1);
-    setNotice('Preview replayed');
+    const duration =
+      scope === 'selected' ? selectedPreviewDurationMs : scenePreviewDurationMs;
+    if (duration <= 0) {
+      setNotice(
+        scope === 'selected'
+          ? 'Select a visible layer with an enabled motion block'
+          : 'Add an enabled motion block to a visible layer',
+      );
+      return;
+    }
+    setPreviewScope(scope);
+    setPreviewRunning(true);
+    setMobileStudioPane('stage');
+    setCanvasPreviewKey((key) => key + 1);
+    setNotice(
+      `${scope === 'selected' ? selectedElement?.name : 'Scene'} preview · ${formatPreviewDuration(duration)}`,
+    );
   };
   const replayReader = () => {
     if (readerMode === 'page') setReaderPageIndex(0);
     readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
-    setPreviewKey((key) => key + 1);
+    setReaderPreviewKey((key) => key + 1);
     setNotice('Reader replayed from the first scene');
   };
   const requestNewWork = () => {
@@ -3087,6 +3216,52 @@ export function MotusStudio() {
     onPointerCancel: endHistoryTransaction,
     onPointerUp: endHistoryTransaction,
   };
+  const numericDraftProps = (
+    key: string,
+    value: number,
+    normalize: (candidate: number) => number,
+    commit: (candidate: number) => void,
+  ) => ({
+    onBlur: (event: ReactFocusEvent<HTMLInputElement>) => {
+      const normalized = normalize(event.currentTarget.valueAsNumber);
+      if (normalized !== value) commit(normalized);
+      setNumericDrafts((current) => {
+        if (!(key in current)) return current;
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      endHistoryTransaction();
+    },
+    onChange: (event: ReactChangeEvent<HTMLInputElement>) => {
+      const rawValue = event.currentTarget.value;
+      const numericValue = event.currentTarget.valueAsNumber;
+      setNumericDrafts((current) => ({ ...current, [key]: rawValue }));
+      if (!Number.isFinite(numericValue)) return;
+      const normalized = normalize(numericValue);
+      if (normalized === numericValue && normalized !== value) {
+        commit(normalized);
+      }
+    },
+    onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') event.currentTarget.blur();
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setNumericDrafts((current) => {
+        if (!(key in current)) return current;
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      event.currentTarget.blur();
+    },
+    onKeyUp: (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (shouldEndContinuousHistoryOnKey(event.key)) endHistoryTransaction();
+    },
+    onPointerCancel: endHistoryTransaction,
+    onPointerUp: endHistoryTransaction,
+    value: numericDrafts[key] ?? String(value),
+  });
 
   return (
     <main className="studio-shell">
@@ -3174,7 +3349,7 @@ export function MotusStudio() {
           </Button>
           <Button
             className="topbar-mobile-hide"
-            onClick={replayPreview}
+            onClick={() => startCanvasPreview('scene')}
             variant="secondary"
           >
             <Play data-icon="inline-start" fill="currentColor" />
@@ -3261,7 +3436,7 @@ export function MotusStudio() {
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="min-h-10 px-2.5"
-                onClick={replayPreview}
+                onClick={() => startCanvasPreview('scene')}
               >
                 <Play />
                 Replay canvas preview
@@ -3296,7 +3471,52 @@ export function MotusStudio() {
         </div>
       </header>
 
-      <div className="studio-grid" data-workspace={inspectorTab}>
+      {inspectorTab === 'motion' ? (
+        <nav aria-label="Motion editor panes" className="mobile-pane-switcher">
+          <button
+            aria-controls="blocks-pane"
+            aria-pressed={mobileStudioPane === 'blocks'}
+            className="mobile-pane-tab"
+            id="mobile-pane-blocks"
+            onClick={() => setMobileStudioPane('blocks')}
+            onKeyDown={handleMobilePaneKeyDown}
+            type="button"
+          >
+            <Code2 aria-hidden="true" />
+            Blocks
+          </button>
+          <button
+            aria-controls="stage-pane"
+            aria-pressed={mobileStudioPane === 'stage'}
+            className="mobile-pane-tab"
+            id="mobile-pane-stage"
+            onClick={() => setMobileStudioPane('stage')}
+            onKeyDown={handleMobilePaneKeyDown}
+            type="button"
+          >
+            <Maximize2 aria-hidden="true" />
+            Stage
+          </button>
+          <button
+            aria-controls="layers-pane"
+            aria-pressed={mobileStudioPane === 'layers'}
+            className="mobile-pane-tab"
+            id="mobile-pane-layers"
+            onClick={() => setMobileStudioPane('layers')}
+            onKeyDown={handleMobilePaneKeyDown}
+            type="button"
+          >
+            <Layers3 aria-hidden="true" />
+            Layers
+          </button>
+        </nav>
+      ) : null}
+
+      <div
+        className="studio-grid"
+        data-mobile-pane={mobileStudioPane}
+        data-workspace={inspectorTab}
+      >
         <aside className="tool-rail" aria-label="Add and edit elements">
           {toolItems.map(({ id, label, icon: Icon }) => (
             <button
@@ -3317,7 +3537,11 @@ export function MotusStudio() {
           ))}
         </aside>
 
-        <aside className="layers-panel" aria-label="Scene layers">
+        <aside
+          className="layers-panel"
+          aria-label="Scene layers"
+          id="layers-pane"
+        >
           <div className="panel-heading">
             <div>
               <span className="eyebrow">
@@ -3472,14 +3696,23 @@ export function MotusStudio() {
           ) : null}
         </aside>
 
-        <section className="workspace" aria-label="Comic scene editor">
+        <section
+          className="workspace"
+          aria-label="Comic scene editor"
+          id="stage-pane"
+        >
           <div className="workspace-toolbar">
             <div className="canvas-status">
               <Move />
-              <span id="canvas-instructions">
+              <span>
                 {inspectorTab === 'motion'
                   ? 'Stage preview'
                   : 'Drag, paste, or use arrow keys · Shift moves 10 px'}
+              </span>
+              <span className="canvas-sr-instructions" id="canvas-instructions">
+                Select a layer on the stage. Use arrow keys to move it one
+                pixel, or hold Shift to move it ten pixels. Use Control or
+                Command with C, X, and V to copy, cut, and paste the layer.
               </span>
               {inspectorTab === 'design' ? (
                 <>
@@ -3579,14 +3812,92 @@ export function MotusStudio() {
                 }}
                 onKeyboardNudge={nudgeElement}
                 onKeyboardNudgeEnd={endHistoryTransaction}
+                onPlaybackComplete={finishCanvasPreview}
                 onPointerAction={beginPointerAction}
                 onSelect={setSelectedElementId}
-                playingKey={previewKey}
+                playingElementId={
+                  previewScope === 'selected'
+                    ? (selectedElement?.id ?? '__no-selection__')
+                    : undefined
+                }
+                playingKey={canvasPreviewKey}
                 scene={activeScene}
                 selectedId={selectedElementId}
               />
             </div>
           </div>
+
+          {inspectorTab === 'motion' ? (
+            <section
+              aria-label="Preview controls"
+              className="preview-dock"
+              data-running={previewRunning || undefined}
+            >
+              <div className="preview-controls">
+                <button
+                  aria-label={
+                    previewRunning ? 'Replay preview' : 'Play preview'
+                  }
+                  className="preview-play-button"
+                  onClick={() => startCanvasPreview()}
+                  type="button"
+                >
+                  <Flag aria-hidden="true" fill="currentColor" />
+                  <span>{previewRunning ? 'Replay' : 'Play'}</span>
+                </button>
+                <button
+                  aria-label="Stop preview"
+                  className="preview-stop-button"
+                  disabled={!previewRunning}
+                  onClick={stopCanvasPreview}
+                  type="button"
+                >
+                  <Square aria-hidden="true" fill="currentColor" />
+                  <span>Stop</span>
+                </button>
+              </div>
+
+              <fieldset aria-label="Preview scope" className="preview-scope">
+                <button
+                  aria-pressed={previewScope === 'selected'}
+                  disabled={previewRunning}
+                  onClick={() => setPreviewScope('selected')}
+                  type="button"
+                >
+                  Selected
+                </button>
+                <button
+                  aria-pressed={previewScope === 'scene'}
+                  disabled={previewRunning}
+                  onClick={() => setPreviewScope('scene')}
+                  type="button"
+                >
+                  Scene
+                </button>
+              </fieldset>
+
+              <div aria-live="polite" className="preview-status">
+                <span>{previewRunning ? 'Playing' : 'Ready'}</span>
+                <strong>
+                  {previewScope === 'selected'
+                    ? (selectedElement?.name ?? 'No layer selected')
+                    : activeScene.name}
+                </strong>
+                <small>{formatPreviewDuration(previewDurationMs)}</small>
+                <span aria-hidden="true" className="preview-progress">
+                  <span
+                    className="preview-progress-fill"
+                    key={canvasPreviewKey}
+                    style={
+                      {
+                        '--preview-duration': `${Math.max(previewDurationMs, 1)}ms`,
+                      } as CSSProperties
+                    }
+                  />
+                </span>
+              </div>
+            </section>
+          ) : null}
 
           <footer className="scene-strip">
             <div className="scene-strip-copy" title={project.chapterTitle}>
@@ -3696,6 +4007,7 @@ export function MotusStudio() {
           className="inspector-panel"
           aria-label="Selected element settings"
           data-workspace={inspectorTab}
+          id="blocks-pane"
         >
           <div
             aria-label="Element property sections"
@@ -4000,10 +4312,10 @@ export function MotusStudio() {
                           ms
                         </small>
                         <Button
-                          onClick={() => setPreviewKey((key) => key + 1)}
+                          onClick={() => startCanvasPreview('selected')}
                           size="sm"
                         >
-                          <Play fill="currentColor" />
+                          <Flag fill="currentColor" />
                           Run
                         </Button>
                       </section>
@@ -4250,6 +4562,7 @@ export function MotusStudio() {
                         label={`${selectedElement.name} animation blocks`}
                       >
                         {selectedElement.motion.blocks.map(
+                          // oxlint-disable-next-line react/react-compiler -- callbacks only access editor refs after input events.
                           (block, blockIndex) => {
                             const isEvent = block.kind === 'scene-enter';
                             const isAction =
@@ -4383,28 +4696,36 @@ export function MotusStudio() {
                                                 <span>{parameter.label}</span>
                                                 <span className="motion-inline-number">
                                                   <Input
-                                                    {...continuousHistoryProps}
+                                                    {...numericDraftProps(
+                                                      `block:${block.id}:${parameter.field}`,
+                                                      block[parameter.field],
+                                                      (candidate) =>
+                                                        normalizeMotionBlockNumericField(
+                                                          block,
+                                                          parameter.field,
+                                                          candidate,
+                                                        ),
+                                                      (candidate) =>
+                                                        updateMotionBlock(
+                                                          block.id,
+                                                          (item) => {
+                                                            item[
+                                                              parameter.field
+                                                            ] =
+                                                              normalizeMotionBlockNumericField(
+                                                                item,
+                                                                parameter.field,
+                                                                candidate,
+                                                              );
+                                                          },
+                                                          `block:${block.id}:${parameter.field}`,
+                                                        ),
+                                                    )}
                                                     aria-label={`${block.label} ${parameter.label}`}
                                                     max={parameter.max}
                                                     min={parameter.min}
-                                                    onChange={(event) =>
-                                                      updateMotionBlock(
-                                                        block.id,
-                                                        (item) => {
-                                                          item[
-                                                            parameter.field
-                                                          ] = Number(
-                                                            event.target.value,
-                                                          );
-                                                        },
-                                                        `block:${block.id}:${parameter.field}`,
-                                                      )
-                                                    }
                                                     step={parameter.step}
                                                     type="number"
-                                                    value={
-                                                      block[parameter.field]
-                                                    }
                                                   />
                                                   {parameter.unit ? (
                                                     <small aria-hidden="true">
@@ -4423,7 +4744,29 @@ export function MotusStudio() {
                                             </span>
                                             <span className="motion-inline-number motion-inline-duration">
                                               <Input
-                                                {...continuousHistoryProps}
+                                                {...numericDraftProps(
+                                                  `block:${block.id}:duration`,
+                                                  block.durationMs,
+                                                  (candidate) =>
+                                                    normalizeMotionBlockNumericField(
+                                                      block,
+                                                      'durationMs',
+                                                      candidate,
+                                                    ),
+                                                  (candidate) =>
+                                                    updateMotionBlock(
+                                                      block.id,
+                                                      (item) => {
+                                                        item.durationMs =
+                                                          normalizeMotionBlockNumericField(
+                                                            item,
+                                                            'durationMs',
+                                                            candidate,
+                                                          );
+                                                      },
+                                                      `block:${block.id}:duration`,
+                                                    ),
+                                                )}
                                                 aria-label={`${block.label} ${block.kind === 'wait' ? 'wait' : 'duration'}`}
                                                 max="10000"
                                                 min={
@@ -4431,20 +4774,8 @@ export function MotusStudio() {
                                                     ? 0
                                                     : 100
                                                 }
-                                                onChange={(event) =>
-                                                  updateMotionBlock(
-                                                    block.id,
-                                                    (item) => {
-                                                      item.durationMs = Number(
-                                                        event.target.value,
-                                                      );
-                                                    },
-                                                    `block:${block.id}:duration`,
-                                                  )
-                                                }
                                                 step="50"
                                                 type="number"
-                                                value={block.durationMs}
                                               />
                                               <small aria-hidden="true">
                                                 ms
@@ -4719,74 +5050,103 @@ export function MotusStudio() {
                                               <div>
                                                 <span>Height</span>
                                                 <Input
-                                                  {...continuousHistoryProps}
+                                                  {...numericDraftProps(
+                                                    `jump:${jump.id}:height`,
+                                                    jump.height,
+                                                    (candidate) =>
+                                                      normalizeBounceJumpNumericField(
+                                                        jump,
+                                                        'height',
+                                                        candidate,
+                                                      ),
+                                                    (candidate) =>
+                                                      updateBounceJump(
+                                                        block.id,
+                                                        jump.id,
+                                                        (item) => {
+                                                          item.height =
+                                                            normalizeBounceJumpNumericField(
+                                                              item,
+                                                              'height',
+                                                              candidate,
+                                                            );
+                                                        },
+                                                        `jump:${jump.id}:height`,
+                                                      ),
+                                                  )}
                                                   aria-label={`Jump ${jumpIndex + 1} height`}
                                                   max="2000"
                                                   min="0"
-                                                  onChange={(event) =>
-                                                    updateBounceJump(
-                                                      block.id,
-                                                      jump.id,
-                                                      (item) => {
-                                                        item.height = Number(
-                                                          event.target.value,
-                                                        );
-                                                      },
-                                                      `jump:${jump.id}:height`,
-                                                    )
-                                                  }
                                                   step="5"
                                                   type="number"
-                                                  value={jump.height}
                                                 />
                                               </div>
                                               <div>
                                                 <span>Spread</span>
                                                 <Input
-                                                  {...continuousHistoryProps}
+                                                  {...numericDraftProps(
+                                                    `jump:${jump.id}:spread`,
+                                                    jump.spread,
+                                                    (candidate) =>
+                                                      normalizeBounceJumpNumericField(
+                                                        jump,
+                                                        'spread',
+                                                        candidate,
+                                                      ),
+                                                    (candidate) =>
+                                                      updateBounceJump(
+                                                        block.id,
+                                                        jump.id,
+                                                        (item) => {
+                                                          item.spread =
+                                                            normalizeBounceJumpNumericField(
+                                                              item,
+                                                              'spread',
+                                                              candidate,
+                                                            );
+                                                        },
+                                                        `jump:${jump.id}:spread`,
+                                                      ),
+                                                  )}
                                                   aria-label={`Jump ${jumpIndex + 1} spread`}
                                                   max="2000"
                                                   min="0"
-                                                  onChange={(event) =>
-                                                    updateBounceJump(
-                                                      block.id,
-                                                      jump.id,
-                                                      (item) => {
-                                                        item.spread = Number(
-                                                          event.target.value,
-                                                        );
-                                                      },
-                                                      `jump:${jump.id}:spread`,
-                                                    )
-                                                  }
                                                   step="5"
                                                   type="number"
-                                                  value={jump.spread}
                                                 />
                                               </div>
                                               <div>
                                                 <span>Time</span>
                                                 <Input
-                                                  {...continuousHistoryProps}
+                                                  {...numericDraftProps(
+                                                    `jump:${jump.id}:duration`,
+                                                    jump.durationMs,
+                                                    (candidate) =>
+                                                      normalizeBounceJumpNumericField(
+                                                        jump,
+                                                        'durationMs',
+                                                        candidate,
+                                                      ),
+                                                    (candidate) =>
+                                                      updateBounceJump(
+                                                        block.id,
+                                                        jump.id,
+                                                        (item) => {
+                                                          item.durationMs =
+                                                            normalizeBounceJumpNumericField(
+                                                              item,
+                                                              'durationMs',
+                                                              candidate,
+                                                            );
+                                                        },
+                                                        `jump:${jump.id}:duration`,
+                                                      ),
+                                                  )}
                                                   aria-label={`Jump ${jumpIndex + 1} duration`}
                                                   max="10000"
                                                   min="80"
-                                                  onChange={(event) =>
-                                                    updateBounceJump(
-                                                      block.id,
-                                                      jump.id,
-                                                      (item) => {
-                                                        item.durationMs =
-                                                          Number(
-                                                            event.target.value,
-                                                          );
-                                                      },
-                                                      `jump:${jump.id}:duration`,
-                                                    )
-                                                  }
                                                   step="20"
                                                   type="number"
-                                                  value={jump.durationMs}
                                                 />
                                               </div>
                                               <div className="bounce-easing">
@@ -5607,18 +5967,20 @@ export function MotusStudio() {
                   readerSource.scenes.map((scene, index) => (
                     <ReaderScene
                       index={index}
-                      key={`${scene.id}-${previewKey}`}
+                      key={`${scene.id}-${readerPreviewKey}`}
                       scene={scene}
-                      sessionKey={previewKey || 1}
+                      sessionKey={readerPreviewKey || 1}
                     />
                   ))
                 ) : (
                   <div className="reader-page-mode">
                     <ReaderScene
                       index={resolvedReaderPageIndex}
-                      key={`${readerSource.scenes[resolvedReaderPageIndex].id}-${previewKey}-${resolvedReaderPageIndex}`}
+                      key={`${readerSource.scenes[resolvedReaderPageIndex].id}-${readerPreviewKey}-${resolvedReaderPageIndex}`}
                       scene={readerSource.scenes[resolvedReaderPageIndex]}
-                      sessionKey={previewKey + resolvedReaderPageIndex + 1}
+                      sessionKey={
+                        readerPreviewKey + resolvedReaderPageIndex + 1
+                      }
                     />
                     <nav
                       aria-label="Scene navigation"
