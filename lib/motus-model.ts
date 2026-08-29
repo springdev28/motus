@@ -442,6 +442,22 @@ export function getKeyboardNudgeDelta(
   return null;
 }
 
+export type EditorShortcut = 'duplicate' | 'redo' | 'save' | 'undo';
+
+export function getEditorShortcut(
+  key: string,
+  commandKey: boolean,
+  shiftKey = false,
+): EditorShortcut | null {
+  if (!commandKey) return null;
+  const normalizedKey = key.toLowerCase();
+  if (normalizedKey === 's') return 'save';
+  if (normalizedKey === 'z') return shiftKey ? 'redo' : 'undo';
+  if (normalizedKey === 'y') return 'redo';
+  if (normalizedKey === 'd') return 'duplicate';
+  return null;
+}
+
 export function getFitCanvasWidth(
   containerWidth: number,
   containerHeight: number,

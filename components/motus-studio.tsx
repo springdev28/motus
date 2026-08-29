@@ -91,6 +91,7 @@ import {
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
+  getEditorShortcut,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
@@ -1480,6 +1481,16 @@ export function MotusStudio() {
     activePointerCleanup.current = cleanup;
   };
 
+  const saveCurrentProject = () => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    if (externalDraftChange) {
+      setConflictOpen(true);
+      return;
+    }
+    if (persistProject(project)) setIsDirty(false);
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
@@ -1487,23 +1498,27 @@ export function MotusStudio() {
       const insideNativeControl = target?.closest(
         'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
-      if (event.defaultPrevented || event.isComposing || modalOpen || insideNativeControl) {
+      if (event.defaultPrevented || event.isComposing) return;
+
+      const shortcut = getEditorShortcut(
+        event.key,
+        event.metaKey || event.ctrlKey,
+        event.shiftKey,
+      );
+      if (shortcut === 'save') {
+        event.preventDefault();
+        if (!event.repeat) saveCurrentProject();
         return;
       }
+      if (modalOpen || insideNativeControl) return;
 
-      const command = event.metaKey || event.ctrlKey;
-      if (command && event.key.toLowerCase() === 'z') {
+      if (shortcut === 'undo' || shortcut === 'redo') {
         event.preventDefault();
-        if (event.shiftKey) redo();
+        if (shortcut === 'redo') redo();
         else undo();
         return;
       }
-      if (command && event.key.toLowerCase() === 'y') {
-        event.preventDefault();
-        redo();
-        return;
-      }
-      if (command && event.key.toLowerCase() === 'd' && selectedElementId) {
+      if (shortcut === 'duplicate' && selectedElementId) {
         event.preventDefault();
         duplicateElement(selectedElementId);
         return;
@@ -1584,15 +1599,6 @@ export function MotusStudio() {
         : publicationHasChanges
           ? `Draft preview · changes since published revision ${project.publishedRevision}`
           : `Draft preview · matches published revision ${project.publishedRevision}`;
-  const saveCurrentProject = () => {
-    activePointerCleanup.current?.();
-    endHistoryTransaction();
-    if (externalDraftChange) {
-      setConflictOpen(true);
-      return;
-    }
-    if (persistProject(project)) setIsDirty(false);
-  };
   const replayPreview = () => {
     activePointerCleanup.current?.();
     endHistoryTransaction();
@@ -1698,7 +1704,7 @@ export function MotusStudio() {
         />
 
         <div className="topbar-actions">
-          <button className="save-state" onClick={saveCurrentProject} title="Save draft now" type="button"><Cloud />{displayedNotice}</button>
+          <button aria-keyshortcuts="Meta+S Control+S" className="save-state" onClick={saveCurrentProject} title="Save draft now (⌘/Ctrl+S)" type="button"><Cloud />{displayedNotice}</button>
           <Button aria-label="Start a new work" className="topbar-mobile-hide" onClick={requestNewWork} size="icon" variant="outline"><FilePlus2 /></Button>
           <Button aria-label="Undo" disabled={!canUndo} onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
           <Button aria-label="Redo" disabled={!canRedo} onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
@@ -1840,7 +1846,7 @@ export function MotusStudio() {
 
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
-            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag or use arrow keys · Shift moves 10 px</span><kbd>⌘D duplicate</kbd><kbd>⌫ delete</kbd></div>
+            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag or use arrow keys · Shift moves 10 px</span><kbd>⌘/Ctrl+S save</kbd><kbd>⌘/Ctrl+D duplicate</kbd><kbd>⌫ delete</kbd></div>
             <output aria-live="polite" className="workspace-notice">{displayedNotice}</output>
             <fieldset className="zoom-control" aria-label="Canvas zoom">
               <button aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 10))} type="button">−</button>

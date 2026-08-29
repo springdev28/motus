@@ -24,6 +24,7 @@ import {
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
+  getEditorShortcut,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
@@ -324,6 +325,17 @@ void test('keyboard nudges use precise and accelerated canvas steps', () => {
   const moved = transformElementByPointer(source, 'move', delta.x, delta.y);
   assert.equal(moved.x, 0);
   assert.equal(moved.y, 0);
+});
+
+void test('editor shortcuts resolve save, history, and duplication commands', () => {
+  assert.equal(getEditorShortcut('s', true), 'save');
+  assert.equal(getEditorShortcut('S', true), 'save');
+  assert.equal(getEditorShortcut('z', true), 'undo');
+  assert.equal(getEditorShortcut('z', true, true), 'redo');
+  assert.equal(getEditorShortcut('y', true), 'redo');
+  assert.equal(getEditorShortcut('d', true), 'duplicate');
+  assert.equal(getEditorShortcut('s', false), null);
+  assert.equal(getEditorShortcut('p', true), null);
 });
 
 void test('canvas fit sizing respects both workspace axes and safe fallbacks', () => {
