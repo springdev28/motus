@@ -25,6 +25,7 @@ import {
   getDraftSaveStatus,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
+  getSceneTabIndexForKey,
   parseProjectTags,
   recordProjectHistory,
   reorderScenes,
@@ -805,6 +806,15 @@ void test('scene ordering keeps boundary scenes in place', () => {
     reorderScenes(scenes, 'scene-3', 1).map((scene) => scene.id),
     ['scene-1', 'scene-2', 'scene-3'],
   );
+});
+
+void test('scene tab navigation wraps and supports timeline boundaries', () => {
+  assert.equal(getSceneTabIndexForKey(0, 3, 'ArrowLeft'), 2);
+  assert.equal(getSceneTabIndexForKey(2, 3, 'ArrowRight'), 0);
+  assert.equal(getSceneTabIndexForKey(1, 3, 'Home'), 0);
+  assert.equal(getSceneTabIndexForKey(1, 3, 'End'), 2);
+  assert.equal(getSceneTabIndexForKey(1, 3, 'Enter'), null);
+  assert.equal(getSceneTabIndexForKey(0, 0, 'ArrowRight'), null);
 });
 
 void test('editor capacity matches project validation limits', () => {

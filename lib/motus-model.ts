@@ -729,6 +729,19 @@ export function reorderScenes(
   return ordered;
 }
 
+export function getSceneTabIndexForKey(
+  currentIndex: number,
+  sceneCount: number,
+  key: string,
+): number | null {
+  if (sceneCount <= 0) return null;
+  if (key === 'Home') return 0;
+  if (key === 'End') return sceneCount - 1;
+  if (key === 'ArrowLeft') return (currentIndex - 1 + sceneCount) % sceneCount;
+  if (key === 'ArrowRight') return (currentIndex + 1) % sceneCount;
+  return null;
+}
+
 export function canAddSceneToProject(project: Pick<MotusProject, 'scenes'>): boolean {
   return project.scenes.length < MAX_PROJECT_SCENES;
 }

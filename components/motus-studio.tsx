@@ -92,6 +92,7 @@ import {
   getDraftSaveStatus,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
+  getSceneTabIndexForKey,
   hasUnpublishedChanges,
   parseProjectTags,
   recordProjectHistory,
@@ -452,6 +453,7 @@ export function MotusStudio() {
   const historyTransaction = useRef<string | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
+  const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
 
@@ -1706,6 +1708,7 @@ export function MotusStudio() {
 
           <div
             className="canvas-stage"
+            id="scene-canvas"
             onClick={() => setSelectedElementId('')}
             onKeyDown={(event) => {
               if (event.key === 'Escape') setSelectedElementId('');
@@ -1728,24 +1731,42 @@ export function MotusStudio() {
 
           <footer className="scene-strip">
             <div className="scene-strip-copy"><span>Scenes</span><strong>{sceneIndex + 1} / {project.scenes.length}</strong></div>
-            {project.scenes.map((scene, index) => (
-              <button
-                aria-current={scene.id === activeScene.id ? 'true' : undefined}
-                aria-label={`Open ${scene.name}`}
-                className="scene-thumbnail"
-                data-active={scene.id === activeScene.id || undefined}
-                key={scene.id}
-                onClick={() => {
-                  setActiveSceneId(scene.id);
-                  setSelectedElementId(scene.elements.at(-1)?.id ?? '');
-                }}
-                style={{ background: scene.background }}
-                type="button"
-              >
-                <span>{String(index + 1).padStart(2, '0')}</span>
-                <small>{scene.name}</small>
-              </button>
-            ))}
+            <div aria-label="Scenes" className="scene-tabs" role="tablist">
+              {project.scenes.map((scene, index) => (
+                <button
+                  aria-controls="scene-canvas"
+                  aria-label={`Scene ${index + 1}: ${scene.name}`}
+                  aria-selected={scene.id === activeScene.id}
+                  className="scene-thumbnail"
+                  data-active={scene.id === activeScene.id || undefined}
+                  key={scene.id}
+                  onClick={() => {
+                    setActiveSceneId(scene.id);
+                    setSelectedElementId(scene.elements.at(-1)?.id ?? '');
+                  }}
+                  onKeyDown={(event) => {
+                    const nextIndex = getSceneTabIndexForKey(index, project.scenes.length, event.key);
+                    if (nextIndex === null) return;
+                    event.preventDefault();
+                    const nextScene = project.scenes[nextIndex];
+                    setActiveSceneId(nextScene.id);
+                    setSelectedElementId(nextScene.elements.at(-1)?.id ?? '');
+                    window.requestAnimationFrame(() => sceneButtonRefs.current.get(nextScene.id)?.focus());
+                  }}
+                  ref={(node) => {
+                    if (node) sceneButtonRefs.current.set(scene.id, node);
+                    else sceneButtonRefs.current.delete(scene.id);
+                  }}
+                  role="tab"
+                  style={{ background: scene.background }}
+                  tabIndex={scene.id === activeScene.id ? 0 : -1}
+                  type="button"
+                >
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <small>{scene.name}</small>
+                </button>
+              ))}
+            </div>
             <Button className="scene-action" onClick={addScene} variant="outline"><Plus />New</Button>
             <Button aria-label="Move scene earlier" className="scene-icon-action" disabled={sceneIndex === 0} onClick={() => moveScene(-1)} size="icon" variant="outline"><ArrowLeft /></Button>
             <Button aria-label="Move scene later" className="scene-icon-action" disabled={sceneIndex === project.scenes.length - 1} onClick={() => moveScene(1)} size="icon" variant="outline"><ArrowRight /></Button>

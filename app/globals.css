@@ -347,6 +347,7 @@
 .scene-strip-copy { display: flex; width: 52px; flex: 0 0 auto; flex-direction: column; gap: 3px; }
 .scene-strip-copy span { font-size: 10px; font-weight: 750; }
 .scene-strip-copy strong { color: #89828a; font-family: var(--font-mono); font-size: 8px; }
+.scene-tabs { display: flex; flex: 0 0 auto; gap: 8px; }
 .scene-thumbnail { position: relative; width: 52px; height: 72px; flex: 0 0 auto; overflow: hidden; border: 1px solid #bcb5b4; border-radius: 5px; color: white; cursor: pointer; text-align: left; }
 .scene-thumbnail[data-active] { border-color: #6549df; box-shadow: 0 0 0 2px #8069ef; }
 .scene-thumbnail span { position: absolute; top: 5px; left: 6px; font-family: var(--font-mono); font-size: 7px; }
@@ -489,6 +490,7 @@
   .layer-actions { grid-template-columns: repeat(2, 36px); gap: 3px; }
   .layer-actions button { width: 36px; height: 36px; }
   .layer-actions svg { width: 15px; }
+  .scene-icon-action { min-width: 44px; min-height: 44px; }
   .brand-product { display: none; }
 }
 
