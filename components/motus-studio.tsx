@@ -96,6 +96,7 @@ import {
   hasUnpublishedChanges,
   parseProjectTags,
   recordProjectHistory,
+  removePublicationRevision,
   reorderScenes,
   resetProjectTimeline,
   resolveDraftConflict,
@@ -443,6 +444,8 @@ export function MotusStudio() {
   );
   const [pendingProjectImport, setPendingProjectImport] =
     useState<PendingProjectImport | null>(null);
+  const [pendingRevisionRemoval, setPendingRevisionRemoval] =
+    useState<MotusPublicationRevision | null>(null);
   const [newWorkOpen, setNewWorkOpen] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [externalDraftChange, setExternalDraftChange] = useState(false);
@@ -680,6 +683,7 @@ export function MotusStudio() {
       }
       setExternalDraftChange(true);
       setPendingProjectImport(null);
+      setPendingRevisionRemoval(null);
       setConflictOpen(true);
       setNotice('Autosave paused · draft changed in another tab');
     };
@@ -1167,6 +1171,39 @@ export function MotusStudio() {
     setNotice('Project imported · previous draft downloaded');
   };
 
+  const confirmRevisionRemoval = () => {
+    if (!pendingRevisionRemoval) return;
+    if (externalDraftChange) {
+      setPendingRevisionRemoval(null);
+      setConflictOpen(true);
+      return;
+    }
+
+    const candidate = removePublicationRevision(project, pendingRevisionRemoval.id);
+    if (!candidate) {
+      setPendingRevisionRemoval(null);
+      setNotice('The current published revision cannot be removed');
+      return;
+    }
+
+    downloadProject(project);
+    const removedRevision = pendingRevisionRemoval.revision;
+    if (!commitProjectWithStoragePreflight(
+      (draft) => {
+        draft.publications = candidate.publications;
+      },
+      'Revision removal could not be saved',
+    )) {
+      setPendingRevisionRemoval(null);
+      setNotice('Revision was not removed · project backup downloaded');
+      return;
+    }
+
+    setPendingRevisionRemoval(null);
+    setPublishOpen(true);
+    setNotice(`Revision ${removedRevision} removed · project backup downloaded`);
+  };
+
   const exportProject = () => {
     activePointerCleanup.current?.();
     endHistoryTransaction();
@@ -1401,7 +1438,7 @@ export function MotusStudio() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      const modalOpen = readerOpen || publishOpen || projectDetailsOpen || Boolean(pendingProjectImport) || newWorkOpen || conflictOpen;
+      const modalOpen = readerOpen || publishOpen || projectDetailsOpen || Boolean(pendingProjectImport) || Boolean(pendingRevisionRemoval) || newWorkOpen || conflictOpen;
       const insideNativeControl = target?.closest(
         'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
@@ -1965,6 +2002,33 @@ export function MotusStudio() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setPendingRevisionRemoval(null);
+        }}
+        open={Boolean(pendingRevisionRemoval)}
+      >
+        <DialogContent className="new-work-dialog">
+          <DialogHeader>
+            <DialogTitle>Remove revision {pendingRevisionRemoval?.revision}?</DialogTitle>
+            <DialogDescription>
+              This removes an older immutable snapshot from this device. The current published revision stays untouched.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="new-work-backup">
+            <Download />
+            <div>
+              <strong>A complete project backup downloads first</strong>
+              <p>You can import that file later if you need this revision again.</p>
+            </div>
+          </div>
+          <div className="new-work-actions">
+            <Button onClick={() => { setPendingRevisionRemoval(null); setPublishOpen(true); }} variant="outline">Cancel</Button>
+            <Button onClick={confirmRevisionRemoval} variant="destructive"><Trash2 />Back up &amp; remove</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog onOpenChange={setNewWorkOpen} open={newWorkOpen}>
         <DialogContent className="new-work-dialog">
           <DialogHeader>
@@ -2236,11 +2300,14 @@ export function MotusStudio() {
                     <div className="revision-row" key={revision.id}>
                       <div>
                         <strong>Revision {revision.revision}</strong>
-                        <small>{revision.createdAt.slice(0, 16).replace('T', ' ')} · {revision.scenes.length} scenes</small>
+                        <small>{revision.createdAt.slice(0, 16).replace('T', ' ')} · {revision.scenes.length} scenes{revision.revision === project.publishedRevision ? ' · Current' : ''}</small>
                       </div>
                       <div className="revision-actions">
                         <Button onClick={() => { setPublishOpen(false); openReader(revision); }} size="sm" variant="outline">View</Button>
                         <Button aria-label={`Restore revision ${revision.revision} as the editable draft`} onClick={() => restoreRevision(revision)} size="sm" variant="outline"><RotateCcw />Restore</Button>
+                        {revision.revision !== project.publishedRevision ? (
+                          <Button aria-label={`Remove revision ${revision.revision}`} onClick={() => { setPublishOpen(false); setPendingRevisionRemoval(revision); }} size="icon-sm" variant="destructive"><Trash2 /></Button>
+                        ) : null}
                       </div>
                     </div>
                   ))}

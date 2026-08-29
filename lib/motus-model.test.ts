@@ -28,6 +28,7 @@ import {
   getSceneTabIndexForKey,
   parseProjectTags,
   recordProjectHistory,
+  removePublicationRevision,
   reorderScenes,
   resetProjectTimeline,
   resolveDraftConflict,
@@ -453,6 +454,7 @@ void test('project import normalizes optional metadata without losing history', 
   delete candidate.id;
   delete candidate.coverSceneId;
   delete candidate.updatedAt;
+  candidate.publishedRevision = 999;
   const publications = candidate.publications as Array<Record<string, unknown>>;
   delete publications[0].coverSceneId;
   delete publications[0].description;
@@ -465,6 +467,7 @@ void test('project import normalizes optional metadata without losing history', 
   assert.equal(result.error, null);
   assert.equal(result.project.id, 'signal-in-the-fog');
   assert.equal(result.project.publications.length, 1);
+  assert.equal(result.project.publishedRevision, 1);
   assert.equal(result.project.publications[0].description, '');
   assert.deepEqual(result.project.publications[0].tags, []);
   assert.equal(result.project.publications[0].visibility, 'private');
@@ -588,6 +591,23 @@ void test('a published revision can be recovered as a new editable draft', () =>
   restored.scenes[0].elements[0].text = 'Editable restored scene';
   assert.equal(revision.scenes[0].elements[0].text, 'Something moved beyond the fog.');
   assert.equal(restorePublicationToDraft(project, 'missing-revision'), null);
+});
+
+void test('only non-current publication revisions can be removed', () => {
+  const project = createDefaultProject();
+  const first = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+  project.publications.push(first);
+  project.publishedRevision = first.revision;
+  project.title = 'Updated signal';
+  const second = createPublicationRevision(project, '2026-08-29T01:00:00.000Z');
+  project.publications.push(second);
+  project.publishedRevision = second.revision;
+
+  const trimmed = removePublicationRevision(project, first.id);
+  assert.deepEqual(trimmed?.publications.map((revision) => revision.id), [second.id]);
+  assert.equal(project.publications.length, 2);
+  assert.equal(removePublicationRevision(project, second.id), null);
+  assert.equal(removePublicationRevision(project, 'missing-revision'), null);
 });
 
 void test('version 3 drafts receive safe publication defaults', () => {

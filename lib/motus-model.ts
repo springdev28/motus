@@ -908,6 +908,18 @@ export function restorePublicationToDraft(
   return restored;
 }
 
+export function removePublicationRevision(
+  project: MotusProject,
+  revisionId: string,
+): MotusProject | null {
+  const revision = project.publications.find((item) => item.id === revisionId);
+  if (!revision || revision.revision === project.publishedRevision) return null;
+
+  const next = cloneProject(project);
+  next.publications = next.publications.filter((item) => item.id !== revisionId);
+  return next;
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 export type ProjectRestoreResult =
@@ -1152,12 +1164,9 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
       };
     },
   );
-  const publishedRevision = Math.floor(
-    Math.max(
-      0,
-      finite(candidate.publishedRevision, 0),
-      ...publications.map((revision) => revision.revision),
-    ),
+  const publishedRevision = Math.max(
+    0,
+    ...publications.map((revision) => revision.revision),
   );
   const updatedAt =
     typeof candidate.updatedAt === 'string' &&
