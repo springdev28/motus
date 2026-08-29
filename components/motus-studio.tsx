@@ -20,6 +20,7 @@ import {
   CloudOff,
   Copy,
   Download,
+  Ellipsis,
   Eye,
   EyeOff,
   FileImage,
@@ -53,6 +54,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
@@ -1129,6 +1137,8 @@ export function MotusStudio() {
   };
 
   const exportProject = () => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
     downloadProject(project);
     setNotice('Project exported');
   };
@@ -1436,11 +1446,31 @@ export function MotusStudio() {
           ? `Draft preview · changes since published revision ${project.publishedRevision}`
           : `Draft preview · matches published revision ${project.publishedRevision}`;
   const saveCurrentProject = () => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
     if (externalDraftChange) {
       setConflictOpen(true);
       return;
     }
     if (persistProject(project)) setIsDirty(false);
+  };
+  const replayPreview = () => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    setPreviewKey((key) => key + 1);
+    setNotice('Preview replayed');
+  };
+  const requestNewWork = () => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    if (externalDraftChange) setConflictOpen(true);
+    else setNewWorkOpen(true);
+  };
+  const requestProjectImport = () => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    if (externalDraftChange) setConflictOpen(true);
+    else projectInput.current?.click();
   };
   const openPublish = () => {
     activePointerCleanup.current?.();
@@ -1512,16 +1542,38 @@ export function MotusStudio() {
 
         <div className="topbar-actions">
           <button className="save-state" onClick={saveCurrentProject} title="Save draft now" type="button"><Cloud />{displayedNotice}</button>
-          <Button aria-label="Start a new work" className="topbar-mobile-hide" onClick={() => externalDraftChange ? setConflictOpen(true) : setNewWorkOpen(true)} size="icon" variant="outline"><FilePlus2 /></Button>
+          <Button aria-label="Start a new work" className="topbar-mobile-hide" onClick={requestNewWork} size="icon" variant="outline"><FilePlus2 /></Button>
           <Button aria-label="Undo" disabled={!canUndo} onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
           <Button aria-label="Redo" disabled={!canRedo} onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
-          <Button className="topbar-mobile-hide" onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
+          <Button className="topbar-mobile-hide" onClick={replayPreview} variant="secondary">
             <Play data-icon="inline-start" fill="currentColor" />Preview
           </Button>
           <Button aria-label="Open draft reader" className="topbar-reader" onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" /><span>Draft reader</span></Button>
           <Button aria-label="Publish work" className="topbar-publish" onClick={openPublish}><Send data-icon="inline-start" /><span>Publish</span></Button>
-          <Button aria-label="Import Motus project" className="topbar-mobile-hide" onClick={() => externalDraftChange ? setConflictOpen(true) : projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
+          <Button aria-label="Import Motus project" className="topbar-mobile-hide" onClick={requestProjectImport} size="icon" variant="outline"><Upload /></Button>
           <Button aria-label="Export Motus project" onClick={exportProject} size="icon" variant="outline"><Download /></Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button aria-label="More project actions" className="topbar-mobile-more" size="icon" variant="outline" />}
+            >
+              <Ellipsis />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-48" sideOffset={8}>
+              <DropdownMenuItem className="min-h-10 px-2.5" onClick={saveCurrentProject}>
+                <Cloud />Save now
+              </DropdownMenuItem>
+              <DropdownMenuItem className="min-h-10 px-2.5" onClick={replayPreview}>
+                <Play />Replay canvas preview
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="min-h-10 px-2.5" onClick={requestNewWork}>
+                <FilePlus2 />New work
+              </DropdownMenuItem>
+              <DropdownMenuItem className="min-h-10 px-2.5" onClick={requestProjectImport}>
+                <Upload />Import project
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
