@@ -17,6 +17,7 @@ import {
   detectImageFormat,
   recordProjectHistory,
   reorderScenes,
+  resolveDraftConflict,
   resolveEditorSelection,
   restoreNewestProject,
   restorePublicationToDraft,
@@ -388,6 +389,32 @@ void test('editor selection resolves stale scene and layer references', () => {
     sceneId: 'blank-scene-1',
     elementId: '',
   });
+});
+
+void test('draft conflict resolution preserves the selected source', () => {
+  const current = createDefaultProject();
+  current.title = 'Current tab';
+  current.updatedAt = '2026-08-29T00:01:00.000Z';
+  const saved = createDefaultProject();
+  saved.title = 'Other tab';
+  saved.updatedAt = '2026-08-29T00:02:00.000Z';
+
+  const kept = resolveDraftConflict(
+    current,
+    saved,
+    'keep-current',
+    '2026-08-29T00:03:00.000Z',
+  );
+  const loaded = resolveDraftConflict(current, saved, 'load-saved');
+
+  assert.equal(kept.title, 'Current tab');
+  assert.equal(kept.updatedAt, '2026-08-29T00:03:00.000Z');
+  assert.equal(loaded.title, 'Other tab');
+  assert.equal(loaded.updatedAt, '2026-08-29T00:02:00.000Z');
+  kept.title = 'Edited resolution';
+  loaded.title = 'Edited saved resolution';
+  assert.equal(current.title, 'Current tab');
+  assert.equal(saved.title, 'Other tab');
 });
 
 void test('scene ordering moves one scene without mutating the source list', () => {

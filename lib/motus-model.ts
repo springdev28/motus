@@ -496,6 +496,21 @@ export function resolveEditorSelection(
   return { sceneId: scene.id, elementId };
 }
 
+export type DraftConflictChoice = 'keep-current' | 'load-saved';
+
+export function resolveDraftConflict(
+  currentProject: MotusProject,
+  savedProject: MotusProject,
+  choice: DraftConflictChoice,
+  updatedAt = new Date().toISOString(),
+): MotusProject {
+  const resolved = cloneProject(
+    choice === 'keep-current' ? currentProject : savedProject,
+  );
+  if (choice === 'keep-current') resolved.updatedAt = updatedAt;
+  return resolved;
+}
+
 export function createPublicationRevision(
   project: MotusProject,
   createdAt = new Date().toISOString(),

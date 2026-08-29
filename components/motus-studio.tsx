@@ -15,6 +15,7 @@ import {
   ArrowUp,
   Circle,
   Cloud,
+  CloudOff,
   Copy,
   Download,
   Eye,
@@ -70,6 +71,7 @@ import {
   detectImageFormat,
   recordProjectHistory,
   reorderScenes,
+  resolveDraftConflict,
   resolveEditorSelection,
   restoreNewestProject,
   restorePublicationToDraft,
@@ -358,6 +360,8 @@ export function MotusStudio() {
   const [readerOpen, setReaderOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [newWorkOpen, setNewWorkOpen] = useState(false);
+  const [conflictOpen, setConflictOpen] = useState(false);
+  const [externalDraftChange, setExternalDraftChange] = useState(false);
   const [readerRevision, setReaderRevision] =
     useState<MotusPublicationRevision | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -401,29 +405,33 @@ export function MotusStudio() {
     }
   }
 
+  function readSavedDraft() {
+    const activeSlot =
+      window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
+    return restoreNewestProject([
+      {
+        source: 'legacy',
+        value: window.localStorage.getItem(LEGACY_STORAGE_KEY),
+        priority: -1,
+      },
+      {
+        source: 'slot-a',
+        value: window.localStorage.getItem(DRAFT_SLOT_A_KEY),
+        priority: activeSlot === 'a' ? 1 : 0,
+      },
+      {
+        source: 'slot-b',
+        value: window.localStorage.getItem(DRAFT_SLOT_B_KEY),
+        priority: activeSlot === 'b' ? 1 : 0,
+      },
+    ]);
+  }
+
   useEffect(() => {
     let active = true;
     queueMicrotask(() => {
       if (!active) return;
-      const activeSlot =
-        window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
-      const restored = restoreNewestProject([
-        {
-          source: 'legacy',
-          value: window.localStorage.getItem(LEGACY_STORAGE_KEY),
-          priority: -1,
-        },
-        {
-          source: 'slot-a',
-          value: window.localStorage.getItem(DRAFT_SLOT_A_KEY),
-          priority: activeSlot === 'a' ? 1 : 0,
-        },
-        {
-          source: 'slot-b',
-          value: window.localStorage.getItem(DRAFT_SLOT_B_KEY),
-          priority: activeSlot === 'b' ? 1 : 0,
-        },
-      ]);
+      const restored = readSavedDraft();
       if (restored) {
         setProject(restored.project);
         setActiveSceneId(restored.project.scenes[0].id);
@@ -438,21 +446,44 @@ export function MotusStudio() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || externalDraftChange) return;
     const timer = window.setTimeout(() => {
       persistProject(project);
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [hydrated, project]);
+  }, [externalDraftChange, hydrated, project]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || externalDraftChange) return;
     const flush = () => {
       persistProject(project, false);
     };
     window.addEventListener('pagehide', flush);
     return () => window.removeEventListener('pagehide', flush);
-  }, [hydrated, project]);
+  }, [externalDraftChange, hydrated, project]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const handleStorage = (event: StorageEvent) => {
+      if (
+        event.storageArea !== window.localStorage ||
+        !event.key ||
+        ![
+          LEGACY_STORAGE_KEY,
+          DRAFT_SLOT_A_KEY,
+          DRAFT_SLOT_B_KEY,
+          DRAFT_POINTER_KEY,
+        ].includes(event.key)
+      ) {
+        return;
+      }
+      setExternalDraftChange(true);
+      setConflictOpen(true);
+      setNotice('Autosave paused · draft changed in another tab');
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [hydrated]);
 
   const commitProject = (
     mutate: (draft: MotusProject) => void,
@@ -750,6 +781,47 @@ export function MotusStudio() {
     setNotice('Project exported');
   };
 
+  const loadOtherTabDraft = () => {
+    const saved = readSavedDraft();
+    if (!saved) {
+      setNotice('The other tab’s draft could not be recovered');
+      return;
+    }
+    downloadProject(project);
+    const resolved = resolveDraftConflict(
+      project,
+      saved.project,
+      'load-saved',
+    );
+    undoStack.current = [...undoStack.current, cloneProject(project)].slice(-50);
+    redoStack.current = [];
+    endHistoryTransaction();
+    setCanUndo(true);
+    setCanRedo(false);
+    reconcileSelection(resolved);
+    setProject(resolved);
+    setExternalDraftChange(false);
+    setConflictOpen(false);
+    setNotice('Other tab’s draft loaded · this draft downloaded');
+  };
+
+  const keepCurrentDraft = () => {
+    const resolved = resolveDraftConflict(
+      project,
+      project,
+      'keep-current',
+      nowIso(),
+    );
+    if (!persistProject(resolved, false)) {
+      setNotice('This draft could not be saved — export a backup');
+      return;
+    }
+    setProject(resolved);
+    setExternalDraftChange(false);
+    setConflictOpen(false);
+    setNotice('This tab’s draft kept');
+  };
+
   const startNewWork = () => {
     downloadProject(project);
     const blank = createBlankProject(uniqueId('work'), nowIso());
@@ -926,6 +998,9 @@ export function MotusStudio() {
   const artboardWidth = Math.round(430 * (zoom / 64));
   const readerScenes = readerRevision?.scenes ?? project.scenes;
   const readerTitle = readerRevision?.title ?? project.title;
+  const displayedNotice = externalDraftChange
+    ? 'Autosave paused · draft changed in another tab'
+    : notice;
   const textHistoryProps = { onBlur: endHistoryTransaction };
   const continuousHistoryProps = {
     onBlur: endHistoryTransaction,
@@ -976,8 +1051,8 @@ export function MotusStudio() {
         />
 
         <div className="topbar-actions">
-          <button className="save-state" onClick={() => persistProject(project)} title="Save draft now" type="button"><Cloud />{notice}</button>
-          <Button aria-label="Start a new work" onClick={() => setNewWorkOpen(true)} size="icon" variant="outline"><FilePlus2 /></Button>
+          <button className="save-state" onClick={() => externalDraftChange ? setConflictOpen(true) : persistProject(project)} title="Save draft now" type="button"><Cloud />{displayedNotice}</button>
+          <Button aria-label="Start a new work" onClick={() => externalDraftChange ? setConflictOpen(true) : setNewWorkOpen(true)} size="icon" variant="outline"><FilePlus2 /></Button>
           <Button aria-label="Undo" disabled={!canUndo} onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
           <Button aria-label="Redo" disabled={!canRedo} onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
           <Button onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
@@ -985,7 +1060,7 @@ export function MotusStudio() {
           </Button>
           <Button onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" />Reader</Button>
           <Button onClick={() => setPublishOpen(true)}><Send data-icon="inline-start" />Publish</Button>
-          <Button aria-label="Import Motus project" onClick={() => projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
+          <Button aria-label="Import Motus project" onClick={() => externalDraftChange ? setConflictOpen(true) : projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
           <Button aria-label="Export Motus project" onClick={exportProject} size="icon" variant="outline"><Download /></Button>
         </div>
       </header>
@@ -1087,7 +1162,7 @@ export function MotusStudio() {
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
             <div className="canvas-status"><Move /><span>Drag elements · resize from the corner</span><kbd>⌘D duplicate</kbd><kbd>⌫ delete</kbd></div>
-            <output aria-live="polite" className="workspace-notice">{notice}</output>
+            <output aria-live="polite" className="workspace-notice">{displayedNotice}</output>
             <div className="zoom-control" aria-label="Canvas zoom">
               <button aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(40, value - 8))} type="button">−</button>
               <span>{zoom}%</span>
@@ -1201,6 +1276,29 @@ export function MotusStudio() {
           </div>
         </aside>
       </div>
+
+      <Dialog onOpenChange={setConflictOpen} open={conflictOpen}>
+        <DialogContent className="conflict-dialog">
+          <DialogHeader>
+            <DialogTitle>Draft changed in another tab</DialogTitle>
+            <DialogDescription>
+              Autosave is paused so neither tab silently overwrites the other.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="conflict-warning">
+            <CloudOff />
+            <div>
+              <strong>Choose which draft should continue</strong>
+              <p>Loading the saved draft downloads this tab’s version first. Keeping this draft makes it the newest recoverable copy.</p>
+            </div>
+          </div>
+          <div className="conflict-actions">
+            <Button onClick={() => setConflictOpen(false)} variant="ghost">Review later</Button>
+            <Button onClick={keepCurrentDraft} variant="outline">Keep this draft</Button>
+            <Button onClick={loadOtherTabDraft}><Download />Back up &amp; load saved</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog onOpenChange={setNewWorkOpen} open={newWorkOpen}>
         <DialogContent className="new-work-dialog">
