@@ -23,6 +23,7 @@ import {
   hasUnpublishedChanges,
   getPublicationReadiness,
   getDraftSaveStatus,
+  getDraftExitAction,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
@@ -43,7 +44,6 @@ import {
   restoreProjectWithError,
   shouldAutosaveDraft,
   shouldEndContinuousHistoryOnKey,
-  shouldWarnBeforeDraftExit,
   trimProjectHistory,
   transformElementByPointer,
   type ProjectHistoryState,
@@ -782,42 +782,38 @@ void test('autosave runs only for hydrated, dirty, conflict-free drafts', () => 
   );
 });
 
-void test('exit warnings are limited to genuinely unsafe draft states', () => {
+void test('draft exit actions flush unsaved work and preserve conflicts', () => {
   assert.equal(
-    shouldWarnBeforeDraftExit({
+    getDraftExitAction({
       hydrated: true,
       dirty: true,
       externalChange: true,
-      saveFailed: false,
     }),
-    true,
+    'warn',
   );
   assert.equal(
-    shouldWarnBeforeDraftExit({
+    getDraftExitAction({
       hydrated: true,
       dirty: true,
       externalChange: false,
-      saveFailed: true,
     }),
-    true,
+    'flush',
   );
   assert.equal(
-    shouldWarnBeforeDraftExit({
+    getDraftExitAction({
       hydrated: true,
-      dirty: true,
+      dirty: false,
       externalChange: false,
-      saveFailed: false,
     }),
-    false,
+    'none',
   );
   assert.equal(
-    shouldWarnBeforeDraftExit({
+    getDraftExitAction({
       hydrated: false,
       dirty: true,
       externalChange: true,
-      saveFailed: true,
     }),
-    false,
+    'none',
   );
 });
 

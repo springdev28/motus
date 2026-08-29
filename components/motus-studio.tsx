@@ -90,6 +90,7 @@ import {
   detectImageFormat,
   getPublicationReadiness,
   getDraftSaveStatus,
+  getDraftExitAction,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
@@ -112,7 +113,6 @@ import {
   restoreProjectWithError,
   shouldAutosaveDraft,
   shouldEndContinuousHistoryOnKey,
-  shouldWarnBeforeDraftExit,
   trimProjectHistory,
   transformElementByPointer,
   validateImageAsset,
@@ -662,20 +662,23 @@ export function MotusStudio() {
   }, [externalDraftChange, hydrated, isDirty, project]);
 
   useEffect(() => {
-    if (!shouldWarnBeforeDraftExit({
+    const action = getDraftExitAction({
       hydrated,
       dirty: isDirty,
       externalChange: externalDraftChange,
-      saveFailed,
-    })) {
-      return;
-    }
-    const warnBeforeExit = (event: BeforeUnloadEvent) => {
+    });
+    if (action === 'none') return;
+
+    const protectDraftBeforeExit = (event: BeforeUnloadEvent) => {
+      if (action === 'flush' && persistProject(project, false)) {
+        setIsDirty(false);
+        return;
+      }
       event.preventDefault();
     };
-    window.addEventListener('beforeunload', warnBeforeExit);
-    return () => window.removeEventListener('beforeunload', warnBeforeExit);
-  }, [externalDraftChange, hydrated, isDirty, saveFailed]);
+    window.addEventListener('beforeunload', protectDraftBeforeExit);
+    return () => window.removeEventListener('beforeunload', protectDraftBeforeExit);
+  }, [externalDraftChange, hydrated, isDirty, project]);
 
   useEffect(() => {
     if (!hydrated) return;
