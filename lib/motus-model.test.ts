@@ -28,6 +28,7 @@ import {
   resolveDraftConflict,
   resolveEditorSelection,
   resolveReaderSource,
+  resolveSelectionAfterElementDeletion,
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
@@ -614,6 +615,23 @@ void test('scene ordering keeps boundary scenes in place', () => {
     reorderScenes(scenes, 'scene-3', 1).map((scene) => scene.id),
     ['scene-1', 'scene-2', 'scene-3'],
   );
+});
+
+void test('layer deletion selects the adjacent layer without mutating the list', () => {
+  const elements = createDefaultProject().scenes[0].elements;
+  const ids = elements.map((element) => element.id);
+
+  assert.equal(
+    resolveSelectionAfterElementDeletion(elements, ids[1]),
+    ids[2],
+  );
+  assert.equal(
+    resolveSelectionAfterElementDeletion(elements, ids.at(-1) ?? ''),
+    ids.at(-2),
+  );
+  assert.equal(resolveSelectionAfterElementDeletion([elements[0]], ids[0]), '');
+  assert.equal(resolveSelectionAfterElementDeletion(elements, 'missing'), '');
+  assert.deepEqual(elements.map((element) => element.id), ids);
 });
 
 void test('image signatures identify PNG and WebP content', () => {

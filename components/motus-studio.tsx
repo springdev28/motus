@@ -84,6 +84,7 @@ import {
   resolveDraftConflict,
   resolveEditorSelection,
   resolveReaderSource,
+  resolveSelectionAfterElementDeletion,
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
@@ -721,18 +722,25 @@ export function MotusStudio() {
   };
 
   const deleteElement = (elementId: string) => {
-    const deletedName =
-      findElement(project, activeScene.id, elementId)?.name ?? 'Layer';
+    const deletedElement = findElement(project, activeScene.id, elementId);
+    if (!deletedElement) {
+      setSelectedElementId('');
+      setNotice('Layer is no longer available');
+      return;
+    }
+    const nextSelectedElementId = resolveSelectionAfterElementDeletion(
+      activeScene.elements,
+      elementId,
+    );
     commitProject((draft) => {
       const scene = draft.scenes.find((item) => item.id === activeScene.id);
       if (!scene) return;
       scene.elements = scene.elements.filter((element) => element.id !== elementId);
     });
-    const remaining = activeScene.elements.filter((element) => element.id !== elementId);
-    setSelectedElementId(remaining.at(-1)?.id ?? '');
+    setSelectedElementId(nextSelectedElementId);
     setNotice('Layer deleted');
     showDeletionUndo({
-      message: `${deletedName} deleted`,
+      message: `${deletedElement.name} deleted`,
       sceneId: activeScene.id,
       elementId,
     });
@@ -1138,10 +1146,14 @@ export function MotusStudio() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const isEditing =
-        target?.matches('input, textarea, select') || target?.isContentEditable;
-      if (isEditing) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const modalOpen = readerOpen || publishOpen || newWorkOpen || conflictOpen;
+      const insideNativeControl = target?.closest(
+        'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
+      );
+      if (event.defaultPrevented || event.isComposing || modalOpen || insideNativeControl) {
+        return;
+      }
 
       const command = event.metaKey || event.ctrlKey;
       if (command && event.key.toLowerCase() === 'z') {

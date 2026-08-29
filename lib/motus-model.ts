@@ -587,6 +587,17 @@ export function reorderScenes(
   return ordered;
 }
 
+export function resolveSelectionAfterElementDeletion(
+  elements: MotusElement[],
+  deletedElementId: string,
+): string {
+  const deletedIndex = elements.findIndex(
+    (element) => element.id === deletedElementId,
+  );
+  if (deletedIndex < 0) return '';
+  return elements[deletedIndex + 1]?.id ?? elements[deletedIndex - 1]?.id ?? '';
+}
+
 export type RestoredDraft = {
   source: string;
   project: MotusProject;
