@@ -92,7 +92,7 @@ import {
   getDraftSaveStatus,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
-  getSceneTabIndexForKey,
+  getTabIndexForKey,
   hasPointerDragStarted,
   hasUnpublishedChanges,
   parseProjectTags,
@@ -484,10 +484,10 @@ export function MotusStudio() {
   const handleInspectorTabKeyDown = (
     event: ReactKeyboardEvent<HTMLButtonElement>,
   ) => {
-    let nextTab: 'design' | 'motion' | null = null;
-    if (event.key === 'ArrowLeft' || event.key === 'Home') nextTab = 'design';
-    if (event.key === 'ArrowRight' || event.key === 'End') nextTab = 'motion';
-    if (!nextTab) return;
+    const currentIndex = inspectorTab === 'design' ? 0 : 1;
+    const nextIndex = getTabIndexForKey(currentIndex, 2, event.key);
+    if (nextIndex === null) return;
+    const nextTab = nextIndex === 0 ? 'design' : 'motion';
 
     event.preventDefault();
     setInspectorTab(nextTab);
@@ -1818,7 +1818,7 @@ export function MotusStudio() {
                     setSelectedElementId(scene.elements.at(-1)?.id ?? '');
                   }}
                   onKeyDown={(event) => {
-                    const nextIndex = getSceneTabIndexForKey(index, project.scenes.length, event.key);
+                    const nextIndex = getTabIndexForKey(index, project.scenes.length, event.key);
                     if (nextIndex === null) return;
                     event.preventDefault();
                     const nextScene = project.scenes[nextIndex];

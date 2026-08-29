@@ -739,7 +739,7 @@ export function reorderScenes(
   return ordered;
 }
 
-export function getSceneTabIndexForKey(
+export function getTabIndexForKey(
   currentIndex: number,
   sceneCount: number,
   key: string,

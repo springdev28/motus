@@ -25,7 +25,7 @@ import {
   getDraftSaveStatus,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
-  getSceneTabIndexForKey,
+  getTabIndexForKey,
   hasPointerDragStarted,
   parseProjectTags,
   recordProjectHistory,
@@ -839,13 +839,15 @@ void test('scene ordering keeps boundary scenes in place', () => {
   );
 });
 
-void test('scene tab navigation wraps and supports timeline boundaries', () => {
-  assert.equal(getSceneTabIndexForKey(0, 3, 'ArrowLeft'), 2);
-  assert.equal(getSceneTabIndexForKey(2, 3, 'ArrowRight'), 0);
-  assert.equal(getSceneTabIndexForKey(1, 3, 'Home'), 0);
-  assert.equal(getSceneTabIndexForKey(1, 3, 'End'), 2);
-  assert.equal(getSceneTabIndexForKey(1, 3, 'Enter'), null);
-  assert.equal(getSceneTabIndexForKey(0, 0, 'ArrowRight'), null);
+void test('horizontal tab navigation wraps and supports boundaries', () => {
+  assert.equal(getTabIndexForKey(0, 2, 'ArrowLeft'), 1);
+  assert.equal(getTabIndexForKey(1, 2, 'ArrowRight'), 0);
+  assert.equal(getTabIndexForKey(0, 3, 'ArrowLeft'), 2);
+  assert.equal(getTabIndexForKey(2, 3, 'ArrowRight'), 0);
+  assert.equal(getTabIndexForKey(1, 3, 'Home'), 0);
+  assert.equal(getTabIndexForKey(1, 3, 'End'), 2);
+  assert.equal(getTabIndexForKey(1, 3, 'Enter'), null);
+  assert.equal(getTabIndexForKey(0, 0, 'ArrowRight'), null);
 });
 
 void test('editor capacity matches project validation limits', () => {
