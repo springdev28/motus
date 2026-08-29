@@ -15,6 +15,7 @@ export const MAX_IMAGE_BYTES = 750_000;
 export const MAX_IMAGE_DIMENSION = 4_096;
 export const MAX_IMAGE_PIXELS = 12_000_000;
 export const MAX_ELEMENT_NAME_LENGTH = 160;
+export const MAX_PROJECT_DESCRIPTION_LENGTH = 5_000;
 export const MAX_PROJECT_FILE_BYTES = 12_000_000;
 export const MAX_PROJECT_TITLE_LENGTH = 160;
 export const MAX_PROJECT_TAGS = 8;
@@ -1302,7 +1303,9 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
         createdAt: revision.createdAt as string,
         title: revision.title as string,
         description:
-          typeof revision.description === 'string' ? revision.description : '',
+          typeof revision.description === 'string'
+            ? revision.description.slice(0, MAX_PROJECT_DESCRIPTION_LENGTH)
+            : '',
         tags: normalizeTags(revision.tags),
         language: typeof revision.language === 'string' ? revision.language : 'en',
         contentRating: normalizeContentRating(revision.contentRating),
@@ -1337,7 +1340,9 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
           : fallbackId,
       title: candidate.title,
       description:
-        typeof candidate.description === 'string' ? candidate.description : '',
+        typeof candidate.description === 'string'
+          ? candidate.description.slice(0, MAX_PROJECT_DESCRIPTION_LENGTH)
+          : '',
       tags: normalizeTags(candidate.tags),
       language: typeof candidate.language === 'string' ? candidate.language : 'en',
       contentRating: normalizeContentRating(candidate.contentRating),

@@ -70,6 +70,7 @@ import {
   CANVAS_WIDTH,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_ELEMENT_TEXT_LENGTH,
+  MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_PROJECT_FILE_BYTES,
   MAX_PROJECT_SCENES,
   MAX_PROJECT_TITLE_LENGTH,
@@ -2335,6 +2336,7 @@ export function MotusStudio() {
               <Textarea
                 {...textHistoryProps}
                 id="project-details-description"
+                maxLength={MAX_PROJECT_DESCRIPTION_LENGTH}
                 onChange={(event) => commitProject((draft) => { draft.description = event.target.value; }, 'project:description')}
                 placeholder="What should readers know before they begin?"
                 value={project.description}
@@ -2450,6 +2452,7 @@ export function MotusStudio() {
               <Textarea
                 {...textHistoryProps}
                 id="publish-description"
+                maxLength={MAX_PROJECT_DESCRIPTION_LENGTH}
                 onChange={(event) => commitProject((draft) => { draft.description = event.target.value; }, 'project:description')}
                 placeholder="What should readers know before they begin?"
                 value={project.description}

@@ -5,6 +5,7 @@ import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   MAX_ELEMENT_NAME_LENGTH,
+  MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_SCENE_NAME_LENGTH,
   MIN_ELEMENT_HEIGHT,
   MIN_ELEMENT_WIDTH,
@@ -587,6 +588,24 @@ void test('project import normalizes optional metadata without losing history', 
   assert.equal(result.project.coverSceneId, 'scene-1');
   assert.equal(result.project.publications[0].coverSceneId, 'scene-1');
   assert.equal(result.project.updatedAt, '1970-01-01T00:00:00.000Z');
+});
+
+void test('project import bounds draft and published descriptions', () => {
+  const project = createDefaultProject();
+  project.description = 'D'.repeat(MAX_PROJECT_DESCRIPTION_LENGTH + 50);
+  const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+  revision.description = 'R'.repeat(MAX_PROJECT_DESCRIPTION_LENGTH + 50);
+  project.publications = [revision];
+  project.publishedRevision = 1;
+
+  const restored = restoreProject(JSON.stringify(project));
+
+  assert.ok(restored);
+  assert.equal(restored.description.length, MAX_PROJECT_DESCRIPTION_LENGTH);
+  assert.equal(
+    restored.publications[0].description.length,
+    MAX_PROJECT_DESCRIPTION_LENGTH,
+  );
 });
 
 void test('published revisions remain immutable when the draft changes', () => {
