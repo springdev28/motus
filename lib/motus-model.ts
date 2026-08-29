@@ -14,7 +14,15 @@ export type MotionBlockKind =
   | 'move'
   | 'scale'
   | 'rotate'
-  | 'opacity';
+  | 'opacity'
+  | 'bounce'
+  | 'shake'
+  | 'drift'
+  | 'float'
+  | 'pulse'
+  | 'blur'
+  | 'reveal'
+  | 'flash';
 export type ContentRating = 'all-ages' | 'teen' | 'mature';
 export type PublicationVisibility = 'private' | 'public';
 export type SupportedImageMime = 'image/png' | 'image/webp';
@@ -35,7 +43,20 @@ export const MAX_SCENE_THUMBNAIL_ELEMENTS = 12;
 export const MAX_ELEMENT_TEXT_LENGTH = 50_000;
 export const MAX_PROJECT_HISTORY_ENTRIES = 50;
 export const MAX_PROJECT_HISTORY_BYTES = 24_000_000;
-export const MAX_MOTION_BLOCKS = 16;
+export const MAX_MOTION_BLOCKS = 32;
+export const MAX_BOUNCE_JUMPS = 12;
+
+export type BounceDirection = 'left' | 'right';
+export type RevealDirection = 'left' | 'right' | 'up' | 'down';
+
+export type BounceJump = {
+  id: string;
+  direction: BounceDirection;
+  height: number;
+  spread: number;
+  durationMs: number;
+  easing: Easing;
+};
 
 export type MotionBlock = {
   id: string;
@@ -48,6 +69,10 @@ export type MotionBlock = {
   x: number;
   y: number;
   value: number;
+  secondaryValue: number;
+  repetitions: number;
+  direction: RevealDirection;
+  jumps: BounceJump[];
 };
 
 export type MotionBlockCatalogEntry = {
@@ -62,7 +87,8 @@ export const MOTION_BLOCK_CATALOG: MotionBlockCatalogEntry[] = [
     kind: 'scene-enter',
     category: 'event',
     label: 'When scene enters view',
-    description: 'Starts this element program in preview and the published reader.',
+    description:
+      'Starts this element program in preview and the published reader.',
   },
   {
     kind: 'wait',
@@ -94,25 +120,130 @@ export const MOTION_BLOCK_CATALOG: MotionBlockCatalogEntry[] = [
     label: 'Fade in',
     description: 'Changes opacity from a chosen value to the layer opacity.',
   },
+  {
+    kind: 'bounce',
+    category: 'motion',
+    label: 'Custom bounce',
+    description: 'Builds a landing path from individually editable jumps.',
+  },
+  {
+    kind: 'shake',
+    category: 'motion',
+    label: 'Shake',
+    description:
+      'Shakes horizontally and vertically for a chosen number of beats.',
+  },
+  {
+    kind: 'drift',
+    category: 'motion',
+    label: 'Drift in',
+    description: 'Glides slowly from an editable X/Y offset.',
+  },
+  {
+    kind: 'float',
+    category: 'motion',
+    label: 'Float',
+    description: 'Rises and falls by an editable height and repeat count.',
+  },
+  {
+    kind: 'pulse',
+    category: 'looks',
+    label: 'Pulse',
+    description: 'Pulses to an editable scale for a chosen number of beats.',
+  },
+  {
+    kind: 'blur',
+    category: 'looks',
+    label: 'Focus from blur',
+    description: 'Animates from an editable blur radius into focus.',
+  },
+  {
+    kind: 'reveal',
+    category: 'looks',
+    label: 'Directional reveal',
+    description: 'Reveals the layer from the left, right, top, or bottom.',
+  },
+  {
+    kind: 'flash',
+    category: 'looks',
+    label: 'Flash',
+    description: 'Flashes between two opacity levels for an editable count.',
+  },
 ];
+
+export function createBounceJump(
+  index: number,
+  overrides: Partial<BounceJump> = {},
+): BounceJump {
+  const defaultHeights = [170, 120, 78, 42];
+  const defaultSpreads = [190, 145, 95, 55];
+  const defaultDurations = [460, 400, 340, 280];
+  return {
+    id: `jump-${index + 1}-${Math.random().toString(36).slice(2, 7)}`,
+    direction: 'left',
+    height: defaultHeights[index] ?? 42,
+    spread: defaultSpreads[index] ?? 55,
+    durationMs: defaultDurations[index] ?? 280,
+    easing: 'ease-out',
+    ...overrides,
+  };
+}
 
 export function createMotionBlock(
   kind: MotionBlockKind,
   id = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 ): MotionBlock {
-  const catalogEntry = MOTION_BLOCK_CATALOG.find((entry) => entry.kind === kind)!;
+  const catalogEntry = MOTION_BLOCK_CATALOG.find(
+    (entry) => entry.kind === kind,
+  )!;
   return {
     id,
     kind,
     category: catalogEntry.category,
     label: catalogEntry.label,
     enabled: true,
-    durationMs: kind === 'scene-enter' ? 0 : kind === 'wait' ? 300 : 700,
+    durationMs:
+      kind === 'scene-enter'
+        ? 0
+        : kind === 'wait'
+          ? 300
+          : kind === 'float'
+            ? 1_400
+            : kind === 'drift'
+              ? 1_100
+              : 700,
     easing: 'ease-out',
-    x: kind === 'move' ? 80 : 0,
-    y: 0,
+    x:
+      kind === 'move' ? 80 : kind === 'drift' ? 110 : kind === 'shake' ? 24 : 0,
+    y: kind === 'drift' ? 38 : kind === 'float' ? 52 : 0,
     value:
-      kind === 'scale' ? 0.8 : kind === 'opacity' ? 0 : kind === 'rotate' ? -12 : 0,
+      kind === 'scale'
+        ? 0.8
+        : kind === 'opacity' || kind === 'flash'
+          ? 0
+          : kind === 'rotate'
+            ? -12
+            : kind === 'pulse'
+              ? 1.18
+              : kind === 'blur'
+                ? 18
+                : kind === 'reveal'
+                  ? 100
+                  : 0,
+    secondaryValue: kind === 'shake' ? 10 : 0,
+    repetitions:
+      kind === 'shake'
+        ? 6
+        : kind === 'float' || kind === 'pulse'
+          ? 2
+          : kind === 'flash'
+            ? 3
+            : 1,
+    direction: 'left',
+    jumps:
+      kind === 'bounce'
+        ? Array.from({ length: 4 }, (_, index) => createBounceJump(index))
+        : [],
   };
 }
 
@@ -123,7 +254,9 @@ export type ImageAssetMetadata = {
   height?: number;
 };
 
-export function detectImageFormat(bytes: Uint8Array): SupportedImageMime | null {
+export function detectImageFormat(
+  bytes: Uint8Array,
+): SupportedImageMime | null {
   const isPng =
     bytes.length >= 8 &&
     bytes[0] === 0x89 &&
@@ -155,7 +288,9 @@ export function findSupportedImageFile<T extends { type: string }>(
   );
 }
 
-export function validateImageAsset(metadata: ImageAssetMetadata): string | null {
+export function validateImageAsset(
+  metadata: ImageAssetMetadata,
+): string | null {
   if (metadata.mime !== 'image/png' && metadata.mime !== 'image/webp') {
     return 'Use a PNG or WebP image';
   }
@@ -165,7 +300,8 @@ export function validateImageAsset(metadata: ImageAssetMetadata): string | null 
   if (metadata.size > MAX_IMAGE_BYTES) {
     return 'Images must be under 750 KB';
   }
-  if (metadata.width === undefined || metadata.height === undefined) return null;
+  if (metadata.width === undefined || metadata.height === undefined)
+    return null;
   if (
     !Number.isInteger(metadata.width) ||
     !Number.isInteger(metadata.height) ||
@@ -213,6 +349,11 @@ export type CompiledMotionKeyframe = {
   opacity: number;
   scale: number;
   rotation: number;
+  blurPx: number;
+  clipTop: number;
+  clipRight: number;
+  clipBottom: number;
+  clipLeft: number;
   easing: Easing | 'steps(1, end)';
 };
 
@@ -419,7 +560,10 @@ export function resolveReaderSource(
         chapterTitle: revision.chapterTitle,
         contentRating: revision.contentRating,
         visibility: revision.visibility,
-        coverSceneId: resolveCoverSceneId(revision.scenes, revision.coverSceneId),
+        coverSceneId: resolveCoverSceneId(
+          revision.scenes,
+          revision.coverSceneId,
+        ),
         scenes: revision.scenes,
       }
     : {
@@ -495,13 +639,15 @@ const motion = (
       y: moveY,
       durationMs,
     },
-    ...(fromOpacity < 1 ? [
-      {
-        ...createMotionBlock('opacity', 'opacity'),
-        durationMs,
-        value: fromOpacity,
-      },
-    ] : []),
+    ...(fromOpacity < 1
+      ? [
+          {
+            ...createMotionBlock('opacity', 'opacity'),
+            durationMs,
+            value: fromOpacity,
+          },
+        ]
+      : []),
   ],
 });
 
@@ -517,7 +663,10 @@ function sanitizeProjectTags(values: unknown[]): string[] {
 
   for (const value of values) {
     if (typeof value !== 'string') continue;
-    const tag = value.trim().replace(/\s+/g, ' ').slice(0, MAX_PROJECT_TAG_LENGTH);
+    const tag = value
+      .trim()
+      .replace(/\s+/g, ' ')
+      .slice(0, MAX_PROJECT_TAG_LENGTH);
     const key = tag.toLocaleLowerCase();
     if (!tag || seen.has(key)) continue;
     tags.push(tag);
@@ -538,27 +687,96 @@ const isMotionBlockKind = (value: unknown): value is MotionBlockKind =>
   value === 'move' ||
   value === 'scale' ||
   value === 'rotate' ||
-  value === 'opacity';
+  value === 'opacity' ||
+  value === 'bounce' ||
+  value === 'shake' ||
+  value === 'drift' ||
+  value === 'float' ||
+  value === 'pulse' ||
+  value === 'blur' ||
+  value === 'reveal' ||
+  value === 'flash';
 
-function normalizeMotionBlocks(value: unknown, legacy: Partial<ElementMotion>): MotionBlock[] {
+const normalizeEasing = (value: unknown): Easing =>
+  value === 'linear' || value === 'ease-in-out' ? value : 'ease-out';
+
+function normalizeBounceJumps(value: unknown): BounceJump[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .flatMap((candidate, index) => {
+      if (
+        !candidate ||
+        typeof candidate !== 'object' ||
+        Array.isArray(candidate)
+      )
+        return [];
+      const raw = candidate as Partial<BounceJump>;
+      const jump: BounceJump = {
+        ...createBounceJump(index, {
+          id:
+            typeof raw.id === 'string' && raw.id ? raw.id : `jump-${index + 1}`,
+        }),
+        direction: raw.direction === 'right' ? 'right' : 'left',
+        height: clamp(finite(raw.height, 80), 0, 2_000),
+        spread: clamp(finite(raw.spread, 100), 0, 2_000),
+        durationMs: clamp(Math.round(finite(raw.durationMs, 360)), 80, 10_000),
+        easing: normalizeEasing(raw.easing),
+      };
+      return [jump];
+    })
+    .slice(0, MAX_BOUNCE_JUMPS);
+}
+
+function normalizeMotionBlocks(
+  value: unknown,
+  legacy: Partial<ElementMotion>,
+): MotionBlock[] {
   if (Array.isArray(value)) {
     const seen = new Set<string>();
-    const blocks = value.flatMap((candidate, index) => {
-      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
-      const raw = candidate as Partial<MotionBlock>;
-      if (!isMotionBlockKind(raw.kind)) return [];
-      const block = createMotionBlock(raw.kind, typeof raw.id === 'string' && raw.id ? raw.id : `${raw.kind}-${index + 1}`);
-      block.enabled = raw.enabled !== false;
-      block.durationMs = finite(raw.durationMs, block.durationMs);
-      block.easing = raw.easing === 'linear' || raw.easing === 'ease-in-out' ? raw.easing : 'ease-out';
-      block.x = finite(raw.x, block.x);
-      block.y = finite(raw.y, block.y);
-      block.value = finite(raw.value, block.value);
-      if (seen.has(block.id)) block.id = `${block.id}-${index + 1}`;
-      seen.add(block.id);
-      return [block];
-    }).slice(0, MAX_MOTION_BLOCKS);
-    const eventIndex = blocks.findIndex((block) => block.kind === 'scene-enter');
+    const blocks = value
+      .flatMap((candidate, index) => {
+        if (
+          !candidate ||
+          typeof candidate !== 'object' ||
+          Array.isArray(candidate)
+        )
+          return [];
+        const raw = candidate as Partial<MotionBlock>;
+        if (!isMotionBlockKind(raw.kind)) return [];
+        const block = createMotionBlock(
+          raw.kind,
+          typeof raw.id === 'string' && raw.id
+            ? raw.id
+            : `${raw.kind}-${index + 1}`,
+        );
+        block.enabled = raw.enabled !== false;
+        block.durationMs = finite(raw.durationMs, block.durationMs);
+        block.easing = normalizeEasing(raw.easing);
+        block.x = finite(raw.x, block.x);
+        block.y = finite(raw.y, block.y);
+        block.value = finite(raw.value, block.value);
+        block.secondaryValue = finite(raw.secondaryValue, block.secondaryValue);
+        block.repetitions = clamp(
+          Math.round(finite(raw.repetitions, block.repetitions)),
+          1,
+          20,
+        );
+        block.direction =
+          raw.direction === 'right' ||
+          raw.direction === 'up' ||
+          raw.direction === 'down'
+            ? raw.direction
+            : 'left';
+        const jumps = normalizeBounceJumps(raw.jumps);
+        if (block.kind === 'bounce' && jumps.length > 0) block.jumps = jumps;
+        if (seen.has(block.id)) block.id = `${block.id}-${index + 1}`;
+        seen.add(block.id);
+        return [block];
+      })
+      .slice(0, MAX_MOTION_BLOCKS);
+    const eventIndex = blocks.findIndex(
+      (block) => block.kind === 'scene-enter',
+    );
     if (eventIndex > 0) {
       const [event] = blocks.splice(eventIndex, 1);
       blocks.unshift(event);
@@ -597,7 +815,9 @@ function normalizeMotionBlocks(value: unknown, legacy: Partial<ElementMotion>): 
   return migrated.slice(0, MAX_MOTION_BLOCKS);
 }
 
-function migrateMotion(value: Partial<ElementMotion> | undefined): ElementMotion {
+function migrateMotion(
+  value: Partial<ElementMotion> | undefined,
+): ElementMotion {
   const legacy = value ?? {};
   return {
     schemaVersion: MOTION_SCHEMA_VERSION,
@@ -622,10 +842,24 @@ export function constrainElementToCanvas(
   canvasWidth = CANVAS_WIDTH,
   canvasHeight = CANVAS_HEIGHT,
 ): MotusElement {
-  const safeCanvasWidth = Math.max(MIN_ELEMENT_WIDTH, finite(canvasWidth, CANVAS_WIDTH));
-  const safeCanvasHeight = Math.max(MIN_ELEMENT_HEIGHT, finite(canvasHeight, CANVAS_HEIGHT));
-  const width = clamp(finite(element.width, MIN_ELEMENT_WIDTH), MIN_ELEMENT_WIDTH, safeCanvasWidth);
-  const height = clamp(finite(element.height, MIN_ELEMENT_HEIGHT), MIN_ELEMENT_HEIGHT, safeCanvasHeight);
+  const safeCanvasWidth = Math.max(
+    MIN_ELEMENT_WIDTH,
+    finite(canvasWidth, CANVAS_WIDTH),
+  );
+  const safeCanvasHeight = Math.max(
+    MIN_ELEMENT_HEIGHT,
+    finite(canvasHeight, CANVAS_HEIGHT),
+  );
+  const width = clamp(
+    finite(element.width, MIN_ELEMENT_WIDTH),
+    MIN_ELEMENT_WIDTH,
+    safeCanvasWidth,
+  );
+  const height = clamp(
+    finite(element.height, MIN_ELEMENT_HEIGHT),
+    MIN_ELEMENT_HEIGHT,
+    safeCanvasHeight,
+  );
 
   return {
     ...element,
@@ -665,8 +899,11 @@ export function hasPointerDragStarted(
   pointerType: string,
 ): boolean {
   const threshold = pointerType === 'touch' ? 6 : pointerType === 'pen' ? 3 : 2;
-  return Number.isFinite(deltaX) && Number.isFinite(deltaY) &&
-    Math.hypot(deltaX, deltaY) >= threshold;
+  return (
+    Number.isFinite(deltaX) &&
+    Number.isFinite(deltaY) &&
+    Math.hypot(deltaX, deltaY) >= threshold
+  );
 }
 
 export function getKeyboardNudgeDelta(
@@ -742,23 +979,82 @@ export function shouldEndContinuousHistoryOnKey(key: string): boolean {
   ].includes(key);
 }
 
-export function compileElementMotion(element: MotusElement): CompiledElementMotion {
+type MotionFrameState = Omit<CompiledMotionKeyframe, 'offset' | 'easing'>;
+
+const copyMotionState = (state: MotionFrameState): MotionFrameState => ({
+  ...state,
+});
+
+function getBlockDuration(block: MotionBlock): number {
+  if (block.kind === 'bounce') {
+    return block.jumps.reduce(
+      (total, jump) => total + clamp(Math.round(jump.durationMs), 80, 10_000),
+      0,
+    );
+  }
+  return clamp(
+    Math.round(block.durationMs),
+    block.kind === 'wait' ? 0 : 100,
+    10_000,
+  );
+}
+
+function getBlockInputState(
+  block: MotionBlock,
+  output: MotionFrameState,
+): MotionFrameState {
+  const input = copyMotionState(output);
+  if (block.kind === 'move' || block.kind === 'drift') {
+    input.translateX = clamp(output.translateX - block.x, -8_000, 8_000);
+    input.translateY = clamp(output.translateY - block.y, -8_000, 8_000);
+  } else if (block.kind === 'rotate') {
+    input.rotation = clamp(output.rotation + block.value, -1_440, 1_440);
+  } else if (block.kind === 'scale') {
+    input.scale = clamp(block.value, 0.05, 4);
+  } else if (block.kind === 'opacity') {
+    input.opacity = clamp(block.value, 0, 1);
+  } else if (block.kind === 'blur') {
+    input.blurPx = clamp(block.value, 0, 60);
+  } else if (block.kind === 'reveal') {
+    const amount = clamp(block.value, 0, 100);
+    if (block.direction === 'right') input.clipRight = amount;
+    else if (block.direction === 'up') input.clipTop = amount;
+    else if (block.direction === 'down') input.clipBottom = amount;
+    else input.clipLeft = amount;
+  } else if (block.kind === 'bounce') {
+    const travel = block.jumps.reduce(
+      (total, jump) =>
+        total + (jump.direction === 'left' ? -jump.spread : jump.spread),
+      0,
+    );
+    input.translateX = clamp(output.translateX - travel, -8_000, 8_000);
+  }
+  return input;
+}
+
+export function compileElementMotion(
+  element: MotusElement,
+): CompiledElementMotion {
   const instruction = migrateMotion(element.motion);
   const activeBlocks = instruction.blocks.filter(
-    (block) => block.enabled && block.kind !== 'scene-enter',
+    (
+      block,
+    ): block is MotionBlock & {
+      kind: Exclude<MotionBlockKind, 'scene-enter'>;
+    } => block.enabled && block.kind !== 'scene-enter',
   );
   let cursorMs = 0;
   let leadingDelayMs = 0;
   let encounteredAction = false;
   const steps: CompiledMotionStep[] = [];
   for (const block of activeBlocks) {
-    if (block.kind === 'scene-enter') continue;
-    const durationMs = clamp(
-      Math.round(block.durationMs),
-      block.kind === 'wait' ? 0 : 100,
-      10_000,
+    const requestedDurationMs = getBlockDuration(block);
+    const durationMs = Math.min(
+      requestedDurationMs,
+      Math.max(0, 60_000 - cursorMs),
     );
-    if (block.kind === 'wait' && !encounteredAction) leadingDelayMs += durationMs;
+    if (block.kind === 'wait' && !encounteredAction)
+      leadingDelayMs += durationMs;
     if (block.kind !== 'wait') encounteredAction = true;
     steps.push({
       blockId: block.id,
@@ -769,69 +1065,207 @@ export function compileElementMotion(element: MotusElement): CompiledElementMoti
     });
     cursorMs += durationMs;
   }
-  const moveBlocks = activeBlocks.filter((block) => block.kind === 'move');
-  const rotateBlocks = activeBlocks.filter((block) => block.kind === 'rotate');
-  const scaleBlocks = activeBlocks.filter((block) => block.kind === 'scale');
-  const opacityBlocks = activeBlocks.filter((block) => block.kind === 'opacity');
-  const moveX = moveBlocks.reduce((total, block) => total + block.x, 0);
-  const moveY = moveBlocks.reduce((total, block) => total + block.y, 0);
-  const fromRotation = rotateBlocks.at(-1)?.value ?? instruction.fromRotation;
-  const fromScale = scaleBlocks.at(-1)?.value ?? instruction.fromScale;
-  const fromOpacity = opacityBlocks.at(-1)?.value ?? instruction.fromOpacity;
   const actionDurationMs = steps
     .filter((step) => step.kind !== 'wait')
     .reduce((total, step) => total + step.durationMs, 0);
+  const finalState: MotionFrameState = {
+    translateX: 0,
+    translateY: 0,
+    opacity: clamp(element.opacity, 0, 1),
+    scale: 1,
+    rotation: clamp(element.rotation, -360, 360),
+    blurPx: 0,
+    clipTop: 0,
+    clipRight: 0,
+    clipBottom: 0,
+    clipLeft: 0,
+  };
+  const inputStates = Array.from({ length: activeBlocks.length }, () =>
+    copyMotionState(finalState),
+  );
+  const outputStates = Array.from({ length: activeBlocks.length }, () =>
+    copyMotionState(finalState),
+  );
+  let reverseState = copyMotionState(finalState);
+  for (let index = activeBlocks.length - 1; index >= 0; index -= 1) {
+    outputStates[index] = copyMotionState(reverseState);
+    inputStates[index] = getBlockInputState(activeBlocks[index], reverseState);
+    reverseState = inputStates[index];
+  }
+  const legacyFromState: MotionFrameState = {
+    ...finalState,
+    translateX: clamp(-instruction.moveX, -8_000, 8_000),
+    translateY: clamp(-instruction.moveY, -8_000, 8_000),
+    opacity: clamp(instruction.fromOpacity, 0, 1),
+    scale: clamp(instruction.fromScale, 0.05, 4),
+    rotation: clamp(element.rotation + instruction.fromRotation, -1_440, 1_440),
+  };
+  const initialState = inputStates[0] ?? legacyFromState;
   const from = {
-    translateX: clamp(-(moveBlocks.length ? moveX : instruction.moveX), -2_000, 2_000),
-    translateY: clamp(-(moveBlocks.length ? moveY : instruction.moveY), -2_000, 2_000),
-    opacity: clamp(fromOpacity, 0, 1),
-    scale: clamp(fromScale, 0.1, 3),
-    rotation: clamp(element.rotation + fromRotation, -720, 720),
+    translateX: initialState.translateX,
+    translateY: initialState.translateY,
+    opacity: initialState.opacity,
+    scale: initialState.scale,
+    rotation: initialState.rotation,
   };
   const to = {
     translateX: 0 as const,
     translateY: 0 as const,
-    opacity: clamp(element.opacity, 0, 1),
+    opacity: finalState.opacity,
     scale: 1 as const,
-    rotation: clamp(element.rotation, -360, 360),
+    rotation: finalState.rotation,
   };
   const sequenceDurationMs = clamp(
     cursorMs || Math.round(instruction.durationMs),
     0,
     60_000,
   );
-  const frameState = { ...from };
-  const keyframes: CompiledMotionKeyframe[] = [{
-    offset: 0,
-    ...frameState,
-    easing: steps[0]?.kind === 'wait' ? 'steps(1, end)' : (steps[0]?.easing ?? instruction.easing),
-  }];
-  for (const step of steps) {
-    if (step.durationMs <= 0 || sequenceDurationMs <= 0) continue;
-    keyframes[keyframes.length - 1].easing =
-      step.kind === 'wait' ? 'steps(1, end)' : step.easing;
-    if (step.kind === 'move') {
-      frameState.translateX = to.translateX;
-      frameState.translateY = to.translateY;
-    }
-    if (step.kind === 'rotate') frameState.rotation = to.rotation;
-    if (step.kind === 'scale') frameState.scale = to.scale;
-    if (step.kind === 'opacity') frameState.opacity = to.opacity;
-    keyframes.push({
-      offset: clamp((step.startsAtMs + step.durationMs) / sequenceDurationMs, 0, 1),
+  let frameState = copyMotionState(initialState);
+  const keyframes: CompiledMotionKeyframe[] = [
+    {
+      offset: 0,
       ...frameState,
-      easing: step.easing,
+      easing:
+        steps[0]?.kind === 'wait'
+          ? 'steps(1, end)'
+          : (steps[0]?.easing ?? instruction.easing),
+    },
+  ];
+
+  const pushFrame = (
+    state: MotionFrameState,
+    elapsedMs: number,
+    easing: Easing | 'steps(1, end)',
+  ) => {
+    if (sequenceDurationMs <= 0) return;
+    keyframes[keyframes.length - 1].easing = easing;
+    keyframes.push({
+      offset: clamp(elapsedMs / sequenceDurationMs, 0, 1),
+      ...copyMotionState(state),
+      easing,
     });
+  };
+
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    const block = activeBlocks[index];
+    if (step.durationMs <= 0 || sequenceDurationMs <= 0) continue;
+    const output = outputStates[index];
+    const endMs = step.startsAtMs + step.durationMs;
+
+    if (block.kind === 'bounce') {
+      let localMs = 0;
+      let groundX = inputStates[index].translateX;
+      const groundY = inputStates[index].translateY;
+      for (const jump of block.jumps) {
+        if (localMs >= step.durationMs) break;
+        const jumpDuration = Math.min(
+          clamp(Math.round(jump.durationMs), 80, 10_000),
+          step.durationMs - localMs,
+        );
+        const dx =
+          (jump.direction === 'left' ? -1 : 1) * clamp(jump.spread, 0, 2_000);
+        const height = clamp(jump.height, 0, 2_000);
+        const apex = {
+          ...frameState,
+          translateX: groundX + dx / 2,
+          translateY: groundY - height,
+        };
+        pushFrame(
+          apex,
+          step.startsAtMs + localMs + jumpDuration / 2,
+          jump.easing,
+        );
+        const landing = {
+          ...frameState,
+          translateX: groundX + dx,
+          translateY: groundY,
+        };
+        pushFrame(
+          landing,
+          step.startsAtMs + localMs + jumpDuration,
+          jump.easing,
+        );
+        frameState = landing;
+        groundX += dx;
+        localMs += jumpDuration;
+      }
+      frameState = copyMotionState(output);
+      if (
+        keyframes.at(-1)?.offset !== clamp(endMs / sequenceDurationMs, 0, 1)
+      ) {
+        pushFrame(frameState, endMs, step.easing);
+      } else {
+        Object.assign(keyframes[keyframes.length - 1], frameState);
+      }
+      continue;
+    }
+
+    const repetitions = clamp(Math.round(block.repetitions), 1, 20);
+    if (
+      block.kind === 'shake' ||
+      block.kind === 'float' ||
+      block.kind === 'pulse' ||
+      block.kind === 'flash'
+    ) {
+      const beatDuration = step.durationMs / repetitions;
+      for (let beat = 0; beat < repetitions; beat += 1) {
+        const progress = beat / repetitions;
+        const strength = 1 - progress * 0.7;
+        const midpoint =
+          step.startsAtMs + beat * beatDuration + beatDuration / 2;
+        const accent = copyMotionState(output);
+        if (block.kind === 'shake') {
+          const sign = beat % 2 === 0 ? 1 : -1;
+          accent.translateX += clamp(block.x, -800, 800) * sign * strength;
+          accent.translateY +=
+            clamp(block.secondaryValue, -800, 800) * -sign * strength;
+        } else if (block.kind === 'float') {
+          accent.translateY -= Math.abs(clamp(block.y, -800, 800));
+        } else if (block.kind === 'pulse') {
+          accent.scale = clamp(block.value, 0.05, 4);
+        } else {
+          accent.opacity = clamp(block.value, 0, 1);
+        }
+        pushFrame(accent, midpoint, step.easing);
+        pushFrame(
+          output,
+          step.startsAtMs + (beat + 1) * beatDuration,
+          step.easing,
+        );
+      }
+      frameState = copyMotionState(output);
+      continue;
+    }
+
+    frameState = copyMotionState(output);
+    pushFrame(
+      frameState,
+      endMs,
+      block.kind === 'wait' ? 'steps(1, end)' : step.easing,
+    );
   }
-  if (keyframes.at(-1)?.offset !== 1) {
-    keyframes.push({ offset: 1, ...to, easing: instruction.easing });
+  const finalKeyframe = keyframes.at(-1);
+  if (finalKeyframe?.offset !== 1) {
+    keyframes.push({ offset: 1, ...finalState, easing: instruction.easing });
+  } else if (finalKeyframe) {
+    Object.assign(finalKeyframe, finalState);
   }
   return {
     schemaVersion: MOTION_SCHEMA_VERSION,
     event: 'scene-enter',
-    durationMs: clamp(actionDurationMs || Math.round(instruction.durationMs), 200, 30_000),
-    delayMs: clamp(leadingDelayMs || Math.round(instruction.delayMs), 0, 10_000),
-    easing: steps.find((step) => step.kind !== 'wait')?.easing ?? instruction.easing,
+    durationMs: clamp(
+      actionDurationMs || Math.round(instruction.durationMs),
+      200,
+      30_000,
+    ),
+    delayMs: clamp(
+      leadingDelayMs || Math.round(instruction.delayMs),
+      0,
+      10_000,
+    ),
+    easing:
+      steps.find((step) => step.kind !== 'wait')?.easing ?? instruction.easing,
     sequenceDurationMs,
     steps,
     keyframes,
@@ -956,7 +1390,8 @@ export const createDefaultProject = (): MotusProject => ({
   title: 'Signal in the Fog',
   creatorName: 'Bahar Yüksel',
   chapterTitle: 'Chapter 1 · The Answering Light',
-  description: 'Three signals answer one another across a silent, shifting landscape.',
+  description:
+    'Three signals answer one another across a silent, shifting landscape.',
   tags: ['science fiction', 'mystery'],
   language: 'en',
   contentRating: 'all-ages',
@@ -1018,14 +1453,17 @@ export function createBlankProject(
       {
         id: openingSceneId,
         name: 'Opening scene',
-        background: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
+        background:
+          'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
         elements: [],
       },
     ],
   };
 }
 
-export function createProjectBackupFileName(project: Pick<MotusProject, 'id' | 'title'>) {
+export function createProjectBackupFileName(
+  project: Pick<MotusProject, 'id' | 'title'>,
+) {
   const fallback = project.id.trim() || 'untitled-work';
   const stem = (project.title.trim() || fallback)
     .normalize('NFKD')
@@ -1154,11 +1592,15 @@ export function getTabIndexForKey(
   return null;
 }
 
-export function canAddSceneToProject(project: Pick<MotusProject, 'scenes'>): boolean {
+export function canAddSceneToProject(
+  project: Pick<MotusProject, 'scenes'>,
+): boolean {
   return project.scenes.length < MAX_PROJECT_SCENES;
 }
 
-export function canAddElementToScene(scene: Pick<MotusScene, 'elements'>): boolean {
+export function canAddElementToScene(
+  scene: Pick<MotusScene, 'elements'>,
+): boolean {
   return scene.elements.length < MAX_SCENE_ELEMENTS;
 }
 
@@ -1179,7 +1621,11 @@ export type RestoredDraft = {
 };
 
 export function restoreNewestProject(
-  candidates: Array<{ source: string; value: string | null; priority?: number }>,
+  candidates: Array<{
+    source: string;
+    value: string | null;
+    priority?: number;
+  }>,
 ): RestoredDraft | null {
   const restored = candidates.flatMap(({ source, value, priority = 0 }) => {
     const project = restoreProject(value);
@@ -1203,8 +1649,11 @@ export function resolveEditorSelection(
   requestedElementId: string,
 ): EditorSelection {
   const scene =
-    project.scenes.find((item) => item.id === requestedSceneId) ?? project.scenes[0];
-  const elementId = scene.elements.some((item) => item.id === requestedElementId)
+    project.scenes.find((item) => item.id === requestedSceneId) ??
+    project.scenes[0];
+  const elementId = scene.elements.some(
+    (item) => item.id === requestedElementId,
+  )
     ? requestedElementId
     : (scene.elements.at(-1)?.id ?? '');
   return { sceneId: scene.id, elementId };
@@ -1332,7 +1781,9 @@ export function removePublicationRevision(
   if (!revision || revision.revision === project.publishedRevision) return null;
 
   const next = cloneProject(project);
-  next.publications = next.publications.filter((item) => item.id !== revisionId);
+  next.publications = next.publications.filter(
+    (item) => item.id !== revisionId,
+  );
   return next;
 }
 
@@ -1349,7 +1800,10 @@ const isRecord = (value: unknown): value is UnknownRecord =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const isElementType = (value: unknown): value is ElementType =>
-  value === 'shape' || value === 'text' || value === 'speech' || value === 'image';
+  value === 'shape' ||
+  value === 'text' ||
+  value === 'speech' ||
+  value === 'image';
 
 const isSafeColor = (value: unknown): value is string =>
   typeof value === 'string' &&
@@ -1378,7 +1832,10 @@ function validateMotion(value: unknown): string | null {
     return 'Project uses an unsupported motion trigger';
   }
   if (value.blocks !== undefined) {
-    if (!Array.isArray(value.blocks) || value.blocks.length > MAX_MOTION_BLOCKS) {
+    if (
+      !Array.isArray(value.blocks) ||
+      value.blocks.length > MAX_MOTION_BLOCKS
+    ) {
       return 'Project contains an invalid animation block program';
     }
     const ids = new Set<string>();
@@ -1391,6 +1848,27 @@ function validateMotion(value: unknown): string | null {
         ids.has(block.id)
       ) {
         return 'Project contains an invalid animation block program';
+      }
+      if (block.kind === 'bounce' && block.jumps !== undefined) {
+        if (
+          !Array.isArray(block.jumps) ||
+          block.jumps.length > MAX_BOUNCE_JUMPS
+        ) {
+          return 'Project contains an invalid bounce sequence';
+        }
+        const jumpIds = new Set<string>();
+        for (const jump of block.jumps) {
+          if (
+            !isRecord(jump) ||
+            typeof jump.id !== 'string' ||
+            !jump.id ||
+            jumpIds.has(jump.id) ||
+            (jump.direction !== 'left' && jump.direction !== 'right')
+          ) {
+            return 'Project contains an invalid bounce sequence';
+          }
+          jumpIds.add(jump.id);
+        }
       }
       ids.add(block.id);
     }
@@ -1408,10 +1886,15 @@ function validateScenes(value: unknown, context: string): string | null {
 
   const sceneIds = new Set<string>();
   for (const sceneValue of value) {
-    if (!isRecord(sceneValue) || typeof sceneValue.id !== 'string' || !sceneValue.id) {
+    if (
+      !isRecord(sceneValue) ||
+      typeof sceneValue.id !== 'string' ||
+      !sceneValue.id
+    ) {
       return `${context} contains an invalid scene`;
     }
-    if (sceneIds.has(sceneValue.id)) return `${context} has duplicate scene IDs`;
+    if (sceneIds.has(sceneValue.id))
+      return `${context} has duplicate scene IDs`;
     sceneIds.add(sceneValue.id);
     if (sceneValue.name !== undefined && typeof sceneValue.name !== 'string') {
       return `${context} contains an invalid scene name`;
@@ -1432,9 +1915,13 @@ function validateScenes(value: unknown, context: string): string | null {
       ) {
         return `${context} contains an invalid layer`;
       }
-      if (elementIds.has(elementValue.id)) return `${context} has duplicate layer IDs`;
+      if (elementIds.has(elementValue.id))
+        return `${context} has duplicate layer IDs`;
       elementIds.add(elementValue.id);
-      if (elementValue.name !== undefined && typeof elementValue.name !== 'string') {
+      if (
+        elementValue.name !== undefined &&
+        typeof elementValue.name !== 'string'
+      ) {
         return `${context} contains an invalid layer name`;
       }
       if (!isElementType(elementValue.type)) {
@@ -1505,9 +1992,13 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
           height: finite(elementValue.height, defaults.height),
           rotation: finite(elementValue.rotation, 0),
           opacity: finite(elementValue.opacity, 1),
-          fill: isSafeColor(elementValue.fill) ? elementValue.fill : defaults.fill,
+          fill: isSafeColor(elementValue.fill)
+            ? elementValue.fill
+            : defaults.fill,
           text:
-            typeof elementValue.text === 'string' ? elementValue.text : undefined,
+            typeof elementValue.text === 'string'
+              ? elementValue.text
+              : undefined,
           src:
             type === 'image' && isSafeImageSource(elementValue.src)
               ? elementValue.src
@@ -1537,14 +2028,19 @@ function normalizeVisibility(value: unknown): PublicationVisibility {
   return value === 'public' ? 'public' : 'private';
 }
 
-export function restoreProjectWithError(value: string | null): ProjectRestoreResult {
+export function restoreProjectWithError(
+  value: string | null,
+): ProjectRestoreResult {
   if (!value) return { project: null, error: 'Project file is empty' };
 
   let candidate: UnknownRecord;
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!isRecord(parsed)) {
-      return { project: null, error: 'Project file must contain one Motus project' };
+      return {
+        project: null,
+        error: 'Project file must contain one Motus project',
+      };
     }
     candidate = parsed;
   } catch {
@@ -1557,7 +2053,10 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
     candidate.schemaVersion !== 4 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
-    return { project: null, error: 'Project uses an unsupported schema version' };
+    return {
+      project: null,
+      error: 'Project uses an unsupported schema version',
+    };
   }
   if (typeof candidate.title !== 'string') {
     return { project: null, error: 'Project title is missing' };
@@ -1588,8 +2087,14 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
       return { project: null, error: 'Project publication history is invalid' };
     }
     const revision = publicationValue.revision as number;
-    if (publicationIds.has(publicationValue.id) || publicationNumbers.has(revision)) {
-      return { project: null, error: 'Project has duplicate publication revisions' };
+    if (
+      publicationIds.has(publicationValue.id) ||
+      publicationNumbers.has(revision)
+    ) {
+      return {
+        project: null,
+        error: 'Project has duplicate publication revisions',
+      };
     }
     publicationIds.add(publicationValue.id);
     publicationNumbers.add(revision);
@@ -1624,7 +2129,8 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
             ? revision.description.slice(0, MAX_PROJECT_DESCRIPTION_LENGTH)
             : '',
         tags: normalizeTags(revision.tags),
-        language: typeof revision.language === 'string' ? revision.language : 'en',
+        language:
+          typeof revision.language === 'string' ? revision.language : 'en',
         contentRating: normalizeContentRating(revision.contentRating),
         visibility: normalizeVisibility(revision.visibility),
         coverSceneId: resolveCoverSceneId(scenes, revision.coverSceneId),
@@ -1671,7 +2177,8 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
           ? candidate.description.slice(0, MAX_PROJECT_DESCRIPTION_LENGTH)
           : '',
       tags: normalizeTags(candidate.tags),
-      language: typeof candidate.language === 'string' ? candidate.language : 'en',
+      language:
+        typeof candidate.language === 'string' ? candidate.language : 'en',
       contentRating: normalizeContentRating(candidate.contentRating),
       visibility: normalizeVisibility(candidate.visibility),
       coverSceneId: resolveCoverSceneId(scenes, candidate.coverSceneId),

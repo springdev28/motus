@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  MAX_BOUNCE_JUMPS,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_SCENE_NAME_LENGTH,
@@ -79,7 +80,10 @@ void test('blank projects start private with one editable scene', () => {
 
 void test('project backup names are portable and never empty', () => {
   assert.equal(
-    createProjectBackupFileName({ id: 'fallback', title: ' Signal / Fog: №2 ' }),
+    createProjectBackupFileName({
+      id: 'fallback',
+      title: ' Signal / Fog: №2 ',
+    }),
     'signal-fog-no2.motus.json',
   );
   assert.equal(
@@ -91,7 +95,9 @@ void test('project backup names are portable and never empty', () => {
 void test('project storage measurement counts encoded bytes without mutation', () => {
   const project = createDefaultProject();
   project.title = 'Signal 🌫️';
-  const encodedLength = new TextEncoder().encode(JSON.stringify(project)).byteLength;
+  const encodedLength = new TextEncoder().encode(
+    JSON.stringify(project),
+  ).byteLength;
 
   assert.equal(getProjectStorageBytes(project), encodedLength);
   assert.equal(project.title, 'Signal 🌫️');
@@ -106,8 +112,12 @@ void test('mirrored journal writes verify both recovery slots before advancing',
   ]);
   const storage = {
     getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value); },
-    removeItem: (key: string) => { values.delete(key); },
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
   };
 
   const active = writeDraftJournal(
@@ -136,16 +146,20 @@ void test('mirrored journal rolls back its recovery slot when capacity fails', (
       if (key === 'slot-a' && value === 'candidate') throw new Error('quota');
       values.set(key, value);
     },
-    removeItem: (key: string) => { values.delete(key); },
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
   };
 
-  assert.throws(() => writeDraftJournal(
-    storage,
-    { pointer: 'pointer', slotA: 'slot-a', slotB: 'slot-b' },
-    'candidate',
-    (value) => value === 'candidate',
-    true,
-  ));
+  assert.throws(() =>
+    writeDraftJournal(
+      storage,
+      { pointer: 'pointer', slotA: 'slot-a', slotB: 'slot-b' },
+      'candidate',
+      (value) => value === 'candidate',
+      true,
+    ),
+  );
   assert.equal(values.get('pointer'), 'a');
   assert.equal(values.get('slot-a'), 'old-active');
   assert.equal(values.get('slot-b'), 'old-recovery');
@@ -177,7 +191,10 @@ void test('comic text is included in concise accessible element labels', () => {
 
   text.text = 'x'.repeat(300);
   assert.equal(describeElementForAccessibility(text).endsWith('…'), true);
-  assert.equal(describeElementForAccessibility(text).length, 'Scene title: '.length + 240);
+  assert.equal(
+    describeElementForAccessibility(text).length,
+    'Scene title: '.length + 240,
+  );
 });
 
 void test('continuous edit gestures occupy one undo history entry', () => {
@@ -194,7 +211,12 @@ void test('continuous edit gestures occupy one undo history entry', () => {
   assert.equal(history.undoStack[0].project.title, 'Signal in the Fog');
   assert.deepEqual(history.undoStack[0].selection, selection);
 
-  history = recordProjectHistory(history, project, selection, 'project:description');
+  history = recordProjectHistory(
+    history,
+    project,
+    selection,
+    'project:description',
+  );
   assert.equal(history.undoStack.length, 2);
   assert.equal(history.undoStack[1].project.title, 'Signal');
 
@@ -225,10 +247,12 @@ void test('history pruning keeps the newest contiguous snapshots within budget',
     project.title = title;
     return project;
   });
-  const entries = projects.map((project) => createProjectHistoryEntry(project, {
-    sceneId: 'scene-1',
-    elementId: 'scene-1-orb',
-  }));
+  const entries = projects.map((project) =>
+    createProjectHistoryEntry(project, {
+      sceneId: 'scene-1',
+      elementId: 'scene-1-orb',
+    }),
+  );
   const newestPairBytes = entries[1].bytes + entries[2].bytes;
 
   const budgeted = trimProjectHistory(entries, 50, newestPairBytes);
@@ -370,7 +394,10 @@ void test('element copies are independent and stay inside the canvas', () => {
   assert.equal(source.text, 'Original');
   assert.notEqual(source.motion.moveX, 999);
   assert.equal(
-    createCopyName('N'.repeat(MAX_ELEMENT_NAME_LENGTH), MAX_ELEMENT_NAME_LENGTH),
+    createCopyName(
+      'N'.repeat(MAX_ELEMENT_NAME_LENGTH),
+      MAX_ELEMENT_NAME_LENGTH,
+    ),
     `${'N'.repeat(MAX_ELEMENT_NAME_LENGTH - 5)} copy`,
   );
 });
@@ -512,6 +539,410 @@ void test('motion compilation is deterministic and produces a final element stat
   );
 });
 
+void test('default bounce compiles into four editable jumps and lands exactly on canvas', () => {
+  const element = createDefaultProject().scenes[0].elements[0];
+  const bounce = createMotionBlock('bounce', 'bounce-default');
+  bounce.jumps = bounce.jumps.map((jump, index) => ({
+    ...jump,
+    id: `default-jump-${index + 1}`,
+  }));
+  element.motion.blocks = [createMotionBlock('scene-enter', 'event'), bounce];
+
+  const compiled = compileElementMotion(element);
+
+  assert.deepEqual(
+    compiled.steps.map((step) => [step.kind, step.startsAtMs, step.durationMs]),
+    [['bounce', 0, 1_480]],
+  );
+  assert.equal(compiled.sequenceDurationMs, 1_480);
+  assert.deepEqual(
+    compiled.keyframes.map((frame) => [frame.translateX, frame.translateY]),
+    [
+      [485, 0],
+      [390, -170],
+      [295, 0],
+      [222.5, -120],
+      [150, 0],
+      [102.5, -78],
+      [55, 0],
+      [27.5, -42],
+      [0, 0],
+    ],
+  );
+  assert.deepEqual(compiled.from, {
+    translateX: 485,
+    translateY: 0,
+    opacity: element.opacity,
+    scale: 1,
+    rotation: element.rotation,
+  });
+  assert.deepEqual(compiled.to, {
+    translateX: 0,
+    translateY: 0,
+    opacity: element.opacity,
+    scale: 1,
+    rotation: element.rotation,
+  });
+});
+
+void test('bounce honors mixed directions, later taller jumps, and a widest final jump', () => {
+  const element = createDefaultProject().scenes[0].elements[0];
+  element.rotation = 17;
+  element.opacity = 0.72;
+  const bounce = createMotionBlock('bounce', 'bounce-custom');
+  bounce.jumps = [
+    {
+      id: 'jump-left-small',
+      direction: 'left',
+      height: 80,
+      spread: 100,
+      durationMs: 200,
+      easing: 'ease-out',
+    },
+    {
+      id: 'jump-right-tall',
+      direction: 'right',
+      height: 150,
+      spread: 40,
+      durationMs: 300,
+      easing: 'ease-in-out',
+    },
+    {
+      id: 'jump-left-widest',
+      direction: 'left',
+      height: 110,
+      spread: 250,
+      durationMs: 400,
+      easing: 'linear',
+    },
+  ];
+  element.motion.blocks = [createMotionBlock('scene-enter', 'event'), bounce];
+
+  const compiled = compileElementMotion(element);
+
+  assert.equal(compiled.sequenceDurationMs, 900);
+  assert.deepEqual(
+    compiled.keyframes.map((frame) => [frame.translateX, frame.translateY]),
+    [
+      [310, 0],
+      [260, -80],
+      [210, 0],
+      [230, -150],
+      [250, 0],
+      [125, -110],
+      [0, 0],
+    ],
+  );
+  assert.deepEqual(
+    compiled.keyframes.map((frame) => Number(frame.offset.toFixed(6))),
+    [0, 0.111111, 0.222222, 0.388889, 0.555556, 0.777778, 1],
+  );
+  assert.deepEqual(
+    {
+      translateX: compiled.keyframes.at(-1)?.translateX,
+      translateY: compiled.keyframes.at(-1)?.translateY,
+      opacity: compiled.keyframes.at(-1)?.opacity,
+      rotation: compiled.keyframes.at(-1)?.rotation,
+    },
+    { translateX: 0, translateY: 0, opacity: 0.72, rotation: 17 },
+  );
+});
+
+void test('repeated move blocks preserve their own sequential endpoints', () => {
+  const element = createDefaultProject().scenes[0].elements[0];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'event'),
+    { ...createMotionBlock('move', 'move-one'), x: 100, y: 0, durationMs: 200 },
+    {
+      ...createMotionBlock('move', 'move-two'),
+      x: -40,
+      y: 50,
+      durationMs: 300,
+    },
+  ];
+
+  const compiled = compileElementMotion(element);
+
+  assert.equal(compiled.sequenceDurationMs, 500);
+  assert.deepEqual(
+    compiled.keyframes.map((frame) => [
+      frame.offset,
+      frame.translateX,
+      frame.translateY,
+    ]),
+    [
+      [0, -60, -50],
+      [0.4, 40, -50],
+      [1, 0, 0],
+    ],
+  );
+});
+
+void test('shake, float, pulse, and flash are transient and finish at authored state', () => {
+  const cases = [
+    {
+      block: {
+        ...createMotionBlock('shake', 'shake'),
+        x: 30,
+        secondaryValue: 12,
+        repetitions: 3,
+        durationMs: 600,
+      },
+      changed: (
+        frame: ReturnType<typeof compileElementMotion>['keyframes'][number],
+      ) => frame.translateX !== 0 || frame.translateY !== 0,
+    },
+    {
+      block: {
+        ...createMotionBlock('float', 'float'),
+        y: 60,
+        repetitions: 2,
+        durationMs: 800,
+      },
+      changed: (
+        frame: ReturnType<typeof compileElementMotion>['keyframes'][number],
+      ) => frame.translateY < 0,
+    },
+    {
+      block: {
+        ...createMotionBlock('pulse', 'pulse'),
+        value: 1.3,
+        repetitions: 2,
+        durationMs: 800,
+      },
+      changed: (
+        frame: ReturnType<typeof compileElementMotion>['keyframes'][number],
+      ) => frame.scale > 1,
+    },
+    {
+      block: {
+        ...createMotionBlock('flash', 'flash'),
+        value: 0.2,
+        repetitions: 3,
+        durationMs: 600,
+      },
+      changed: (
+        frame: ReturnType<typeof compileElementMotion>['keyframes'][number],
+      ) => frame.opacity < 0.73,
+    },
+  ];
+
+  for (const { block, changed } of cases) {
+    const element = createDefaultProject().scenes[0].elements[0];
+    element.rotation = 19;
+    element.opacity = 0.73;
+    element.motion.blocks = [createMotionBlock('scene-enter', 'event'), block];
+
+    const compiled = compileElementMotion(element);
+    const finalFrame = compiled.keyframes.at(-1);
+
+    assert.ok(
+      compiled.keyframes.some(changed),
+      `${block.kind} should create an intermediate state`,
+    );
+    assert.deepEqual(
+      finalFrame && {
+        translateX: finalFrame.translateX,
+        translateY: finalFrame.translateY,
+        opacity: finalFrame.opacity,
+        scale: finalFrame.scale,
+        rotation: finalFrame.rotation,
+        blurPx: finalFrame.blurPx,
+        clipTop: finalFrame.clipTop,
+        clipRight: finalFrame.clipRight,
+        clipBottom: finalFrame.clipBottom,
+        clipLeft: finalFrame.clipLeft,
+      },
+      {
+        translateX: 0,
+        translateY: 0,
+        opacity: 0.73,
+        scale: 1,
+        rotation: 19,
+        blurPx: 0,
+        clipTop: 0,
+        clipRight: 0,
+        clipBottom: 0,
+        clipLeft: 0,
+      },
+    );
+  }
+});
+
+void test('blur and directional reveal both finish fully visible and in focus', () => {
+  const element = createDefaultProject().scenes[0].elements[0];
+  const blur = {
+    ...createMotionBlock('blur', 'blur'),
+    value: 26,
+    durationMs: 300,
+  };
+  element.motion.blocks = [createMotionBlock('scene-enter', 'event'), blur];
+  const compiledBlur = compileElementMotion(element);
+
+  assert.equal(compiledBlur.keyframes[0].blurPx, 26);
+  assert.equal(compiledBlur.keyframes.at(-1)?.blurPx, 0);
+
+  const reveal = {
+    ...createMotionBlock('reveal', 'reveal'),
+    direction: 'right' as const,
+    value: 75,
+    durationMs: 300,
+  };
+  element.motion.blocks = [createMotionBlock('scene-enter', 'event'), reveal];
+  const compiledReveal = compileElementMotion(element);
+  const firstReveal = compiledReveal.keyframes[0];
+  const finalReveal = compiledReveal.keyframes.at(-1);
+
+  assert.equal(
+    firstReveal.clipTop +
+      firstReveal.clipRight +
+      firstReveal.clipBottom +
+      firstReveal.clipLeft,
+    75,
+  );
+  assert.deepEqual(
+    finalReveal && [
+      finalReveal.clipTop,
+      finalReveal.clipRight,
+      finalReveal.clipBottom,
+      finalReveal.clipLeft,
+    ],
+    [0, 0, 0, 0],
+  );
+});
+
+void test('disabled bounce blocks do not affect timing or the compiled path', () => {
+  const element = createDefaultProject().scenes[0].elements[0];
+  const disabledBounce = createMotionBlock('bounce', 'bounce-disabled');
+  disabledBounce.enabled = false;
+  disabledBounce.jumps = disabledBounce.jumps.map((jump, index) => ({
+    ...jump,
+    id: `disabled-jump-${index + 1}`,
+  }));
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'event'),
+    disabledBounce,
+    { ...createMotionBlock('move', 'move'), x: 30, y: 0, durationMs: 200 },
+  ];
+
+  const compiled = compileElementMotion(element);
+
+  assert.deepEqual(
+    compiled.steps.map((step) => step.kind),
+    ['move'],
+  );
+  assert.equal(compiled.sequenceDurationMs, 200);
+  assert.deepEqual(
+    compiled.keyframes.map((frame) => [frame.translateX, frame.translateY]),
+    [
+      [-30, 0],
+      [0, 0],
+    ],
+  );
+});
+
+void test('project restore normalizes new motion fields and legacy bounce jumps', () => {
+  const candidate = JSON.parse(JSON.stringify(createDefaultProject())) as {
+    scenes: Array<{
+      elements: Array<{
+        motion: { blocks: Array<Record<string, unknown>> };
+      }>;
+    }>;
+  };
+  candidate.scenes[0].elements[0].motion.blocks = [
+    { id: 'event', kind: 'scene-enter' },
+    {
+      id: 'legacy-move',
+      kind: 'move',
+      durationMs: 250,
+      easing: 'linear',
+      x: 35,
+      y: -10,
+      value: 0,
+    },
+    {
+      id: 'legacy-bounce',
+      kind: 'bounce',
+      jumps: [
+        {
+          id: 'legacy-jump-bounded',
+          direction: 'right',
+          height: 9_999,
+          spread: -12,
+          durationMs: 2,
+          easing: 'unsupported',
+        },
+        { id: 'legacy-jump-defaulted', direction: 'left' },
+      ],
+    },
+    { id: 'legacy-shake', kind: 'shake', repetitions: 99 },
+    { id: 'legacy-reveal', kind: 'reveal', direction: 'diagonal' },
+  ];
+
+  const restored = restoreProject(JSON.stringify(candidate));
+
+  assert.ok(restored);
+  const blocks = restored.scenes[0].elements[0].motion.blocks;
+  const move = blocks.find((block) => block.id === 'legacy-move');
+  const bounce = blocks.find((block) => block.id === 'legacy-bounce');
+  const shake = blocks.find((block) => block.id === 'legacy-shake');
+  const reveal = blocks.find((block) => block.id === 'legacy-reveal');
+  assert.ok(move && bounce && shake && reveal);
+  assert.deepEqual(
+    {
+      secondaryValue: move.secondaryValue,
+      repetitions: move.repetitions,
+      direction: move.direction,
+      jumps: move.jumps,
+    },
+    { secondaryValue: 0, repetitions: 1, direction: 'left', jumps: [] },
+  );
+  assert.deepEqual(bounce.jumps, [
+    {
+      id: 'legacy-jump-bounded',
+      direction: 'right',
+      height: 2_000,
+      spread: 0,
+      durationMs: 80,
+      easing: 'ease-out',
+    },
+    {
+      id: 'legacy-jump-defaulted',
+      direction: 'left',
+      height: 80,
+      spread: 100,
+      durationMs: 360,
+      easing: 'ease-out',
+    },
+  ]);
+  assert.equal(shake.x, 24);
+  assert.equal(shake.secondaryValue, 10);
+  assert.equal(shake.repetitions, 20);
+  assert.equal(reveal.direction, 'left');
+});
+
+void test('project import rejects bounce sequences beyond the editable jump limit', () => {
+  const candidate = createDefaultProject();
+  const bounce = createMotionBlock('bounce', 'too-many-jumps');
+  bounce.jumps = Array.from({ length: MAX_BOUNCE_JUMPS + 1 }, (_, index) => ({
+    id: `jump-${index + 1}`,
+    direction: 'left' as const,
+    height: 40,
+    spread: 50,
+    durationMs: 200,
+    easing: 'ease-out' as const,
+  }));
+  candidate.scenes[0].elements[0].motion.blocks = [
+    createMotionBlock('scene-enter', 'event'),
+    bounce,
+  ];
+
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(candidate)).error,
+    'Project contains an invalid bounce sequence',
+  );
+});
+
 void test('version 2 drafts migrate without losing scenes or element motion', () => {
   const legacy = structuredClone(createDefaultProject()) as unknown as {
     schemaVersion: number;
@@ -536,19 +967,30 @@ void test('version 2 drafts migrate without losing scenes or element motion', ()
   assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
   assert.equal(restored.title, 'Recovered legacy draft');
   assert.equal(restored.scenes.length, 3);
-  assert.equal(restored.scenes[0].elements[0].motion.schemaVersion, MOTION_SCHEMA_VERSION);
+  assert.equal(
+    restored.scenes[0].elements[0].motion.schemaVersion,
+    MOTION_SCHEMA_VERSION,
+  );
   assert.equal(restored.scenes[0].elements[0].motion.event, 'scene-enter');
   assert.equal(restored.scenes[0].elements[0].motion.delayMs, 0);
   assert.equal(restored.scenes[0].elements[0].motion.fromScale, 1);
   assert.equal(restored.scenes[0].elements[0].motion.fromRotation, 0);
-  assert.equal(restored.scenes[0].elements[0].motion.blocks[0].kind, 'scene-enter');
+  assert.equal(
+    restored.scenes[0].elements[0].motion.blocks[0].kind,
+    'scene-enter',
+  );
   assert.ok(
-    restored.scenes[0].elements[0].motion.blocks.some((block) => block.kind === 'move'),
+    restored.scenes[0].elements[0].motion.blocks.some(
+      (block) => block.kind === 'move',
+    ),
   );
 });
 
 void test('invalid project data is rejected', () => {
-  assert.equal(restoreProject('{"schemaVersion":4,"title":"Broken","scenes":[]}'), null);
+  assert.equal(
+    restoreProject('{"schemaVersion":4,"title":"Broken","scenes":[]}'),
+    null,
+  );
   assert.equal(restoreProject('not json'), null);
 });
 
@@ -558,7 +1000,8 @@ void test('project import reports schema, layer, motion, and asset failures prec
     'Project file is not valid JSON',
   );
   assert.equal(
-    restoreProjectWithError('{"schemaVersion":99,"title":"Future","scenes":[]}').error,
+    restoreProjectWithError('{"schemaVersion":99,"title":"Future","scenes":[]}')
+      .error,
     'Project uses an unsupported schema version',
   );
 
@@ -603,10 +1046,16 @@ void test('project import reports schema, layer, motion, and asset failures prec
 
 void test('project import normalizes optional metadata without losing history', () => {
   const project = createDefaultProject();
-  const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-29T00:00:00.000Z',
+  );
   project.publications.push(revision);
   project.publishedRevision = 1;
-  const candidate = structuredClone(project) as unknown as Record<string, unknown>;
+  const candidate = structuredClone(project) as unknown as Record<
+    string,
+    unknown
+  >;
   delete candidate.id;
   delete candidate.coverSceneId;
   delete candidate.updatedAt;
@@ -635,7 +1084,10 @@ void test('project import normalizes optional metadata without losing history', 
 void test('project import bounds draft and published descriptions', () => {
   const project = createDefaultProject();
   project.description = 'D'.repeat(MAX_PROJECT_DESCRIPTION_LENGTH + 50);
-  const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-29T00:00:00.000Z',
+  );
   revision.description = 'R'.repeat(MAX_PROJECT_DESCRIPTION_LENGTH + 50);
   project.publications = [revision];
   project.publishedRevision = 1;
@@ -653,7 +1105,10 @@ void test('project import bounds draft and published descriptions', () => {
 void test('published revisions remain immutable when the draft changes', () => {
   const project = createDefaultProject();
   project.coverSceneId = 'scene-2';
-  const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-29T00:00:00.000Z',
+  );
 
   project.title = 'Changed draft title';
   project.coverSceneId = 'scene-3';
@@ -665,14 +1120,20 @@ void test('published revisions remain immutable when the draft changes', () => {
   assert.equal(revision.title, 'Signal in the Fog');
   assert.equal(revision.coverSceneId, 'scene-2');
   assert.deepEqual(revision.tags, ['science fiction', 'mystery']);
-  assert.equal(revision.scenes[0].elements[0].text, 'Something moved beyond the fog.');
+  assert.equal(
+    revision.scenes[0].elements[0].text,
+    'Something moved beyond the fog.',
+  );
 });
 
 void test('publication changes are detected against the current revision', () => {
   const project = createDefaultProject();
   assert.equal(hasUnpublishedChanges(project), true);
 
-  const revision = createPublicationRevision(project, '2026-08-29T03:00:00.000Z');
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-29T03:00:00.000Z',
+  );
   project.publications.push(revision);
   project.publishedRevision = revision.revision;
   assert.equal(hasUnpublishedChanges(project), false);
@@ -687,7 +1148,10 @@ void test('publication changes are detected against the current revision', () =>
 
 void test('reader source defaults to the edited draft after publication', () => {
   const project = createDefaultProject();
-  const revision = createPublicationRevision(project, '2026-08-29T03:00:00.000Z');
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-29T03:00:00.000Z',
+  );
   project.publications.push(revision);
   project.publishedRevision = revision.revision;
   project.title = 'Edited draft title';
@@ -730,7 +1194,9 @@ void test('publication readiness blocks untitled or invisible work', () => {
   assert.equal(getPublicationReadiness(blank).ready, true);
 
   blank.coverSceneId = 'missing-scene';
-  assert.deepEqual(getPublicationReadiness(blank).issues, ['Choose a cover scene']);
+  assert.deepEqual(getPublicationReadiness(blank).issues, [
+    'Choose a cover scene',
+  ]);
   blank.coverSceneId = blank.scenes[0].id;
 
   blank.title = 'x'.repeat(161);
@@ -742,7 +1208,10 @@ void test('publication readiness blocks untitled or invisible work', () => {
 void test('a published revision can be recovered as a new editable draft', () => {
   const project = createDefaultProject();
   project.coverSceneId = 'scene-2';
-  const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-29T00:00:00.000Z',
+  );
   project.publications.push(revision);
   project.publishedRevision = revision.revision;
   project.title = 'Later draft';
@@ -758,12 +1227,18 @@ void test('a published revision can be recovered as a new editable draft', () =>
   assert.ok(restored);
   assert.equal(restored.title, revision.title);
   assert.equal(restored.coverSceneId, 'scene-2');
-  assert.equal(restored.scenes[0].elements[0].text, revision.scenes[0].elements[0].text);
+  assert.equal(
+    restored.scenes[0].elements[0].text,
+    revision.scenes[0].elements[0].text,
+  );
   assert.equal(restored.updatedAt, '2026-08-29T01:00:00.000Z');
   assert.equal(restored.publishedRevision, 1);
   assert.equal(restored.publications.length, 1);
   restored.scenes[0].elements[0].text = 'Editable restored scene';
-  assert.equal(revision.scenes[0].elements[0].text, 'Something moved beyond the fog.');
+  assert.equal(
+    revision.scenes[0].elements[0].text,
+    'Something moved beyond the fog.',
+  );
   assert.equal(restorePublicationToDraft(project, 'missing-revision'), null);
 });
 
@@ -778,7 +1253,10 @@ void test('only non-current publication revisions can be removed', () => {
   project.publishedRevision = second.revision;
 
   const trimmed = removePublicationRevision(project, first.id);
-  assert.deepEqual(trimmed?.publications.map((revision) => revision.id), [second.id]);
+  assert.deepEqual(
+    trimmed?.publications.map((revision) => revision.id),
+    [second.id],
+  );
   assert.equal(project.publications.length, 2);
   assert.equal(removePublicationRevision(project, second.id), null);
   assert.equal(removePublicationRevision(project, 'missing-revision'), null);
@@ -857,10 +1335,10 @@ void test('draft recovery returns null when every candidate is invalid', () => {
 
 void test('editor selection resolves stale scene and layer references', () => {
   const project = createDefaultProject();
-  assert.deepEqual(
-    resolveEditorSelection(project, 'scene-2', 'scene-2-orb'),
-    { sceneId: 'scene-2', elementId: 'scene-2-orb' },
-  );
+  assert.deepEqual(resolveEditorSelection(project, 'scene-2', 'scene-2-orb'), {
+    sceneId: 'scene-2',
+    elementId: 'scene-2-orb',
+  });
   assert.deepEqual(
     resolveEditorSelection(project, 'deleted-scene', 'deleted-layer'),
     { sceneId: 'scene-1', elementId: 'scene-1-speech' },
@@ -905,11 +1383,19 @@ void test('autosave runs only for hydrated, dirty, conflict-free drafts', () => 
     true,
   );
   assert.equal(
-    shouldAutosaveDraft({ hydrated: false, dirty: true, externalChange: false }),
+    shouldAutosaveDraft({
+      hydrated: false,
+      dirty: true,
+      externalChange: false,
+    }),
     false,
   );
   assert.equal(
-    shouldAutosaveDraft({ hydrated: true, dirty: false, externalChange: false }),
+    shouldAutosaveDraft({
+      hydrated: true,
+      dirty: false,
+      externalChange: false,
+    }),
     false,
   );
   assert.equal(
@@ -959,15 +1445,27 @@ void test('draft save status prioritizes conflicts and failures', () => {
     'conflict',
   );
   assert.equal(
-    getDraftSaveStatus({ dirty: true, externalChange: false, saveFailed: true }),
+    getDraftSaveStatus({
+      dirty: true,
+      externalChange: false,
+      saveFailed: true,
+    }),
     'failed',
   );
   assert.equal(
-    getDraftSaveStatus({ dirty: true, externalChange: false, saveFailed: false }),
+    getDraftSaveStatus({
+      dirty: true,
+      externalChange: false,
+      saveFailed: false,
+    }),
     'saving',
   );
   assert.equal(
-    getDraftSaveStatus({ dirty: false, externalChange: false, saveFailed: false }),
+    getDraftSaveStatus({
+      dirty: false,
+      externalChange: false,
+      saveFailed: false,
+    }),
     'saved',
   );
 });
@@ -978,11 +1476,10 @@ void test('scene ordering moves one scene without mutating the source list', () 
   const reordered = reorderScenes(scenes, 'scene-2', -1);
 
   assert.deepEqual(originalOrder, ['scene-1', 'scene-2', 'scene-3']);
-  assert.deepEqual(reordered.map((scene) => scene.id), [
-    'scene-2',
-    'scene-1',
-    'scene-3',
-  ]);
+  assert.deepEqual(
+    reordered.map((scene) => scene.id),
+    ['scene-2', 'scene-1', 'scene-3'],
+  );
   assert.notEqual(reordered, scenes);
 });
 
@@ -1027,17 +1524,17 @@ void test('layer deletion selects the adjacent layer without mutating the list',
   const elements = createDefaultProject().scenes[0].elements;
   const ids = elements.map((element) => element.id);
 
-  assert.equal(
-    resolveSelectionAfterElementDeletion(elements, ids[1]),
-    ids[2],
-  );
+  assert.equal(resolveSelectionAfterElementDeletion(elements, ids[1]), ids[2]);
   assert.equal(
     resolveSelectionAfterElementDeletion(elements, ids.at(-1) ?? ''),
     ids.at(-2),
   );
   assert.equal(resolveSelectionAfterElementDeletion([elements[0]], ids[0]), '');
   assert.equal(resolveSelectionAfterElementDeletion(elements, 'missing'), '');
-  assert.deepEqual(elements.map((element) => element.id), ids);
+  assert.deepEqual(
+    elements.map((element) => element.id),
+    ids,
+  );
 });
 
 void test('image signatures identify PNG and WebP content', () => {
@@ -1095,11 +1592,21 @@ void test('image validation enforces format, storage, and decoded dimensions', (
     'Images must be under 750 KB',
   );
   assert.equal(
-    validateImageAsset({ mime: 'image/webp', size: 100, width: 5_000, height: 10 }),
+    validateImageAsset({
+      mime: 'image/webp',
+      size: 100,
+      width: 5_000,
+      height: 10,
+    }),
     'Images must be at most 4096px per side and 12 megapixels',
   );
   assert.equal(
-    validateImageAsset({ mime: 'image/png', size: 100, width: 2_000, height: 2_000 }),
+    validateImageAsset({
+      mime: 'image/png',
+      size: 100,
+      width: 2_000,
+      height: 2_000,
+    }),
     null,
   );
 });

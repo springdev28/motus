@@ -67,11 +67,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  MAX_BOUNCE_JUMPS,
   MAX_MOTION_BLOCKS,
   MOTION_BLOCK_CATALOG,
   MAX_ELEMENT_NAME_LENGTH,
@@ -91,6 +95,7 @@ import {
   compileElementMotion,
   constrainElementToCanvas,
   createBlankProject,
+  createBounceJump,
   createCopyName,
   createDefaultProject,
   createElement,
@@ -134,6 +139,7 @@ import {
   transformElementByPointer,
   validateImageAsset,
   writeDraftJournal,
+  type BounceJump,
   type ContentRating,
   type Easing,
   type ElementType,
@@ -165,11 +171,26 @@ type PendingProjectImport = {
 };
 
 const sceneBackgrounds = [
-  { name: 'Amethyst fog', value: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)' },
-  { name: 'Rose crossing', value: 'linear-gradient(155deg, #38284c 0%, #1c1729 54%, #7d4e61 100%)' },
-  { name: 'Tidal signal', value: 'linear-gradient(155deg, #22293b 0%, #101d28 54%, #315a63 100%)' },
-  { name: 'Ember night', value: 'linear-gradient(155deg, #3d231e 0%, #1d1518 54%, #6b3d2d 100%)' },
-  { name: 'Electric dusk', value: 'linear-gradient(155deg, #1f2850 0%, #121526 54%, #55438b 100%)' },
+  {
+    name: 'Amethyst fog',
+    value: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
+  },
+  {
+    name: 'Rose crossing',
+    value: 'linear-gradient(155deg, #38284c 0%, #1c1729 54%, #7d4e61 100%)',
+  },
+  {
+    name: 'Tidal signal',
+    value: 'linear-gradient(155deg, #22293b 0%, #101d28 54%, #315a63 100%)',
+  },
+  {
+    name: 'Ember night',
+    value: 'linear-gradient(155deg, #3d231e 0%, #1d1518 54%, #6b3d2d 100%)',
+  },
+  {
+    name: 'Electric dusk',
+    value: 'linear-gradient(155deg, #1f2850 0%, #121526 54%, #55438b 100%)',
+  },
 ] as const;
 
 type CatalogTab = 'works' | 'templates' | 'motion';
@@ -230,7 +251,8 @@ const sceneTemplates = [
   {
     id: 'quiet',
     name: 'Quiet conversation',
-    description: 'Balanced text and speech placement for a slower character beat.',
+    description:
+      'Balanced text and speech placement for a slower character beat.',
     background: sceneBackgrounds[1].value,
     title: 'For a while, neither of us spoke.',
     speech: 'Can we start again?',
@@ -239,7 +261,8 @@ const sceneTemplates = [
   {
     id: 'impact',
     name: 'Impact beat',
-    description: 'A bold focal object and compact caption for action or surprise.',
+    description:
+      'A bold focal object and compact caption for action or surprise.',
     background: sceneBackgrounds[3].value,
     title: 'THOOM',
     speech: 'Move!',
@@ -251,7 +274,17 @@ const motionPresets: Array<{
   id: string;
   name: string;
   description: string;
-  blocks: Array<{ kind: MotionBlockKind; durationMs?: number; x?: number; y?: number; value?: number }>;
+  blocks: Array<{
+    kind: MotionBlockKind;
+    durationMs?: number;
+    x?: number;
+    y?: number;
+    value?: number;
+    secondaryValue?: number;
+    repetitions?: number;
+    direction?: MotionBlock['direction'];
+    jumps?: BounceJump[];
+  }>;
 }> = [
   {
     id: 'soft-reveal',
@@ -285,6 +318,70 @@ const motionPresets: Array<{
       { kind: 'opacity', durationMs: 650, value: 0.12 },
     ],
   },
+  {
+    id: 'rule-breaker-bounce',
+    name: 'Rule-breaker bounce',
+    description:
+      'Three independent jumps: reverse the middle jump, then finish higher and wider.',
+    blocks: [
+      { kind: 'scene-enter' },
+      {
+        kind: 'bounce',
+        jumps: [
+          {
+            id: 'preset-jump-1',
+            direction: 'left',
+            height: 105,
+            spread: 90,
+            durationMs: 360,
+            easing: 'ease-out',
+          },
+          {
+            id: 'preset-jump-2',
+            direction: 'right',
+            height: 70,
+            spread: 55,
+            durationMs: 300,
+            easing: 'ease-in-out',
+          },
+          {
+            id: 'preset-jump-3',
+            direction: 'left',
+            height: 220,
+            spread: 260,
+            durationMs: 520,
+            easing: 'linear',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'impact-rattle',
+    name: 'Impact rattle',
+    description: 'A fast editable shake followed by a two-beat pulse.',
+    blocks: [
+      { kind: 'scene-enter' },
+      {
+        kind: 'shake',
+        durationMs: 620,
+        x: 30,
+        secondaryValue: 12,
+        repetitions: 7,
+      },
+      { kind: 'pulse', durationMs: 520, value: 1.22, repetitions: 2 },
+    ],
+  },
+  {
+    id: 'focus-wipe',
+    name: 'Focus wipe',
+    description: 'Reveal from the right while the layer sharpens from blur.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'reveal', durationMs: 680, value: 100, direction: 'right' },
+      { kind: 'blur', durationMs: 520, value: 22 },
+    ],
+  },
 ];
 
 function uniqueId(prefix: string) {
@@ -305,12 +402,15 @@ async function decodeImageDimensions(file: File) {
 
   const url = URL.createObjectURL(file);
   try {
-    return await new Promise<{ width: number; height: number }>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
-      image.onerror = () => reject(new Error('Image decoding failed'));
-      image.src = url;
-    });
+    return await new Promise<{ width: number; height: number }>(
+      (resolve, reject) => {
+        const image = new Image();
+        image.onload = () =>
+          resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => reject(new Error('Image decoding failed'));
+        image.src = url;
+      },
+    );
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -323,7 +423,8 @@ async function readFileAsDataUrl(file: File) {
       typeof reader.result === 'string'
         ? resolve(reader.result)
         : reject(new Error('Image reading failed'));
-    reader.onerror = () => reject(reader.error ?? new Error('Image reading failed'));
+    reader.onerror = () =>
+      reject(reader.error ?? new Error('Image reading failed'));
     reader.readAsDataURL(file);
   });
 }
@@ -338,7 +439,11 @@ const toolItems = [
   { id: 'catalog', label: 'Catalogs', icon: LibraryBig },
 ] as const;
 
-function findElement(project: MotusProject, sceneId: string, elementId: string) {
+function findElement(
+  project: MotusProject,
+  sceneId: string,
+  elementId: string,
+) {
   return project.scenes
     .find((scene) => scene.id === sceneId)
     ?.elements.find((element) => element.id === elementId);
@@ -361,6 +466,51 @@ function renderElementContent(element: MotusElement) {
     return <span>{element.text}</span>;
   }
   return <span className="orb-highlight" />;
+}
+
+function BouncePathPreview({ jumps }: { jumps: BounceJump[] }) {
+  const landingPoints = [0];
+  for (const jump of jumps) {
+    const signedSpread = jump.direction === 'left' ? -jump.spread : jump.spread;
+    landingPoints.push(landingPoints.at(-1)! + signedSpread);
+  }
+  const minimumX = Math.min(...landingPoints);
+  const maximumX = Math.max(...landingPoints);
+  const rangeX = Math.max(maximumX - minimumX, 1);
+  const maximumHeight = Math.max(...jumps.map((jump) => jump.height), 1);
+  const plotX = (value: number) => 24 + ((value - minimumX) / rangeX) * 312;
+  const plotY = (height: number) => 184 - (height / maximumHeight) * 142;
+  const path = jumps
+    .map((jump, index) => {
+      const startX = landingPoints[index];
+      const nextX = landingPoints[index + 1];
+      return `Q ${plotX((startX + nextX) / 2)} ${plotY(jump.height)} ${plotX(nextX)} 184`;
+    })
+    .join(' ');
+
+  return (
+    <figure className="bounce-preview">
+      <svg
+        aria-label={`Bounce path with ${jumps.length} editable jumps`}
+        viewBox="0 0 360 208"
+      >
+        <line className="bounce-ground" x1="12" x2="348" y1="184" y2="184" />
+        <path d={`M ${plotX(landingPoints[0])} 184 ${path}`} />
+        {landingPoints.map((point, index) => (
+          <g key={`${point}-${index}`}>
+            <circle cx={plotX(point)} cy="184" r="9" />
+            <text x={plotX(point)} y="188">
+              {index}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <figcaption>
+        Each arc is independent—reverse it, raise it, or widen it without
+        automatic decay.
+      </figcaption>
+    </figure>
+  );
 }
 
 type SceneViewProps = {
@@ -399,16 +549,20 @@ function SceneView({
   const elementNodes = useRef(new Map<string, HTMLDivElement>());
   const runningAnimations = useRef<Animation[]>([]);
   const renderedElements = useMemo(
-    () => elementLimit === undefined
-      ? scene.elements
-      : getSceneThumbnailElements(scene, elementLimit),
+    () =>
+      elementLimit === undefined
+        ? scene.elements
+        : getSceneThumbnailElements(scene, elementLimit),
     [elementLimit, scene],
   );
 
   useEffect(() => {
     runningAnimations.current.forEach((animation) => animation.cancel());
     runningAnimations.current = [];
-    if (!playingKey || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    if (
+      !playingKey ||
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ) {
       return;
     }
 
@@ -421,7 +575,9 @@ function SceneView({
         compiled.keyframes.map((frame) => ({
           offset: frame.offset,
           easing: frame.easing,
+          filter: `blur(${frame.blurPx}px)`,
           opacity: frame.opacity,
+          clipPath: `inset(${frame.clipTop}% ${frame.clipRight}% ${frame.clipBottom}% ${frame.clipLeft}%)`,
           transform: `translate(${frame.translateX}px, ${frame.translateY}px) rotate(${frame.rotation}deg) scale(${frame.scale})`,
         })),
         {
@@ -494,7 +650,10 @@ function SceneView({
             onKeyDown={
               interactive
                 ? (event) => {
-                    const nudge = getKeyboardNudgeDelta(event.key, event.shiftKey);
+                    const nudge = getKeyboardNudgeDelta(
+                      event.key,
+                      event.shiftKey,
+                    );
                     if (nudge) {
                       event.preventDefault();
                       event.stopPropagation();
@@ -612,7 +771,11 @@ function ReaderScene({ scene, index, sessionKey }: ReaderSceneProps) {
           SCENE {String(index + 1).padStart(2, '0')}
         </span>
         <span className="reader-trigger-state">
-          {reducedMotion ? 'Motion reduced' : playingKey ? 'Played' : 'Plays on view'}
+          {reducedMotion
+            ? 'Motion reduced'
+            : playingKey
+              ? 'Played'
+              : 'Plays on view'}
         </span>
       </div>
       <SceneView playingKey={playingKey} scene={scene} />
@@ -624,7 +787,9 @@ export function MotusStudio() {
   const [project, setProject] = useState<MotusProject>(createDefaultProject);
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
   const [selectedElementId, setSelectedElementId] = useState('scene-1-orb');
-  const [inspectorTab, setInspectorTab] = useState<'design' | 'motion'>('design');
+  const [inspectorTab, setInspectorTab] = useState<'design' | 'motion'>(
+    'motion',
+  );
   const [zoom, setZoom] = useState(100);
   const [fitCanvasWidth, setFitCanvasWidth] = useState(430);
   const [imageDropActive, setImageDropActive] = useState(false);
@@ -727,13 +892,15 @@ export function MotusStudio() {
   };
 
   const activeScene =
-    project.scenes.find((scene) => scene.id === activeSceneId) ?? project.scenes[0];
+    project.scenes.find((scene) => scene.id === activeSceneId) ??
+    project.scenes[0];
   const sceneIndex = Math.max(
     project.scenes.findIndex((scene) => scene.id === activeScene.id),
     0,
   );
   const selectedElement = useMemo(
-    () => activeScene.elements.find((element) => element.id === selectedElementId),
+    () =>
+      activeScene.elements.find((element) => element.id === selectedElementId),
     [activeScene.elements, selectedElementId],
   );
   const activeTool = inspectorTab === 'motion' ? 'motion' : 'select';
@@ -814,8 +981,14 @@ export function MotusStudio() {
         setProject(restored.project);
         setIsDirty(false);
         setActiveSceneId(restored.project.scenes[0].id);
-        setSelectedElementId(restored.project.scenes[0].elements.at(-1)?.id ?? '');
-        setNotice(restored.source === 'legacy' ? 'Legacy draft recovered' : 'Saved draft recovered');
+        setSelectedElementId(
+          restored.project.scenes[0].elements.at(-1)?.id ?? '',
+        );
+        setNotice(
+          restored.source === 'legacy'
+            ? 'Legacy draft recovered'
+            : 'Saved draft recovered',
+        );
       }
       setHydrated(true);
     });
@@ -825,7 +998,14 @@ export function MotusStudio() {
   }, [resetEditorHistory]);
 
   useEffect(() => {
-    if (!shouldAutosaveDraft({ hydrated, dirty: isDirty, externalChange: externalDraftChange })) return;
+    if (
+      !shouldAutosaveDraft({
+        hydrated,
+        dirty: isDirty,
+        externalChange: externalDraftChange,
+      })
+    )
+      return;
     const timer = window.setTimeout(() => {
       if (persistProject(project)) setIsDirty(false);
     }, 180);
@@ -833,7 +1013,14 @@ export function MotusStudio() {
   }, [externalDraftChange, hydrated, isDirty, project]);
 
   useEffect(() => {
-    if (!shouldAutosaveDraft({ hydrated, dirty: isDirty, externalChange: externalDraftChange })) return;
+    if (
+      !shouldAutosaveDraft({
+        hydrated,
+        dirty: isDirty,
+        externalChange: externalDraftChange,
+      })
+    )
+      return;
     const flush = () => {
       if (persistProject(project, false)) setIsDirty(false);
     };
@@ -864,7 +1051,8 @@ export function MotusStudio() {
       event.preventDefault();
     };
     window.addEventListener('beforeunload', protectDraftBeforeExit);
-    return () => window.removeEventListener('beforeunload', protectDraftBeforeExit);
+    return () =>
+      window.removeEventListener('beforeunload', protectDraftBeforeExit);
   }, [externalDraftChange, hydrated, isDirty, project]);
 
   useEffect(() => {
@@ -966,8 +1154,12 @@ export function MotusStudio() {
     mutate(candidate);
     candidate.updatedAt = nowIso();
     if (!persistProject(candidate, false, false, true)) {
-      const megabytes = (getProjectStorageBytes(candidate) / 1_000_000).toFixed(1);
-      setNotice(`${failureMessage} · ${megabytes} MB draft · download a backup`);
+      const megabytes = (getProjectStorageBytes(candidate) / 1_000_000).toFixed(
+        1,
+      );
+      setNotice(
+        `${failureMessage} · ${megabytes} MB draft · download a backup`,
+      );
       return false;
     }
     clearDeletionUndo();
@@ -1074,10 +1266,12 @@ export function MotusStudio() {
         ?.elements.push(element);
     };
     if (requireStoragePreflight) {
-      if (!commitProjectWithStoragePreflight(
-        addToDraft,
-        'Image cannot fit in device storage',
-      )) {
+      if (
+        !commitProjectWithStoragePreflight(
+          addToDraft,
+          'Image cannot fit in device storage',
+        )
+      ) {
         return false;
       }
     } else {
@@ -1107,7 +1301,9 @@ export function MotusStudio() {
     commitProject((draft) => {
       const scene = draft.scenes.find((item) => item.id === activeScene.id);
       if (!scene) return;
-      scene.elements = scene.elements.filter((element) => element.id !== elementId);
+      scene.elements = scene.elements.filter(
+        (element) => element.id !== elementId,
+      );
     });
     setSelectedElementId(nextSelectedElementId);
     setNotice(
@@ -1125,7 +1321,9 @@ export function MotusStudio() {
 
   const moveLayer = (elementId: string, direction: -1 | 1) => {
     commitProject((draft) => {
-      const elements = draft.scenes.find((scene) => scene.id === activeScene.id)?.elements;
+      const elements = draft.scenes.find(
+        (scene) => scene.id === activeScene.id,
+      )?.elements;
       if (!elements) return;
       const index = elements.findIndex((element) => element.id === elementId);
       const target = index + direction;
@@ -1134,7 +1332,11 @@ export function MotusStudio() {
     });
   };
 
-  const nudgeElement = (elementId: string, key: string, accelerated: boolean) => {
+  const nudgeElement = (
+    elementId: string,
+    key: string,
+    accelerated: boolean,
+  ) => {
     const delta = getKeyboardNudgeDelta(key, accelerated);
     const element = findElement(project, activeScene.id, elementId);
     if (!delta || !element) return;
@@ -1173,11 +1375,15 @@ export function MotusStudio() {
       return;
     }
     if (kind === 'scene-enter') {
-      setNotice('Every layer program already starts when its scene enters view');
+      setNotice(
+        'Every layer program already starts when its scene enters view',
+      );
       return;
     }
     if (selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS) {
-      setNotice(`A layer can contain up to ${MAX_MOTION_BLOCKS} animation blocks`);
+      setNotice(
+        `A layer can contain up to ${MAX_MOTION_BLOCKS} animation blocks`,
+      );
       return;
     }
     const block = createMotionBlock(kind, uniqueId(`block-${kind}`));
@@ -1196,19 +1402,113 @@ export function MotusStudio() {
     updateElement(
       selectedElement.id,
       (item) => {
-        const block = item.motion.blocks.find((candidate) => candidate.id === blockId);
+        const block = item.motion.blocks.find(
+          (candidate) => candidate.id === blockId,
+        );
         if (block) mutate(block);
       },
       transactionKey,
     );
   };
 
+  const duplicateMotionBlock = (blockId: string) => {
+    if (!selectedElement) return;
+    if (selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS) {
+      setNotice(
+        `A layer can contain up to ${MAX_MOTION_BLOCKS} animation blocks`,
+      );
+      return;
+    }
+    updateElement(selectedElement.id, (item) => {
+      const index = item.motion.blocks.findIndex(
+        (block) => block.id === blockId,
+      );
+      const source = item.motion.blocks[index];
+      if (!source || source.kind === 'scene-enter') return;
+      const copy: MotionBlock = {
+        ...structuredClone(source),
+        id: uniqueId(`block-${source.kind}`),
+        jumps: source.jumps.map((jump) => ({
+          ...jump,
+          id: uniqueId('jump'),
+        })),
+      };
+      item.motion.blocks.splice(index + 1, 0, copy);
+    });
+    setNotice('Animation block duplicated');
+  };
+
+  const updateBounceJump = (
+    blockId: string,
+    jumpId: string,
+    mutate: (jump: BounceJump) => void,
+    transactionKey: string | null = null,
+  ) => {
+    updateMotionBlock(
+      blockId,
+      (block) => {
+        const jump = block.jumps.find((candidate) => candidate.id === jumpId);
+        if (jump) mutate(jump);
+      },
+      transactionKey,
+    );
+  };
+
+  const addBounceJump = (blockId: string) => {
+    updateMotionBlock(blockId, (block) => {
+      if (block.jumps.length >= MAX_BOUNCE_JUMPS) return;
+      block.jumps.push(
+        createBounceJump(block.jumps.length, { id: uniqueId('jump') }),
+      );
+    });
+    setNotice('Bounce jump added');
+  };
+
+  const duplicateBounceJump = (blockId: string, jumpId: string) => {
+    updateMotionBlock(blockId, (block) => {
+      if (block.jumps.length >= MAX_BOUNCE_JUMPS) return;
+      const index = block.jumps.findIndex((jump) => jump.id === jumpId);
+      const source = block.jumps[index];
+      if (!source) return;
+      block.jumps.splice(index + 1, 0, { ...source, id: uniqueId('jump') });
+    });
+    setNotice('Bounce jump duplicated');
+  };
+
+  const moveBounceJump = (
+    blockId: string,
+    jumpId: string,
+    direction: -1 | 1,
+  ) => {
+    updateMotionBlock(blockId, (block) => {
+      const index = block.jumps.findIndex((jump) => jump.id === jumpId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= block.jumps.length) return;
+      [block.jumps[index], block.jumps[target]] = [
+        block.jumps[target],
+        block.jumps[index],
+      ];
+    });
+    setNotice('Bounce path reordered');
+  };
+
+  const removeBounceJump = (blockId: string, jumpId: string) => {
+    updateMotionBlock(blockId, (block) => {
+      if (block.jumps.length <= 1) return;
+      block.jumps = block.jumps.filter((jump) => jump.id !== jumpId);
+    });
+    setNotice('Bounce jump removed');
+  };
+
   const moveMotionBlock = (blockId: string, direction: -1 | 1) => {
     if (!selectedElement) return;
     updateElement(selectedElement.id, (item) => {
-      const index = item.motion.blocks.findIndex((block) => block.id === blockId);
+      const index = item.motion.blocks.findIndex(
+        (block) => block.id === blockId,
+      );
       const target = index + direction;
-      if (index <= 0 || target <= 0 || target >= item.motion.blocks.length) return;
+      if (index <= 0 || target <= 0 || target >= item.motion.blocks.length)
+        return;
       [item.motion.blocks[index], item.motion.blocks[target]] = [
         item.motion.blocks[target],
         item.motion.blocks[index],
@@ -1220,7 +1520,9 @@ export function MotusStudio() {
   const removeMotionBlock = (blockId: string) => {
     if (!selectedElement) return;
     updateElement(selectedElement.id, (item) => {
-      item.motion.blocks = item.motion.blocks.filter((block) => block.id !== blockId);
+      item.motion.blocks = item.motion.blocks.filter(
+        (block) => block.id !== blockId,
+      );
     });
     setNotice('Animation block removed');
   };
@@ -1236,11 +1538,33 @@ export function MotusStudio() {
     if (!preset) return;
     updateElement(selectedElement.id, (item) => {
       item.motion.blocks = preset.blocks.map((source, index) => ({
-        ...createMotionBlock(source.kind, uniqueId(`preset-${source.kind}-${index}`)),
-        ...(source.durationMs === undefined ? {} : { durationMs: source.durationMs }),
+        ...createMotionBlock(
+          source.kind,
+          uniqueId(`preset-${source.kind}-${index}`),
+        ),
+        ...(source.durationMs === undefined
+          ? {}
+          : { durationMs: source.durationMs }),
         ...(source.x === undefined ? {} : { x: source.x }),
         ...(source.y === undefined ? {} : { y: source.y }),
         ...(source.value === undefined ? {} : { value: source.value }),
+        ...(source.secondaryValue === undefined
+          ? {}
+          : { secondaryValue: source.secondaryValue }),
+        ...(source.repetitions === undefined
+          ? {}
+          : { repetitions: source.repetitions }),
+        ...(source.direction === undefined
+          ? {}
+          : { direction: source.direction }),
+        ...(source.jumps === undefined
+          ? {}
+          : {
+              jumps: source.jumps.map((jump) => ({
+                ...jump,
+                id: uniqueId('jump'),
+              })),
+            }),
       }));
     });
     setCatalogOpen(false);
@@ -1254,7 +1578,9 @@ export function MotusStudio() {
       setNotice(`This work has reached the ${MAX_PROJECT_SCENES}-scene limit`);
       return;
     }
-    const template = sceneTemplates.find((candidate) => candidate.id === templateId);
+    const template = sceneTemplates.find(
+      (candidate) => candidate.id === templateId,
+    );
     if (!template) return;
     const id = uniqueId('scene');
     const nextScene: MotusScene = {
@@ -1332,7 +1658,10 @@ export function MotusStudio() {
       setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
       return;
     }
-    const envelopeError = validateImageAsset({ mime: file.type, size: file.size });
+    const envelopeError = validateImageAsset({
+      mime: file.type,
+      size: file.size,
+    });
     if (envelopeError) {
       setNotice(envelopeError);
       return;
@@ -1359,15 +1688,21 @@ export function MotusStudio() {
 
       const src = await readFileAsDataUrl(file);
       const scale = Math.min(420 / dimensions.width, 420 / dimensions.height);
-      const added = addElement('image', {
-        name: file.name,
-        src,
-        width: Math.max(8, Math.round(dimensions.width * scale)),
-        height: Math.max(8, Math.round(dimensions.height * scale)),
-        fill: '#ffffff',
-      }, true);
+      const added = addElement(
+        'image',
+        {
+          name: file.name,
+          src,
+          width: Math.max(8, Math.round(dimensions.width * scale)),
+          height: Math.max(8, Math.round(dimensions.height * scale)),
+          fill: '#ffffff',
+        },
+        true,
+      );
       if (added) {
-        setNotice(`${file.name} added · ${dimensions.width}×${dimensions.height}`);
+        setNotice(
+          `${file.name} added · ${dimensions.width}×${dimensions.height}`,
+        );
       }
     } catch {
       setNotice('Image could not be decoded');
@@ -1412,10 +1747,12 @@ export function MotusStudio() {
         .find((scene) => scene.id === activeScene.id)
         ?.elements.push(copy);
     };
-    if (!commitProjectWithStoragePreflight(
-      addCopyToDraft,
-      'Layer copy cannot fit in device storage',
-    )) {
+    if (
+      !commitProjectWithStoragePreflight(
+        addCopyToDraft,
+        'Layer copy cannot fit in device storage',
+      )
+    ) {
       return false;
     }
     setSelectedElementId(copy.id);
@@ -1438,7 +1775,8 @@ export function MotusStudio() {
     const nextScene: MotusScene = {
       id,
       name: `Scene ${project.scenes.length + 1}`,
-      background: 'linear-gradient(155deg, #28213d 0%, #12131e 54%, #3c3350 100%)',
+      background:
+        'linear-gradient(155deg, #28213d 0%, #12131e 54%, #3c3350 100%)',
       elements: [],
     };
     commitProject((draft) => draft.scenes.push(nextScene));
@@ -1460,10 +1798,12 @@ export function MotusStudio() {
       ...element,
       id: `${copy.id}-${element.type}-${index}`,
     }));
-    if (!commitProjectWithStoragePreflight(
-      (draft) => draft.scenes.splice(sceneIndex + 1, 0, copy),
-      'Scene copy cannot fit in device storage',
-    )) {
+    if (
+      !commitProjectWithStoragePreflight(
+        (draft) => draft.scenes.splice(sceneIndex + 1, 0, copy),
+        'Scene copy cannot fit in device storage',
+      )
+    ) {
       return;
     }
     setActiveSceneId(copy.id);
@@ -1480,7 +1820,9 @@ export function MotusStudio() {
     }
     const nextScene = project.scenes[sceneIndex === 0 ? 1 : sceneIndex - 1];
     commitProject((draft) => {
-      draft.scenes = draft.scenes.filter((scene) => scene.id !== activeScene.id);
+      draft.scenes = draft.scenes.filter(
+        (scene) => scene.id !== activeScene.id,
+      );
       draft.coverSceneId = resolveCoverSceneId(
         draft.scenes,
         draft.coverSceneId,
@@ -1523,7 +1865,9 @@ export function MotusStudio() {
     restored.updatedAt = nowIso();
     if (!persistProject(restored, false, false, true)) {
       setPendingProjectImport(null);
-      setNotice('Imported project could not be saved — current draft kept and backed up');
+      setNotice(
+        'Imported project could not be saved — current draft kept and backed up',
+      );
       return;
     }
 
@@ -1554,7 +1898,10 @@ export function MotusStudio() {
       return;
     }
 
-    const candidate = removePublicationRevision(project, pendingRevisionRemoval.id);
+    const candidate = removePublicationRevision(
+      project,
+      pendingRevisionRemoval.id,
+    );
     if (!candidate) {
       setPendingRevisionRemoval(null);
       setNotice('The current published revision cannot be removed');
@@ -1563,12 +1910,11 @@ export function MotusStudio() {
 
     downloadProject(project);
     const removedRevision = pendingRevisionRemoval.revision;
-    if (!commitProjectWithStoragePreflight(
-      (draft) => {
+    if (
+      !commitProjectWithStoragePreflight((draft) => {
         draft.publications = candidate.publications;
-      },
-      'Revision removal could not be saved',
-    )) {
+      }, 'Revision removal could not be saved')
+    ) {
       setPendingRevisionRemoval(null);
       setNotice('Revision was not removed · project backup downloaded');
       return;
@@ -1576,7 +1922,9 @@ export function MotusStudio() {
 
     setPendingRevisionRemoval(null);
     setPublishOpen(true);
-    setNotice(`Revision ${removedRevision} removed · project backup downloaded`);
+    setNotice(
+      `Revision ${removedRevision} removed · project backup downloaded`,
+    );
   };
 
   const exportProject = () => {
@@ -1593,11 +1941,7 @@ export function MotusStudio() {
       return;
     }
     downloadProject(project);
-    const resolved = resolveDraftConflict(
-      project,
-      saved.project,
-      'load-saved',
-    );
+    const resolved = resolveDraftConflict(project, saved.project, 'load-saved');
     resetEditorHistory();
     clearDeletionUndo();
     reconcileSelection(resolved);
@@ -1606,7 +1950,9 @@ export function MotusStudio() {
     setSaveFailed(false);
     setExternalDraftChange(false);
     setConflictOpen(false);
-    setNotice('Other tab’s draft loaded · backup downloaded · undo history reset');
+    setNotice(
+      'Other tab’s draft loaded · backup downloaded · undo history reset',
+    );
   };
 
   const keepCurrentDraft = () => {
@@ -1662,7 +2008,9 @@ export function MotusStudio() {
     setReaderMatureConfirmed(false);
     setPreviewKey((key) => key + 1);
     setReaderOpen(true);
-    setNotice(revision ? `Viewing revision ${revision.revision}` : 'Previewing draft');
+    setNotice(
+      revision ? `Viewing revision ${revision.revision}` : 'Previewing draft',
+    );
   };
 
   const publishRevision = () => {
@@ -1686,10 +2034,12 @@ export function MotusStudio() {
       draft.publications.push(snapshot);
       draft.publishedRevision = snapshot.revision;
     };
-    if (!commitProjectWithStoragePreflight(
-      addRevisionToDraft,
-      'Revision cannot fit in device storage',
-    )) {
+    if (
+      !commitProjectWithStoragePreflight(
+        addRevisionToDraft,
+        'Revision cannot fit in device storage',
+      )
+    ) {
       return;
     }
     setPublishOpen(false);
@@ -1733,8 +2083,17 @@ export function MotusStudio() {
     mode: 'move' | 'resize',
   ) => {
     const element = findElement(project, activeScene.id, elementId);
-    const artboard = event.currentTarget.closest('.artboard') as HTMLElement | null;
-    if (!event.isPrimary || event.button !== 0 || !element || element.locked || !artboard) return;
+    const artboard = event.currentTarget.closest(
+      '.artboard',
+    ) as HTMLElement | null;
+    if (
+      !event.isPrimary ||
+      event.button !== 0 ||
+      !element ||
+      element.locked ||
+      !artboard
+    )
+      return;
     event.preventDefault();
     event.stopPropagation();
     activePointerCleanup.current?.();
@@ -1746,14 +2105,22 @@ export function MotusStudio() {
     const pointerType = event.pointerType;
     const startX = event.clientX;
     const startY = event.clientY;
-    const origin = { x: element.x, y: element.y, width: element.width, height: element.height };
+    const origin = {
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+    };
     let moved = false;
 
     function onMove(pointer: PointerEvent) {
       if (pointer.pointerId !== pointerId) return;
       const clientDeltaX = pointer.clientX - startX;
       const clientDeltaY = pointer.clientY - startY;
-      if (!moved && !hasPointerDragStarted(clientDeltaX, clientDeltaY, pointerType)) {
+      if (
+        !moved &&
+        !hasPointerDragStarted(clientDeltaX, clientDeltaY, pointerType)
+      ) {
         return;
       }
       if (!moved) {
@@ -1803,9 +2170,11 @@ export function MotusStudio() {
     }
 
     function finish(pointer?: PointerEvent | Event) {
-      if (pointer instanceof PointerEvent && pointer.pointerId !== pointerId) return;
+      if (pointer instanceof PointerEvent && pointer.pointerId !== pointerId)
+        return;
       cleanup();
-      if (moved) setNotice(mode === 'move' ? 'Element moved' : 'Element resized');
+      if (moved)
+        setNotice(mode === 'move' ? 'Element moved' : 'Element resized');
     }
 
     window.addEventListener('pointermove', onMove);
@@ -1864,15 +2233,15 @@ export function MotusStudio() {
         duplicateElement(selectedElementId);
         return;
       }
-      if ((event.key === 'Backspace' || event.key === 'Delete') && selectedElementId) {
+      if (
+        (event.key === 'Backspace' || event.key === 'Delete') &&
+        selectedElementId
+      ) {
         event.preventDefault();
         deleteElement(selectedElementId);
         return;
       }
-      if (
-        selectedElement &&
-        getKeyboardNudgeDelta(event.key, event.shiftKey)
-      ) {
+      if (selectedElement && getKeyboardNudgeDelta(event.key, event.shiftKey)) {
         event.preventDefault();
         nudgeElement(selectedElement.id, event.key, event.shiftKey);
         return;
@@ -1884,7 +2253,10 @@ export function MotusStudio() {
       const insideNativeControl = target?.closest(
         'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
-      if (!insideNativeControl && getKeyboardNudgeDelta(event.key, event.shiftKey)) {
+      if (
+        !insideNativeControl &&
+        getKeyboardNudgeDelta(event.key, event.shiftKey)
+      ) {
         endHistoryTransaction();
       }
     };
@@ -1915,7 +2287,10 @@ export function MotusStudio() {
       }
 
       copiedElement.current = structuredClone(selectedElement);
-      event.clipboardData.setData(MOTUS_LAYER_CLIPBOARD_TYPE, selectedElement.id);
+      event.clipboardData.setData(
+        MOTUS_LAYER_CLIPBOARD_TYPE,
+        selectedElement.id,
+      );
       event.preventDefault();
       return selectedElement;
     };
@@ -1991,16 +2366,20 @@ export function MotusStudio() {
     const updateFitWidth = () => {
       const style = window.getComputedStyle(stage);
       const horizontalPadding =
-        Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+        Number.parseFloat(style.paddingLeft) +
+        Number.parseFloat(style.paddingRight);
       const verticalPadding =
-        Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+        Number.parseFloat(style.paddingTop) +
+        Number.parseFloat(style.paddingBottom);
       const nextWidth = getFitCanvasWidth(
         stage.clientWidth,
         stage.clientHeight,
         horizontalPadding,
         verticalPadding,
       );
-      setFitCanvasWidth((current) => current === nextWidth ? current : nextWidth);
+      setFitCanvasWidth((current) =>
+        current === nextWidth ? current : nextWidth,
+      );
     };
 
     updateFitWidth();
@@ -2012,12 +2391,20 @@ export function MotusStudio() {
 
   const artboardWidth = Math.round(fitCanvasWidth * (zoom / 100));
   const normalizedCatalogSearch = catalogSearch.trim().toLocaleLowerCase();
-  const filteredWorkCatalog = workCatalog.filter((work) =>
-    !normalizedCatalogSearch ||
-    [work.title, work.creator, work.genre, work.format, work.status, ...work.tags]
-      .join(' ')
-      .toLocaleLowerCase()
-      .includes(normalizedCatalogSearch),
+  const filteredWorkCatalog = workCatalog.filter(
+    (work) =>
+      !normalizedCatalogSearch ||
+      [
+        work.title,
+        work.creator,
+        work.genre,
+        work.format,
+        work.status,
+        ...work.tags,
+      ]
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(normalizedCatalogSearch),
   );
   const publicationHasChanges = hasUnpublishedChanges(project);
   const publicationReadiness = getPublicationReadiness(project);
@@ -2122,7 +2509,10 @@ export function MotusStudio() {
 
       <header className="studio-topbar">
         <div className="brand-lockup" aria-label="Motus Studio">
-          <span className="brand-mark" aria-hidden="true"><span /><span /></span>
+          <span className="brand-mark" aria-hidden="true">
+            <span />
+            <span />
+          </span>
           <span className="brand-name">MOTUS</span>
           <span className="brand-product">STUDIO</span>
         </div>
@@ -2141,55 +2531,176 @@ export function MotusStudio() {
         />
 
         <div className="topbar-actions">
-          <button aria-keyshortcuts="Meta+S Control+S" className="save-state" onClick={saveCurrentProject} title="Save draft now (⌘/Ctrl+S)" type="button"><Cloud />{displayedNotice}</button>
-          <Button aria-label="Start a new work" className="topbar-mobile-hide" onClick={requestNewWork} size="icon" variant="outline"><FilePlus2 /></Button>
-          <Button aria-label="Undo" disabled={!canUndo} onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
-          <Button aria-label="Redo" disabled={!canRedo} onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
-          <Button className="topbar-mobile-hide" onClick={replayPreview} variant="secondary">
-            <Play data-icon="inline-start" fill="currentColor" />Preview
+          <button
+            aria-keyshortcuts="Meta+S Control+S"
+            className="save-state"
+            onClick={saveCurrentProject}
+            title="Save draft now (⌘/Ctrl+S)"
+            type="button"
+          >
+            <Cloud />
+            {displayedNotice}
+          </button>
+          <Button
+            aria-label="Start a new work"
+            className="topbar-mobile-hide"
+            onClick={requestNewWork}
+            size="icon"
+            variant="outline"
+          >
+            <FilePlus2 />
           </Button>
-          <Button aria-label="Open Motus catalogs" className="topbar-mobile-hide" onClick={() => { setCatalogTab('works'); setCatalogOpen(true); }} variant="secondary"><LibraryBig data-icon="inline-start" />Catalogs</Button>
-          <Button aria-label="Open draft reader" className="topbar-reader" onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" /><span>Draft reader</span></Button>
-          <Button aria-label="Publish work" className="topbar-publish" onClick={openPublish}><Send data-icon="inline-start" /><span>Publish</span></Button>
-          <Button aria-label="Import Motus project" className="topbar-mobile-hide" onClick={requestProjectImport} size="icon" variant="outline"><Upload /></Button>
-          <Button aria-label="Export Motus project" onClick={exportProject} size="icon" variant="outline"><Download /></Button>
+          <Button
+            aria-label="Undo"
+            disabled={!canUndo}
+            onClick={undo}
+            size="icon"
+            variant="ghost"
+          >
+            <Undo2 />
+          </Button>
+          <Button
+            aria-label="Redo"
+            disabled={!canRedo}
+            onClick={redo}
+            size="icon"
+            variant="ghost"
+          >
+            <Redo2 />
+          </Button>
+          <Button
+            className="topbar-mobile-hide"
+            onClick={replayPreview}
+            variant="secondary"
+          >
+            <Play data-icon="inline-start" fill="currentColor" />
+            Preview
+          </Button>
+          <Button
+            aria-label="Open Motus catalogs"
+            className="topbar-mobile-hide"
+            onClick={() => {
+              setCatalogTab('works');
+              setCatalogOpen(true);
+            }}
+            variant="secondary"
+          >
+            <LibraryBig data-icon="inline-start" />
+            Catalogs
+          </Button>
+          <Button
+            aria-label="Open draft reader"
+            className="topbar-reader"
+            onClick={() => openReader()}
+            variant="secondary"
+          >
+            <Layers3 data-icon="inline-start" />
+            <span>Draft reader</span>
+          </Button>
+          <Button
+            aria-label="Publish work"
+            className="topbar-publish"
+            onClick={openPublish}
+          >
+            <Send data-icon="inline-start" />
+            <span>Publish</span>
+          </Button>
+          <Button
+            aria-label="Import Motus project"
+            className="topbar-mobile-hide"
+            onClick={requestProjectImport}
+            size="icon"
+            variant="outline"
+          >
+            <Upload />
+          </Button>
+          <Button
+            aria-label="Export Motus project"
+            onClick={exportProject}
+            size="icon"
+            variant="outline"
+          >
+            <Download />
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
-              render={<Button aria-label="More project actions" className="topbar-mobile-more" size="icon" variant="outline" />}
+              render={
+                <Button
+                  aria-label="More project actions"
+                  className="topbar-mobile-more"
+                  size="icon"
+                  variant="outline"
+                />
+              }
             >
               <Ellipsis />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-48" sideOffset={8}>
-              <DropdownMenuItem className="min-h-10 px-2.5" onClick={openProjectDetails}>
-                <Pencil />Project details
+            <DropdownMenuContent
+              align="end"
+              className="min-w-48"
+              sideOffset={8}
+            >
+              <DropdownMenuItem
+                className="min-h-10 px-2.5"
+                onClick={openProjectDetails}
+              >
+                <Pencil />
+                Project details
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="min-h-10 px-2.5" onClick={saveCurrentProject}>
-                <Cloud />Save now
+              <DropdownMenuItem
+                className="min-h-10 px-2.5"
+                onClick={saveCurrentProject}
+              >
+                <Cloud />
+                Save now
               </DropdownMenuItem>
-              <DropdownMenuItem className="min-h-10 px-2.5" onClick={replayPreview}>
-                <Play />Replay canvas preview
+              <DropdownMenuItem
+                className="min-h-10 px-2.5"
+                onClick={replayPreview}
+              >
+                <Play />
+                Replay canvas preview
               </DropdownMenuItem>
-              <DropdownMenuItem className="min-h-10 px-2.5" onClick={() => { setCatalogTab('works'); setCatalogOpen(true); }}>
-                <LibraryBig />Open catalogs
+              <DropdownMenuItem
+                className="min-h-10 px-2.5"
+                onClick={() => {
+                  setCatalogTab('works');
+                  setCatalogOpen(true);
+                }}
+              >
+                <LibraryBig />
+                Open catalogs
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="min-h-10 px-2.5" onClick={requestNewWork}>
-                <FilePlus2 />New work
+              <DropdownMenuItem
+                className="min-h-10 px-2.5"
+                onClick={requestNewWork}
+              >
+                <FilePlus2 />
+                New work
               </DropdownMenuItem>
-              <DropdownMenuItem className="min-h-10 px-2.5" onClick={requestProjectImport}>
-                <Upload />Import project
+              <DropdownMenuItem
+                className="min-h-10 px-2.5"
+                onClick={requestProjectImport}
+              >
+                <Upload />
+                Import project
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </header>
 
-      <div className="studio-grid">
+      <div className="studio-grid" data-workspace={inspectorTab}>
         <aside className="tool-rail" aria-label="Add and edit elements">
           {toolItems.map(({ id, label, icon: Icon }) => (
             <button
-              aria-pressed={id === 'select' || id === 'motion' ? activeTool === id : undefined}
+              aria-pressed={
+                id === 'select' || id === 'motion'
+                  ? activeTool === id
+                  : undefined
+              }
               className="tool-button"
               data-active={activeTool === id || undefined}
               key={id}
@@ -2205,10 +2716,19 @@ export function MotusStudio() {
         <aside className="layers-panel" aria-label="Scene layers">
           <div className="panel-heading">
             <div>
-              <span className="eyebrow">SCENE {String(sceneIndex + 1).padStart(2, '0')}</span>
+              <span className="eyebrow">
+                SCENE {String(sceneIndex + 1).padStart(2, '0')}
+              </span>
               <h1>Layers</h1>
             </div>
-            <Button aria-label="Add shape" onClick={() => addElement('shape')} size="icon-sm" variant="outline"><Plus /></Button>
+            <Button
+              aria-label="Add shape"
+              onClick={() => addElement('shape')}
+              size="icon-sm"
+              variant="outline"
+            >
+              <Plus />
+            </Button>
           </div>
 
           <div className="scene-settings">
@@ -2218,10 +2738,14 @@ export function MotusStudio() {
                 {...textHistoryProps}
                 id="active-scene-name"
                 maxLength={MAX_SCENE_NAME_LENGTH}
-                onChange={(event) => commitProject((draft) => {
-                  const scene = draft.scenes.find((item) => item.id === activeScene.id);
-                  if (scene) scene.name = event.target.value;
-                }, `scene:${activeScene.id}:name`)}
+                onChange={(event) =>
+                  commitProject((draft) => {
+                    const scene = draft.scenes.find(
+                      (item) => item.id === activeScene.id,
+                    );
+                    if (scene) scene.name = event.target.value;
+                  }, `scene:${activeScene.id}:name`)
+                }
                 value={activeScene.name}
               />
             </label>
@@ -2231,12 +2755,18 @@ export function MotusStudio() {
                 <button
                   aria-label={`Use ${background.name} background`}
                   aria-pressed={activeScene.background === background.value}
-                  data-active={activeScene.background === background.value || undefined}
+                  data-active={
+                    activeScene.background === background.value || undefined
+                  }
                   key={background.name}
-                  onClick={() => commitProject((draft) => {
-                    const scene = draft.scenes.find((item) => item.id === activeScene.id);
-                    if (scene) scene.background = background.value;
-                  })}
+                  onClick={() =>
+                    commitProject((draft) => {
+                      const scene = draft.scenes.find(
+                        (item) => item.id === activeScene.id,
+                      );
+                      if (scene) scene.background = background.value;
+                    })
+                  }
                   style={{ background: background.value }}
                   type="button"
                 />
@@ -2247,19 +2777,43 @@ export function MotusStudio() {
           <div className="layer-list">
             {[...activeScene.elements].reverse().map((element) => {
               const Icon = elementIcon(element.type);
-              const originalIndex = activeScene.elements.findIndex((item) => item.id === element.id);
+              const originalIndex = activeScene.elements.findIndex(
+                (item) => item.id === element.id,
+              );
               return (
-                <div className="layer-row" data-selected={selectedElementId === element.id || undefined} key={element.id}>
-                  <button aria-pressed={selectedElementId === element.id} className="layer-select" onClick={() => setSelectedElementId(element.id)} type="button">
-                    <span className="layer-icon"><Icon /></span>
-                    <span className="layer-copy"><strong>{element.name}</strong><small>{element.type}</small></span>
+                <div
+                  className="layer-row"
+                  data-selected={selectedElementId === element.id || undefined}
+                  key={element.id}
+                >
+                  <button
+                    aria-pressed={selectedElementId === element.id}
+                    className="layer-select"
+                    onClick={() => setSelectedElementId(element.id)}
+                    type="button"
+                  >
+                    <span className="layer-icon">
+                      <Icon />
+                    </span>
+                    <span className="layer-copy">
+                      <strong>{element.name}</strong>
+                      <small>{element.type}</small>
+                    </span>
                   </button>
                   <div className="layer-actions">
                     <button
                       aria-label={`${element.name} visibility`}
                       aria-pressed={element.visible}
-                      onClick={() => updateElement(element.id, (item) => { item.visible = !item.visible; })}
-                      title={element.visible ? `Hide ${element.name}` : `Show ${element.name}`}
+                      onClick={() =>
+                        updateElement(element.id, (item) => {
+                          item.visible = !item.visible;
+                        })
+                      }
+                      title={
+                        element.visible
+                          ? `Hide ${element.name}`
+                          : `Show ${element.name}`
+                      }
                       type="button"
                     >
                       {element.visible ? <Eye /> : <EyeOff />}
@@ -2267,14 +2821,38 @@ export function MotusStudio() {
                     <button
                       aria-label={`${element.name} locked`}
                       aria-pressed={element.locked}
-                      onClick={() => updateElement(element.id, (item) => { item.locked = !item.locked; })}
-                      title={element.locked ? `Unlock ${element.name}` : `Lock ${element.name}`}
+                      onClick={() =>
+                        updateElement(element.id, (item) => {
+                          item.locked = !item.locked;
+                        })
+                      }
+                      title={
+                        element.locked
+                          ? `Unlock ${element.name}`
+                          : `Lock ${element.name}`
+                      }
                       type="button"
                     >
                       {element.locked ? <Lock /> : <Unlock />}
                     </button>
-                    <button aria-label={`Move ${element.name} up`} disabled={originalIndex === activeScene.elements.length - 1} onClick={() => moveLayer(element.id, 1)} type="button"><ArrowUp /></button>
-                    <button aria-label={`Move ${element.name} down`} disabled={originalIndex === 0} onClick={() => moveLayer(element.id, -1)} type="button"><ArrowDown /></button>
+                    <button
+                      aria-label={`Move ${element.name} up`}
+                      disabled={
+                        originalIndex === activeScene.elements.length - 1
+                      }
+                      onClick={() => moveLayer(element.id, 1)}
+                      type="button"
+                    >
+                      <ArrowUp />
+                    </button>
+                    <button
+                      aria-label={`Move ${element.name} down`}
+                      disabled={originalIndex === 0}
+                      onClick={() => moveLayer(element.id, -1)}
+                      type="button"
+                    >
+                      <ArrowDown />
+                    </button>
                   </div>
                 </div>
               );
@@ -2282,19 +2860,55 @@ export function MotusStudio() {
           </div>
 
           {activeScene.elements.length === 0 ? (
-            <div className="empty-layers"><Square /><strong>Blank scene</strong><p>Add from the toolbar, or drop or paste a PNG or WebP.</p></div>
+            <div className="empty-layers">
+              <Square />
+              <strong>Blank scene</strong>
+              <p>Add from the toolbar, or drop or paste a PNG or WebP.</p>
+            </div>
           ) : null}
         </aside>
 
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
-            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag, paste, or use arrow keys · Shift moves 10 px</span><kbd>⌘/Ctrl+S save</kbd><kbd>⌘/Ctrl+C/X/V layer</kbd><kbd>⌫ delete</kbd></div>
-            <output aria-live="polite" className="workspace-notice">{displayedNotice}</output>
+            <div className="canvas-status">
+              <Move />
+              <span id="canvas-instructions">
+                Drag, paste, or use arrow keys · Shift moves 10 px
+              </span>
+              <kbd>⌘/Ctrl+S save</kbd>
+              <kbd>⌘/Ctrl+C/X/V layer</kbd>
+              <kbd>⌫ delete</kbd>
+            </div>
+            <output aria-live="polite" className="workspace-notice">
+              {displayedNotice}
+            </output>
             <fieldset className="zoom-control" aria-label="Canvas zoom">
-              <button aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 10))} type="button">−</button>
+              <button
+                aria-label="Zoom out"
+                disabled={zoom <= 50}
+                onClick={() => setZoom((value) => Math.max(50, value - 10))}
+                type="button"
+              >
+                −
+              </button>
               <span>{zoom}%</span>
-              <button aria-label="Zoom in" disabled={zoom >= 160} onClick={() => setZoom((value) => Math.min(160, value + 10))} type="button">+</button>
-              <button aria-label="Fit canvas" className="zoom-fit" disabled={zoom === 100} onClick={() => setZoom(100)} type="button">Fit</button>
+              <button
+                aria-label="Zoom in"
+                disabled={zoom >= 160}
+                onClick={() => setZoom((value) => Math.min(160, value + 10))}
+                type="button"
+              >
+                +
+              </button>
+              <button
+                aria-label="Fit canvas"
+                className="zoom-fit"
+                disabled={zoom === 100}
+                onClick={() => setZoom(100)}
+                type="button"
+              >
+                Fit
+              </button>
             </fieldset>
           </div>
 
@@ -2309,7 +2923,11 @@ export function MotusStudio() {
             }}
             onDragLeave={(event) => {
               const nextTarget = event.relatedTarget;
-              if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+              if (
+                nextTarget instanceof Node &&
+                event.currentTarget.contains(nextTarget)
+              )
+                return;
               setImageDropActive(false);
             }}
             onDragOver={(event) => {
@@ -2339,7 +2957,10 @@ export function MotusStudio() {
                 <span>PNG or WebP · validated before it is added</span>
               </output>
             ) : null}
-            <div className="artboard-frame" style={{ width: `${artboardWidth}px` }}>
+            <div
+              className="artboard-frame"
+              style={{ width: `${artboardWidth}px` }}
+            >
               <SceneView
                 interactive
                 onElementRef={(elementId, node) => {
@@ -2358,7 +2979,12 @@ export function MotusStudio() {
           </div>
 
           <footer className="scene-strip">
-            <div className="scene-strip-copy" title={project.chapterTitle}><span>Chapter 1</span><strong>Scene {sceneIndex + 1} / {project.scenes.length}</strong></div>
+            <div className="scene-strip-copy" title={project.chapterTitle}>
+              <span>Chapter 1</span>
+              <strong>
+                Scene {sceneIndex + 1} / {project.scenes.length}
+              </strong>
+            </div>
             <div aria-label="Scenes" className="scene-tabs" role="tablist">
               {project.scenes.map((scene, index) => (
                 <button
@@ -2373,13 +2999,19 @@ export function MotusStudio() {
                     setSelectedElementId(scene.elements.at(-1)?.id ?? '');
                   }}
                   onKeyDown={(event) => {
-                    const nextIndex = getTabIndexForKey(index, project.scenes.length, event.key);
+                    const nextIndex = getTabIndexForKey(
+                      index,
+                      project.scenes.length,
+                      event.key,
+                    );
                     if (nextIndex === null) return;
                     event.preventDefault();
                     const nextScene = project.scenes[nextIndex];
                     setActiveSceneId(nextScene.id);
                     setSelectedElementId(nextScene.elements.at(-1)?.id ?? '');
-                    window.requestAnimationFrame(() => sceneButtonRefs.current.get(nextScene.id)?.focus());
+                    window.requestAnimationFrame(() =>
+                      sceneButtonRefs.current.get(nextScene.id)?.focus(),
+                    );
                   }}
                   ref={(node) => {
                     if (node) sceneButtonRefs.current.set(scene.id, node);
@@ -2401,16 +3033,65 @@ export function MotusStudio() {
                 </button>
               ))}
             </div>
-            <Button className="scene-action" onClick={addScene} variant="outline"><Plus />New</Button>
-            <Button aria-label="Move scene earlier" className="scene-icon-action" disabled={sceneIndex === 0} onClick={() => moveScene(-1)} size="icon" variant="outline"><ArrowLeft /></Button>
-            <Button aria-label="Move scene later" className="scene-icon-action" disabled={sceneIndex === project.scenes.length - 1} onClick={() => moveScene(1)} size="icon" variant="outline"><ArrowRight /></Button>
-            <Button aria-label="Duplicate scene" className="scene-icon-action" onClick={duplicateScene} size="icon" variant="outline"><Copy /></Button>
-            <Button aria-label="Delete scene" className="scene-icon-action" onClick={deleteScene} size="icon" variant="destructive"><Trash2 /></Button>
+            <Button
+              className="scene-action"
+              onClick={addScene}
+              variant="outline"
+            >
+              <Plus />
+              New
+            </Button>
+            <Button
+              aria-label="Move scene earlier"
+              className="scene-icon-action"
+              disabled={sceneIndex === 0}
+              onClick={() => moveScene(-1)}
+              size="icon"
+              variant="outline"
+            >
+              <ArrowLeft />
+            </Button>
+            <Button
+              aria-label="Move scene later"
+              className="scene-icon-action"
+              disabled={sceneIndex === project.scenes.length - 1}
+              onClick={() => moveScene(1)}
+              size="icon"
+              variant="outline"
+            >
+              <ArrowRight />
+            </Button>
+            <Button
+              aria-label="Duplicate scene"
+              className="scene-icon-action"
+              onClick={duplicateScene}
+              size="icon"
+              variant="outline"
+            >
+              <Copy />
+            </Button>
+            <Button
+              aria-label="Delete scene"
+              className="scene-icon-action"
+              onClick={deleteScene}
+              size="icon"
+              variant="destructive"
+            >
+              <Trash2 />
+            </Button>
           </footer>
         </section>
 
-        <aside className="inspector-panel" aria-label="Selected element settings">
-          <div aria-label="Element property sections" className="inspector-tabs" role="tablist">
+        <aside
+          className="inspector-panel"
+          aria-label="Selected element settings"
+          data-workspace={inspectorTab}
+        >
+          <div
+            aria-label="Element property sections"
+            className="inspector-tabs"
+            role="tablist"
+          >
             <button
               aria-controls="inspector-panel"
               aria-selected={inspectorTab === 'design'}
@@ -2433,7 +3114,7 @@ export function MotusStudio() {
               tabIndex={inspectorTab === 'motion' ? 0 : -1}
               type="button"
             >
-              Motion
+              Blocks
             </button>
           </div>
 
@@ -2444,104 +3125,1191 @@ export function MotusStudio() {
             role="tabpanel"
           >
             {!selectedElement ? (
-              <div className="empty-inspector"><MousePointer2 /><strong>Select an element</strong><p>Click a layer or an item on the canvas to edit it.</p></div>
+              inspectorTab === 'motion' ? (
+                <div className="empty-inspector block-empty-state">
+                  <Code2 />
+                  <strong>Choose a layer to attach blocks</strong>
+                  <p>
+                    The block workspace stays visible here. Pick a layer, then
+                    build its animation program.
+                  </p>
+                  <div className="block-layer-picker">
+                    {activeScene.elements
+                      .filter((element) => element.visible)
+                      .map((element) => (
+                        <Button
+                          key={element.id}
+                          onClick={() => setSelectedElementId(element.id)}
+                          variant="outline"
+                        >
+                          {element.name}
+                        </Button>
+                      ))}
+                    {activeScene.elements.length === 0 ? (
+                      <Button
+                        onClick={() => {
+                          if (addElement('shape')) setInspectorTab('motion');
+                        }}
+                      >
+                        Add a shape layer
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-inspector">
+                  <MousePointer2 />
+                  <strong>Select an element</strong>
+                  <p>Click a layer or an item on the canvas to edit it.</p>
+                </div>
+              )
             ) : (
               <>
                 <div className="selected-element-card">
-                  <span className={`element-swatch swatch-${selectedElement.type}`} style={{ background: selectedElement.fill }} />
-                  <div><small>Selected</small><strong>{selectedElement.name}</strong></div>
-                  <Button aria-label="Duplicate selected element" onClick={() => duplicateElement(selectedElement.id)} size="icon-sm" variant="outline"><Copy /></Button>
-                  <Button aria-label="Delete selected element" onClick={() => deleteElement(selectedElement.id)} size="icon-sm" variant="destructive"><Trash2 /></Button>
+                  <span
+                    className={`element-swatch swatch-${selectedElement.type}`}
+                    style={{ background: selectedElement.fill }}
+                  />
+                  <div>
+                    <small>Selected</small>
+                    <strong>{selectedElement.name}</strong>
+                  </div>
+                  <Button
+                    aria-label="Duplicate selected element"
+                    onClick={() => duplicateElement(selectedElement.id)}
+                    size="icon-sm"
+                    variant="outline"
+                  >
+                    <Copy />
+                  </Button>
+                  <Button
+                    aria-label="Delete selected element"
+                    onClick={() => deleteElement(selectedElement.id)}
+                    size="icon-sm"
+                    variant="destructive"
+                  >
+                    <Trash2 />
+                  </Button>
                 </div>
 
                 {inspectorTab === 'design' ? (
                   <div className="property-stack">
-                    <label htmlFor="selected-layer-name"><span>Layer name</span><Input {...textHistoryProps} id="selected-layer-name" maxLength={MAX_ELEMENT_NAME_LENGTH} onChange={(event) => updateElement(selectedElement.id, (item) => { item.name = event.target.value; }, `element:${selectedElement.id}:name`)} value={selectedElement.name} /></label>
-                    {(selectedElement.type === 'text' || selectedElement.type === 'speech') ? (
-                      <label htmlFor="selected-layer-text"><span>Text</span><Textarea {...textHistoryProps} id="selected-layer-text" maxLength={MAX_ELEMENT_TEXT_LENGTH} onChange={(event) => updateElement(selectedElement.id, (item) => { item.text = event.target.value; }, `element:${selectedElement.id}:text`)} value={selectedElement.text ?? ''} /></label>
+                    <label htmlFor="selected-layer-name">
+                      <span>Layer name</span>
+                      <Input
+                        {...textHistoryProps}
+                        id="selected-layer-name"
+                        maxLength={MAX_ELEMENT_NAME_LENGTH}
+                        onChange={(event) =>
+                          updateElement(
+                            selectedElement.id,
+                            (item) => {
+                              item.name = event.target.value;
+                            },
+                            `element:${selectedElement.id}:name`,
+                          )
+                        }
+                        value={selectedElement.name}
+                      />
+                    </label>
+                    {selectedElement.type === 'text' ||
+                    selectedElement.type === 'speech' ? (
+                      <label htmlFor="selected-layer-text">
+                        <span>Text</span>
+                        <Textarea
+                          {...textHistoryProps}
+                          id="selected-layer-text"
+                          maxLength={MAX_ELEMENT_TEXT_LENGTH}
+                          onChange={(event) =>
+                            updateElement(
+                              selectedElement.id,
+                              (item) => {
+                                item.text = event.target.value;
+                              },
+                              `element:${selectedElement.id}:text`,
+                            )
+                          }
+                          value={selectedElement.text ?? ''}
+                        />
+                      </label>
                     ) : null}
                     {selectedElement.type !== 'image' ? (
-                      <label className="color-control"><span>Color</span><input {...continuousHistoryProps} aria-label="Element color" onChange={(event) => updateElement(selectedElement.id, (item) => { item.fill = event.target.value; }, `element:${selectedElement.id}:fill`)} type="color" value={selectedElement.fill} /><output>{selectedElement.fill}</output></label>
+                      <label className="color-control">
+                        <span>Color</span>
+                        <input
+                          {...continuousHistoryProps}
+                          aria-label="Element color"
+                          onChange={(event) =>
+                            updateElement(
+                              selectedElement.id,
+                              (item) => {
+                                item.fill = event.target.value;
+                              },
+                              `element:${selectedElement.id}:fill`,
+                            )
+                          }
+                          type="color"
+                          value={selectedElement.fill}
+                        />
+                        <output>{selectedElement.fill}</output>
+                      </label>
                     ) : null}
                     <div className="property-grid">
-                      {(['x', 'y', 'width', 'height'] as const).map((property) => (
-                        <label key={property}><span>{property.toUpperCase()}</span><Input {...continuousHistoryProps} max={property === 'x' ? CANVAS_WIDTH - selectedElement.width : property === 'y' ? CANVAS_HEIGHT - selectedElement.height : property === 'width' ? CANVAS_WIDTH : CANVAS_HEIGHT} min={property === 'width' ? MIN_ELEMENT_WIDTH : property === 'height' ? MIN_ELEMENT_HEIGHT : 0} onChange={(event) => updateElement(selectedElement.id, (item) => { item[property] = Number(event.target.value); }, `element:${selectedElement.id}:${property}`)} type="number" value={Math.round(selectedElement[property])} /></label>
-                      ))}
+                      {(['x', 'y', 'width', 'height'] as const).map(
+                        (property) => (
+                          <label key={property}>
+                            <span>{property.toUpperCase()}</span>
+                            <Input
+                              {...continuousHistoryProps}
+                              max={
+                                property === 'x'
+                                  ? CANVAS_WIDTH - selectedElement.width
+                                  : property === 'y'
+                                    ? CANVAS_HEIGHT - selectedElement.height
+                                    : property === 'width'
+                                      ? CANVAS_WIDTH
+                                      : CANVAS_HEIGHT
+                              }
+                              min={
+                                property === 'width'
+                                  ? MIN_ELEMENT_WIDTH
+                                  : property === 'height'
+                                    ? MIN_ELEMENT_HEIGHT
+                                    : 0
+                              }
+                              onChange={(event) =>
+                                updateElement(
+                                  selectedElement.id,
+                                  (item) => {
+                                    item[property] = Number(event.target.value);
+                                  },
+                                  `element:${selectedElement.id}:${property}`,
+                                )
+                              }
+                              type="number"
+                              value={Math.round(selectedElement[property])}
+                            />
+                          </label>
+                        ),
+                      )}
                     </div>
-                    <label className="range-control"><span>Rotation</span><output>{selectedElement.rotation}°</output><input {...continuousHistoryProps} max="180" min="-180" onChange={(event) => updateElement(selectedElement.id, (item) => { item.rotation = Number(event.target.value); }, `element:${selectedElement.id}:rotation`)} type="range" value={selectedElement.rotation} /></label>
-                    <label className="range-control"><span>Opacity</span><output>{Math.round(selectedElement.opacity * 100)}%</output><input {...continuousHistoryProps} max="100" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.opacity = Number(event.target.value) / 100; }, `element:${selectedElement.id}:opacity`)} type="range" value={Math.round(selectedElement.opacity * 100)} /></label>
+                    <label className="range-control">
+                      <span>Rotation</span>
+                      <output>{selectedElement.rotation}°</output>
+                      <input
+                        {...continuousHistoryProps}
+                        max="180"
+                        min="-180"
+                        onChange={(event) =>
+                          updateElement(
+                            selectedElement.id,
+                            (item) => {
+                              item.rotation = Number(event.target.value);
+                            },
+                            `element:${selectedElement.id}:rotation`,
+                          )
+                        }
+                        type="range"
+                        value={selectedElement.rotation}
+                      />
+                    </label>
+                    <label className="range-control">
+                      <span>Opacity</span>
+                      <output>
+                        {Math.round(selectedElement.opacity * 100)}%
+                      </output>
+                      <input
+                        {...continuousHistoryProps}
+                        max="100"
+                        min="0"
+                        onChange={(event) =>
+                          updateElement(
+                            selectedElement.id,
+                            (item) => {
+                              item.opacity = Number(event.target.value) / 100;
+                            },
+                            `element:${selectedElement.id}:opacity`,
+                          )
+                        }
+                        type="range"
+                        value={Math.round(selectedElement.opacity * 100)}
+                      />
+                    </label>
                     <div className="visibility-row">
-                      <Button onClick={() => updateElement(selectedElement.id, (item) => { item.visible = !item.visible; })} variant="outline">{selectedElement.visible ? <Eye /> : <EyeOff />}{selectedElement.visible ? 'Visible' : 'Hidden'}</Button>
-                      <Button onClick={() => updateElement(selectedElement.id, (item) => { item.locked = !item.locked; })} variant="outline">{selectedElement.locked ? <Lock /> : <Unlock />}{selectedElement.locked ? 'Locked' : 'Unlocked'}</Button>
+                      <Button
+                        onClick={() =>
+                          updateElement(selectedElement.id, (item) => {
+                            item.visible = !item.visible;
+                          })
+                        }
+                        variant="outline"
+                      >
+                        {selectedElement.visible ? <Eye /> : <EyeOff />}
+                        {selectedElement.visible ? 'Visible' : 'Hidden'}
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          updateElement(selectedElement.id, (item) => {
+                            item.locked = !item.locked;
+                          })
+                        }
+                        variant="outline"
+                      >
+                        {selectedElement.locked ? <Lock /> : <Unlock />}
+                        {selectedElement.locked ? 'Locked' : 'Unlocked'}
+                      </Button>
                     </div>
                   </div>
                 ) : (
                   <div className="property-stack motion-properties">
-                    <div className="block-program-heading">
-                      <div><span>ANIMATION PROGRAM</span><strong>{selectedElement.motion.blocks.length} editable blocks</strong></div>
-                      <Button aria-label="Run animation program" onClick={() => setPreviewKey((key) => key + 1)} size="icon-sm"><Play fill="currentColor" /></Button>
-                    </div>
+                    <section className="block-workspace-intro">
+                      <Code2 aria-hidden="true" />
+                      <div>
+                        <span>BLOCK WORKSPACE</span>
+                        <strong>Build motion like a program</strong>
+                        <p>
+                          Add blocks, stack them in order, and edit every value.
+                          Preview and reader run the same sequence.
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => setPreviewKey((key) => key + 1)}
+                        size="sm"
+                      >
+                        <Play fill="currentColor" />
+                        Run
+                      </Button>
+                    </section>
 
-                    <ol className="block-program" aria-label={`${selectedElement.name} animation blocks`}>
-                      {selectedElement.motion.blocks.map((block, blockIndex) => {
-                        const isEvent = block.kind === 'scene-enter';
-                        const isAction = block.kind !== 'scene-enter' && block.kind !== 'wait';
-                        return (
-                          <li className={`motion-block block-${block.category}`} data-disabled={!block.enabled || undefined} key={block.id}>
-                            <div className="motion-block-head">
-                              <span className="motion-block-grip">{String(blockIndex + 1).padStart(2, '0')}</span>
-                              <div><small>{block.category.toUpperCase()}</small><strong>{block.label}</strong></div>
-                              {!isEvent ? (
-                                <div className="motion-block-actions">
-                                  <button aria-label={`Move ${block.label} earlier`} disabled={blockIndex <= 1} onClick={() => moveMotionBlock(block.id, -1)} type="button"><ArrowUp /></button>
-                                  <button aria-label={`Move ${block.label} later`} disabled={blockIndex === selectedElement.motion.blocks.length - 1} onClick={() => moveMotionBlock(block.id, 1)} type="button"><ArrowDown /></button>
-                                  <button aria-label={`Remove ${block.label}`} onClick={() => removeMotionBlock(block.id)} type="button"><Trash2 /></button>
-                                </div>
-                              ) : null}
-                            </div>
-
-                            {isEvent ? <p>Reader and preview use the same viewport trigger.</p> : null}
-                            {block.kind === 'move' ? (
-                              <div className="motion-block-grid">
-                                <label htmlFor={`motion-${block.id}-x`}><span>X offset</span><Input {...continuousHistoryProps} id={`motion-${block.id}-x`} max="800" min="-800" onChange={(event) => updateMotionBlock(block.id, (item) => { item.x = Number(event.target.value); }, `block:${block.id}:x`)} type="number" value={block.x} /></label>
-                                <label htmlFor={`motion-${block.id}-y`}><span>Y offset</span><Input {...continuousHistoryProps} id={`motion-${block.id}-y`} max="800" min="-800" onChange={(event) => updateMotionBlock(block.id, (item) => { item.y = Number(event.target.value); }, `block:${block.id}:y`)} type="number" value={block.y} /></label>
-                              </div>
-                            ) : null}
-                            {block.kind === 'scale' ? (
-                              <label className="range-control"><span>Start size</span><output>{Math.round(block.value * 100)}%</output><input {...continuousHistoryProps} max="200" min="10" onChange={(event) => updateMotionBlock(block.id, (item) => { item.value = Number(event.target.value) / 100; }, `block:${block.id}:value`)} type="range" value={Math.round(block.value * 100)} /></label>
-                            ) : null}
-                            {block.kind === 'rotate' ? (
-                              <label className="range-control"><span>Start angle</span><output>{block.value}°</output><input {...continuousHistoryProps} max="180" min="-180" onChange={(event) => updateMotionBlock(block.id, (item) => { item.value = Number(event.target.value); }, `block:${block.id}:value`)} type="range" value={block.value} /></label>
-                            ) : null}
-                            {block.kind === 'opacity' ? (
-                              <label className="range-control"><span>Start opacity</span><output>{Math.round(block.value * 100)}%</output><input {...continuousHistoryProps} max="100" min="0" onChange={(event) => updateMotionBlock(block.id, (item) => { item.value = Number(event.target.value) / 100; }, `block:${block.id}:value`)} type="range" value={Math.round(block.value * 100)} /></label>
-                            ) : null}
-                            {!isEvent ? (
-                              <div className="motion-block-grid">
-                                <label htmlFor={`motion-${block.id}-duration`}><span>{block.kind === 'wait' ? 'Wait' : 'Duration'}</span><Input {...continuousHistoryProps} id={`motion-${block.id}-duration`} max="10000" min={block.kind === 'wait' ? 0 : 100} onChange={(event) => updateMotionBlock(block.id, (item) => { item.durationMs = Number(event.target.value); }, `block:${block.id}:duration`)} step="50" type="number" value={block.durationMs} /></label>
-                                {isAction ? (
-                                  <label htmlFor={`motion-${block.id}-easing`}><span>Easing</span><NativeSelect className="w-full" id={`motion-${block.id}-easing`} onChange={(event) => updateMotionBlock(block.id, (item) => { item.easing = event.target.value as Easing; })} value={block.easing}><NativeSelectOption value="linear">Linear</NativeSelectOption><NativeSelectOption value="ease-out">Ease out</NativeSelectOption><NativeSelectOption value="ease-in-out">Ease in/out</NativeSelectOption></NativeSelect></label>
-                                ) : <span className="motion-unit">milliseconds</span>}
-                              </div>
-                            ) : null}
-                          </li>
-                        );
-                      })}
-                    </ol>
-
-                    <section className="block-catalog" aria-labelledby="block-catalog-title">
-                      <div className="block-catalog-heading"><div><span>BLOCK CATALOG</span><strong id="block-catalog-title">Add to this sequence</strong></div><small>{MAX_MOTION_BLOCKS - selectedElement.motion.blocks.length} slots left</small></div>
+                    <section
+                      className="block-catalog block-palette"
+                      aria-labelledby="block-catalog-title"
+                    >
+                      <div className="block-catalog-heading">
+                        <div>
+                          <span>ADD A BLOCK</span>
+                          <strong id="block-catalog-title">
+                            Motion, looks, and timing
+                          </strong>
+                        </div>
+                        <small>
+                          {MAX_MOTION_BLOCKS -
+                            selectedElement.motion.blocks.length}{' '}
+                          slots left
+                        </small>
+                      </div>
                       <div className="block-catalog-grid">
-                        {MOTION_BLOCK_CATALOG.filter((entry) => entry.kind !== 'scene-enter').map((entry) => (
-                          <button disabled={selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS} key={entry.kind} onClick={() => addMotionBlock(entry.kind)} type="button">
-                            {entry.kind === 'wait' ? <Clock3 /> : entry.category === 'looks' ? <Eye /> : <Sparkles />}
-                            <span><strong>{entry.label}</strong><small>{entry.category}</small></span>
+                        {MOTION_BLOCK_CATALOG.filter(
+                          (entry) => entry.kind !== 'scene-enter',
+                        ).map((entry) => (
+                          <button
+                            className={`block-palette-card block-${entry.category}`}
+                            disabled={
+                              selectedElement.motion.blocks.length >=
+                              MAX_MOTION_BLOCKS
+                            }
+                            key={entry.kind}
+                            onClick={() => addMotionBlock(entry.kind)}
+                            title={entry.description}
+                            type="button"
+                          >
+                            {entry.kind === 'wait' ? (
+                              <Clock3 />
+                            ) : entry.category === 'looks' ? (
+                              <Eye />
+                            ) : (
+                              <Sparkles />
+                            )}
+                            <span>
+                              <strong>{entry.label}</strong>
+                              <small>{entry.description}</small>
+                            </span>
                             <Plus />
                           </button>
                         ))}
                       </div>
-                      <Button onClick={() => { setCatalogTab('motion'); setCatalogOpen(true); }} variant="outline"><LibraryBig />Browse motion presets</Button>
+                      <Button
+                        onClick={() => {
+                          setCatalogTab('motion');
+                          setCatalogOpen(true);
+                        }}
+                        variant="outline"
+                      >
+                        <LibraryBig />
+                        Browse editable presets
+                      </Button>
                     </section>
+
+                    <div className="block-program-heading">
+                      <div>
+                        <span>PROGRAM STACK</span>
+                        <strong>
+                          {selectedElement.motion.blocks.length} editable blocks
+                          ·{' '}
+                          {
+                            compileElementMotion(selectedElement)
+                              .sequenceDurationMs
+                          }{' '}
+                          ms
+                        </strong>
+                      </div>
+                      <small>Runs top to bottom</small>
+                    </div>
+
+                    <ol
+                      className="block-program"
+                      aria-label={`${selectedElement.name} animation blocks`}
+                    >
+                      {selectedElement.motion.blocks.map(
+                        (block, blockIndex) => {
+                          const isEvent = block.kind === 'scene-enter';
+                          const isAction =
+                            block.kind !== 'scene-enter' &&
+                            block.kind !== 'wait';
+                          const isBounce = block.kind === 'bounce';
+                          return (
+                            <li
+                              className={`motion-block block-${block.category}`}
+                              data-disabled={!block.enabled || undefined}
+                              data-kind={block.kind}
+                              key={block.id}
+                            >
+                              <div className="motion-block-head">
+                                <span className="motion-block-grip">
+                                  {String(blockIndex + 1).padStart(2, '0')}
+                                </span>
+                                <div>
+                                  <small>{block.category.toUpperCase()}</small>
+                                  <strong>{block.label}</strong>
+                                </div>
+                                {!isEvent ? (
+                                  <div className="motion-block-actions">
+                                    <button
+                                      aria-label={`${block.enabled ? 'Disable' : 'Enable'} ${block.label}`}
+                                      aria-pressed={block.enabled}
+                                      className="motion-block-toggle"
+                                      onClick={() =>
+                                        updateMotionBlock(block.id, (item) => {
+                                          item.enabled = !item.enabled;
+                                        })
+                                      }
+                                      title={
+                                        block.enabled
+                                          ? 'Disable block'
+                                          : 'Enable block'
+                                      }
+                                      type="button"
+                                    >
+                                      {block.enabled ? <Eye /> : <EyeOff />}
+                                    </button>
+                                    <button
+                                      aria-label={`Move ${block.label} earlier`}
+                                      disabled={blockIndex <= 1}
+                                      onClick={() =>
+                                        moveMotionBlock(block.id, -1)
+                                      }
+                                      type="button"
+                                    >
+                                      <ArrowUp />
+                                    </button>
+                                    <button
+                                      aria-label={`Move ${block.label} later`}
+                                      disabled={
+                                        blockIndex ===
+                                        selectedElement.motion.blocks.length - 1
+                                      }
+                                      onClick={() =>
+                                        moveMotionBlock(block.id, 1)
+                                      }
+                                      type="button"
+                                    >
+                                      <ArrowDown />
+                                    </button>
+                                    <button
+                                      aria-label={`Duplicate ${block.label}`}
+                                      onClick={() =>
+                                        duplicateMotionBlock(block.id)
+                                      }
+                                      type="button"
+                                    >
+                                      <Copy />
+                                    </button>
+                                    <button
+                                      aria-label={`Remove ${block.label}`}
+                                      onClick={() =>
+                                        removeMotionBlock(block.id)
+                                      }
+                                      type="button"
+                                    >
+                                      <Trash2 />
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </div>
+
+                              {isEvent ? (
+                                <p>
+                                  Reader and preview use the same viewport
+                                  trigger.
+                                </p>
+                              ) : null}
+                              {isBounce ? (
+                                <>
+                                  <div className="block-summary-chips">
+                                    <span>
+                                      {block.jumps.length}{' '}
+                                      {block.jumps.length === 1
+                                        ? 'jump'
+                                        : 'jumps'}
+                                    </span>
+                                    <span>
+                                      {block.jumps.reduce(
+                                        (total, jump) =>
+                                          total + jump.durationMs,
+                                        0,
+                                      )}{' '}
+                                      ms total
+                                    </span>
+                                    <span>
+                                      {
+                                        block.jumps.filter(
+                                          (jump) => jump.direction === 'right',
+                                        ).length
+                                      }{' '}
+                                      reversed
+                                    </span>
+                                  </div>
+                                  <BouncePathPreview jumps={block.jumps} />
+                                  <div className="bounce-jumps">
+                                    <div className="bounce-jumps-heading">
+                                      <div>
+                                        <strong>Jumps</strong>
+                                        <small>
+                                          Count comes from this list
+                                        </small>
+                                      </div>
+                                      <Button
+                                        disabled={
+                                          block.jumps.length >= MAX_BOUNCE_JUMPS
+                                        }
+                                        onClick={() => addBounceJump(block.id)}
+                                        size="sm"
+                                        variant="secondary"
+                                      >
+                                        <Plus />
+                                        Add jump
+                                      </Button>
+                                    </div>
+                                    {block.jumps.map((jump, jumpIndex) => (
+                                      <section
+                                        className="bounce-jump"
+                                        key={jump.id}
+                                      >
+                                        <div className="bounce-jump-head">
+                                          <strong>Jump {jumpIndex + 1}</strong>
+                                          <div>
+                                            <button
+                                              aria-label={`Move jump ${jumpIndex + 1} earlier`}
+                                              disabled={jumpIndex === 0}
+                                              onClick={() =>
+                                                moveBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                  -1,
+                                                )
+                                              }
+                                              type="button"
+                                            >
+                                              <ArrowUp />
+                                            </button>
+                                            <button
+                                              aria-label={`Move jump ${jumpIndex + 1} later`}
+                                              disabled={
+                                                jumpIndex ===
+                                                block.jumps.length - 1
+                                              }
+                                              onClick={() =>
+                                                moveBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                  1,
+                                                )
+                                              }
+                                              type="button"
+                                            >
+                                              <ArrowDown />
+                                            </button>
+                                            <button
+                                              aria-label={`Duplicate jump ${jumpIndex + 1}`}
+                                              disabled={
+                                                block.jumps.length >=
+                                                MAX_BOUNCE_JUMPS
+                                              }
+                                              onClick={() =>
+                                                duplicateBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                )
+                                              }
+                                              type="button"
+                                            >
+                                              <Copy />
+                                            </button>
+                                            <button
+                                              aria-label={`Remove jump ${jumpIndex + 1}`}
+                                              disabled={block.jumps.length <= 1}
+                                              onClick={() =>
+                                                removeBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                )
+                                              }
+                                              type="button"
+                                            >
+                                              <Trash2 />
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <div className="bounce-jump-controls">
+                                          <label
+                                            htmlFor={`jump-${jump.id}-direction`}
+                                          >
+                                            <span>Direction</span>
+                                            <NativeSelect
+                                              id={`jump-${jump.id}-direction`}
+                                              onChange={(event) =>
+                                                updateBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                  (item) => {
+                                                    item.direction = event
+                                                      .target
+                                                      .value as BounceJump['direction'];
+                                                  },
+                                                )
+                                              }
+                                              value={jump.direction}
+                                            >
+                                              <NativeSelectOption value="left">
+                                                ← Left
+                                              </NativeSelectOption>
+                                              <NativeSelectOption value="right">
+                                                Right →
+                                              </NativeSelectOption>
+                                            </NativeSelect>
+                                          </label>
+                                          <label
+                                            htmlFor={`jump-${jump.id}-height`}
+                                          >
+                                            <span>Height</span>
+                                            <Input
+                                              {...continuousHistoryProps}
+                                              id={`jump-${jump.id}-height`}
+                                              max="2000"
+                                              min="0"
+                                              onChange={(event) =>
+                                                updateBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                  (item) => {
+                                                    item.height = Number(
+                                                      event.target.value,
+                                                    );
+                                                  },
+                                                  `jump:${jump.id}:height`,
+                                                )
+                                              }
+                                              step="5"
+                                              type="number"
+                                              value={jump.height}
+                                            />
+                                          </label>
+                                          <label
+                                            htmlFor={`jump-${jump.id}-spread`}
+                                          >
+                                            <span>Spread</span>
+                                            <Input
+                                              {...continuousHistoryProps}
+                                              id={`jump-${jump.id}-spread`}
+                                              max="2000"
+                                              min="0"
+                                              onChange={(event) =>
+                                                updateBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                  (item) => {
+                                                    item.spread = Number(
+                                                      event.target.value,
+                                                    );
+                                                  },
+                                                  `jump:${jump.id}:spread`,
+                                                )
+                                              }
+                                              step="5"
+                                              type="number"
+                                              value={jump.spread}
+                                            />
+                                          </label>
+                                          <label
+                                            htmlFor={`jump-${jump.id}-duration`}
+                                          >
+                                            <span>Time ms</span>
+                                            <Input
+                                              {...continuousHistoryProps}
+                                              id={`jump-${jump.id}-duration`}
+                                              max="10000"
+                                              min="80"
+                                              onChange={(event) =>
+                                                updateBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                  (item) => {
+                                                    item.durationMs = Number(
+                                                      event.target.value,
+                                                    );
+                                                  },
+                                                  `jump:${jump.id}:duration`,
+                                                )
+                                              }
+                                              step="20"
+                                              type="number"
+                                              value={jump.durationMs}
+                                            />
+                                          </label>
+                                          <label
+                                            className="bounce-easing"
+                                            htmlFor={`jump-${jump.id}-easing`}
+                                          >
+                                            <span>Easing</span>
+                                            <NativeSelect
+                                              id={`jump-${jump.id}-easing`}
+                                              onChange={(event) =>
+                                                updateBounceJump(
+                                                  block.id,
+                                                  jump.id,
+                                                  (item) => {
+                                                    item.easing = event.target
+                                                      .value as Easing;
+                                                  },
+                                                )
+                                              }
+                                              value={jump.easing}
+                                            >
+                                              <NativeSelectOption value="linear">
+                                                Linear
+                                              </NativeSelectOption>
+                                              <NativeSelectOption value="ease-out">
+                                                Ease out
+                                              </NativeSelectOption>
+                                              <NativeSelectOption value="ease-in-out">
+                                                Ease in/out
+                                              </NativeSelectOption>
+                                            </NativeSelect>
+                                          </label>
+                                        </div>
+                                      </section>
+                                    ))}
+                                  </div>
+                                </>
+                              ) : null}
+                              {block.kind === 'move' ||
+                              block.kind === 'drift' ? (
+                                <div className="motion-block-grid">
+                                  <label htmlFor={`motion-${block.id}-x`}>
+                                    <span>
+                                      {block.kind === 'drift'
+                                        ? 'Drift X'
+                                        : 'Move X'}
+                                    </span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-x`}
+                                      max="800"
+                                      min="-800"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.x = Number(event.target.value);
+                                          },
+                                          `block:${block.id}:x`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.x}
+                                    />
+                                  </label>
+                                  <label htmlFor={`motion-${block.id}-y`}>
+                                    <span>
+                                      {block.kind === 'drift'
+                                        ? 'Drift Y'
+                                        : 'Move Y'}
+                                    </span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-y`}
+                                      max="800"
+                                      min="-800"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.y = Number(event.target.value);
+                                          },
+                                          `block:${block.id}:y`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.y}
+                                    />
+                                  </label>
+                                </div>
+                              ) : null}
+                              {block.kind === 'shake' ? (
+                                <div className="motion-block-grid">
+                                  <label htmlFor={`motion-${block.id}-x`}>
+                                    <span>Horizontal</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-x`}
+                                      max="800"
+                                      min="0"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.x = Number(event.target.value);
+                                          },
+                                          `block:${block.id}:x`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.x}
+                                    />
+                                  </label>
+                                  <label htmlFor={`motion-${block.id}-y`}>
+                                    <span>Vertical</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-y`}
+                                      max="800"
+                                      min="0"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.secondaryValue = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:secondary`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.secondaryValue}
+                                    />
+                                  </label>
+                                  <label
+                                    htmlFor={`motion-${block.id}-repetitions`}
+                                  >
+                                    <span>Beats</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-repetitions`}
+                                      max="20"
+                                      min="1"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.repetitions = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:repetitions`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.repetitions}
+                                    />
+                                  </label>
+                                </div>
+                              ) : null}
+                              {block.kind === 'float' ? (
+                                <div className="motion-block-grid">
+                                  <label htmlFor={`motion-${block.id}-height`}>
+                                    <span>Float height</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-height`}
+                                      max="800"
+                                      min="0"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.y = Number(event.target.value);
+                                          },
+                                          `block:${block.id}:height`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.y}
+                                    />
+                                  </label>
+                                  <label
+                                    htmlFor={`motion-${block.id}-repetitions`}
+                                  >
+                                    <span>Cycles</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-repetitions`}
+                                      max="20"
+                                      min="1"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.repetitions = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:repetitions`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.repetitions}
+                                    />
+                                  </label>
+                                </div>
+                              ) : null}
+                              {block.kind === 'scale' ? (
+                                <label className="range-control">
+                                  <span>Start size</span>
+                                  <output>
+                                    {Math.round(block.value * 100)}%
+                                  </output>
+                                  <input
+                                    {...continuousHistoryProps}
+                                    max="200"
+                                    min="10"
+                                    onChange={(event) =>
+                                      updateMotionBlock(
+                                        block.id,
+                                        (item) => {
+                                          item.value =
+                                            Number(event.target.value) / 100;
+                                        },
+                                        `block:${block.id}:value`,
+                                      )
+                                    }
+                                    type="range"
+                                    value={Math.round(block.value * 100)}
+                                  />
+                                </label>
+                              ) : null}
+                              {block.kind === 'rotate' ? (
+                                <label className="range-control">
+                                  <span>Start angle</span>
+                                  <output>{block.value}°</output>
+                                  <input
+                                    {...continuousHistoryProps}
+                                    max="180"
+                                    min="-180"
+                                    onChange={(event) =>
+                                      updateMotionBlock(
+                                        block.id,
+                                        (item) => {
+                                          item.value = Number(
+                                            event.target.value,
+                                          );
+                                        },
+                                        `block:${block.id}:value`,
+                                      )
+                                    }
+                                    type="range"
+                                    value={block.value}
+                                  />
+                                </label>
+                              ) : null}
+                              {block.kind === 'opacity' ? (
+                                <label className="range-control">
+                                  <span>Start opacity</span>
+                                  <output>
+                                    {Math.round(block.value * 100)}%
+                                  </output>
+                                  <input
+                                    {...continuousHistoryProps}
+                                    max="100"
+                                    min="0"
+                                    onChange={(event) =>
+                                      updateMotionBlock(
+                                        block.id,
+                                        (item) => {
+                                          item.value =
+                                            Number(event.target.value) / 100;
+                                        },
+                                        `block:${block.id}:value`,
+                                      )
+                                    }
+                                    type="range"
+                                    value={Math.round(block.value * 100)}
+                                  />
+                                </label>
+                              ) : null}
+                              {block.kind === 'pulse' ? (
+                                <div className="motion-block-grid">
+                                  <label htmlFor={`motion-${block.id}-scale`}>
+                                    <span>Peak scale</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-scale`}
+                                      max="4"
+                                      min="0.05"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.value = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:value`,
+                                        )
+                                      }
+                                      step="0.05"
+                                      type="number"
+                                      value={block.value}
+                                    />
+                                  </label>
+                                  <label
+                                    htmlFor={`motion-${block.id}-repetitions`}
+                                  >
+                                    <span>Pulses</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-repetitions`}
+                                      max="20"
+                                      min="1"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.repetitions = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:repetitions`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.repetitions}
+                                    />
+                                  </label>
+                                </div>
+                              ) : null}
+                              {block.kind === 'blur' ? (
+                                <label className="range-control">
+                                  <span>Start blur</span>
+                                  <output>{block.value}px</output>
+                                  <input
+                                    {...continuousHistoryProps}
+                                    max="60"
+                                    min="0"
+                                    onChange={(event) =>
+                                      updateMotionBlock(
+                                        block.id,
+                                        (item) => {
+                                          item.value = Number(
+                                            event.target.value,
+                                          );
+                                        },
+                                        `block:${block.id}:value`,
+                                      )
+                                    }
+                                    type="range"
+                                    value={block.value}
+                                  />
+                                </label>
+                              ) : null}
+                              {block.kind === 'reveal' ? (
+                                <div className="motion-block-grid">
+                                  <label
+                                    htmlFor={`motion-${block.id}-direction`}
+                                  >
+                                    <span>Reveal from</span>
+                                    <NativeSelect
+                                      id={`motion-${block.id}-direction`}
+                                      onChange={(event) =>
+                                        updateMotionBlock(block.id, (item) => {
+                                          item.direction = event.target
+                                            .value as MotionBlock['direction'];
+                                        })
+                                      }
+                                      value={block.direction}
+                                    >
+                                      <NativeSelectOption value="left">
+                                        Left
+                                      </NativeSelectOption>
+                                      <NativeSelectOption value="right">
+                                        Right
+                                      </NativeSelectOption>
+                                      <NativeSelectOption value="up">
+                                        Top
+                                      </NativeSelectOption>
+                                      <NativeSelectOption value="down">
+                                        Bottom
+                                      </NativeSelectOption>
+                                    </NativeSelect>
+                                  </label>
+                                  <label htmlFor={`motion-${block.id}-amount`}>
+                                    <span>Hidden amount %</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-amount`}
+                                      max="100"
+                                      min="0"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.value = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:value`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.value || 100}
+                                    />
+                                  </label>
+                                </div>
+                              ) : null}
+                              {block.kind === 'flash' ? (
+                                <div className="motion-block-grid">
+                                  <label htmlFor={`motion-${block.id}-opacity`}>
+                                    <span>Low opacity</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-opacity`}
+                                      max="1"
+                                      min="0"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.value = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:value`,
+                                        )
+                                      }
+                                      step="0.05"
+                                      type="number"
+                                      value={block.value}
+                                    />
+                                  </label>
+                                  <label
+                                    htmlFor={`motion-${block.id}-repetitions`}
+                                  >
+                                    <span>Flashes</span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-repetitions`}
+                                      max="20"
+                                      min="1"
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.repetitions = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:repetitions`,
+                                        )
+                                      }
+                                      type="number"
+                                      value={block.repetitions}
+                                    />
+                                  </label>
+                                </div>
+                              ) : null}
+                              {!isEvent && !isBounce ? (
+                                <div className="motion-block-grid">
+                                  <label
+                                    htmlFor={`motion-${block.id}-duration`}
+                                  >
+                                    <span>
+                                      {block.kind === 'wait'
+                                        ? 'Wait'
+                                        : 'Duration'}
+                                    </span>
+                                    <Input
+                                      {...continuousHistoryProps}
+                                      id={`motion-${block.id}-duration`}
+                                      max="10000"
+                                      min={block.kind === 'wait' ? 0 : 100}
+                                      onChange={(event) =>
+                                        updateMotionBlock(
+                                          block.id,
+                                          (item) => {
+                                            item.durationMs = Number(
+                                              event.target.value,
+                                            );
+                                          },
+                                          `block:${block.id}:duration`,
+                                        )
+                                      }
+                                      step="50"
+                                      type="number"
+                                      value={block.durationMs}
+                                    />
+                                  </label>
+                                  {isAction ? (
+                                    <label
+                                      htmlFor={`motion-${block.id}-easing`}
+                                    >
+                                      <span>Easing</span>
+                                      <NativeSelect
+                                        className="w-full"
+                                        id={`motion-${block.id}-easing`}
+                                        onChange={(event) =>
+                                          updateMotionBlock(
+                                            block.id,
+                                            (item) => {
+                                              item.easing = event.target
+                                                .value as Easing;
+                                            },
+                                          )
+                                        }
+                                        value={block.easing}
+                                      >
+                                        <NativeSelectOption value="linear">
+                                          Linear
+                                        </NativeSelectOption>
+                                        <NativeSelectOption value="ease-out">
+                                          Ease out
+                                        </NativeSelectOption>
+                                        <NativeSelectOption value="ease-in-out">
+                                          Ease in/out
+                                        </NativeSelectOption>
+                                      </NativeSelect>
+                                    </label>
+                                  ) : (
+                                    <span className="motion-unit">
+                                      milliseconds
+                                    </span>
+                                  )}
+                                </div>
+                              ) : null}
+                            </li>
+                          );
+                        },
+                      )}
+                    </ol>
                   </div>
                 )}
               </>
@@ -2555,50 +4323,184 @@ export function MotusStudio() {
           <DialogHeader>
             <DialogTitle>Motus catalogs</DialogTitle>
             <DialogDescription>
-              Discover motion comics, start from a scene template, or apply an editable block preset.
+              Discover motion comics, start from a scene template, or apply an
+              editable block preset.
             </DialogDescription>
           </DialogHeader>
-          <div aria-label="Catalog sections" className="catalog-tabs" role="tablist">
-            <button aria-selected={catalogTab === 'works'} onClick={() => setCatalogTab('works')} role="tab" type="button"><LibraryBig />Explore works</button>
-            <button aria-selected={catalogTab === 'templates'} onClick={() => setCatalogTab('templates')} role="tab" type="button"><Layers3 />Scene templates</button>
-            <button aria-selected={catalogTab === 'motion'} onClick={() => setCatalogTab('motion')} role="tab" type="button"><Code2 />Motion presets</button>
+          <div
+            aria-label="Catalog sections"
+            className="catalog-tabs"
+            role="tablist"
+          >
+            <button
+              aria-selected={catalogTab === 'works'}
+              onClick={() => setCatalogTab('works')}
+              role="tab"
+              type="button"
+            >
+              <LibraryBig />
+              Explore works
+            </button>
+            <button
+              aria-selected={catalogTab === 'templates'}
+              onClick={() => setCatalogTab('templates')}
+              role="tab"
+              type="button"
+            >
+              <Layers3 />
+              Scene templates
+            </button>
+            <button
+              aria-selected={catalogTab === 'motion'}
+              onClick={() => setCatalogTab('motion')}
+              role="tab"
+              type="button"
+            >
+              <Code2 />
+              Motion presets
+            </button>
           </div>
 
           {catalogTab === 'works' ? (
             <section className="catalog-panel" aria-label="Works catalog">
               <div className="catalog-search">
                 <Search aria-hidden="true" />
-                <Input aria-label="Search works, creators, genres, formats, or tags" onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search works, creators, genres, formats, tags…" value={catalogSearch} />
+                <Input
+                  aria-label="Search works, creators, genres, formats, or tags"
+                  onChange={(event) => setCatalogSearch(event.target.value)}
+                  placeholder="Search works, creators, genres, formats, tags…"
+                  value={catalogSearch}
+                />
               </div>
-              <div className="catalog-section-heading"><div><span>YOUR LIBRARY</span><strong>Continue creating</strong></div><small>{project.scenes.length} scenes · {project.publishedRevision ? `revision ${project.publishedRevision}` : 'draft'}</small></div>
+              <div className="catalog-section-heading">
+                <div>
+                  <span>YOUR LIBRARY</span>
+                  <strong>Continue creating</strong>
+                </div>
+                <small>
+                  {project.scenes.length} scenes ·{' '}
+                  {project.publishedRevision
+                    ? `revision ${project.publishedRevision}`
+                    : 'draft'}
+                </small>
+              </div>
               <article className="library-work-card">
-                <div className="library-work-cover" style={{ background: activeScene.background }}><span>M</span></div>
-                <div><small>{project.chapterTitle.toUpperCase()} · {project.visibility.toUpperCase()}</small><h3>{project.title}</h3><p>by {project.creatorName} · {project.description || 'Add a description before publishing.'}</p><div>{project.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div></div>
-                <Button onClick={() => { setCatalogOpen(false); openReader(); }} variant="secondary"><Play />Read draft</Button>
+                <div
+                  className="library-work-cover"
+                  style={{ background: activeScene.background }}
+                >
+                  <span>M</span>
+                </div>
+                <div>
+                  <small>
+                    {project.chapterTitle.toUpperCase()} ·{' '}
+                    {project.visibility.toUpperCase()}
+                  </small>
+                  <h3>{project.title}</h3>
+                  <p>
+                    by {project.creatorName} ·{' '}
+                    {project.description ||
+                      'Add a description before publishing.'}
+                  </p>
+                  <div>
+                    {project.tags.map((tag) => (
+                      <span key={tag}>#{tag}</span>
+                    ))}
+                  </div>
+                </div>
+                <Button
+                  onClick={() => {
+                    setCatalogOpen(false);
+                    openReader();
+                  }}
+                  variant="secondary"
+                >
+                  <Play />
+                  Read draft
+                </Button>
               </article>
 
-              <div className="catalog-section-heading"><div><span>DISCOVER</span><strong>Motion comics and serials</strong></div><small>{filteredWorkCatalog.length} results</small></div>
+              <div className="catalog-section-heading">
+                <div>
+                  <span>DISCOVER</span>
+                  <strong>Motion comics and serials</strong>
+                </div>
+                <small>{filteredWorkCatalog.length} results</small>
+              </div>
               {filteredWorkCatalog.length ? (
                 <div className="work-catalog-grid">
                   {filteredWorkCatalog.map((work) => (
                     <article className="work-catalog-card" key={work.title}>
-                      <div className="work-catalog-cover" style={{ background: work.palette }}><span>{work.title.slice(0, 1)}</span><small>{work.format}</small></div>
-                      <div className="work-catalog-copy"><span>{work.genre} · {work.status}</span><h3>{work.title}</h3><p>by {work.creator}</p><div>{work.tags.map((tag) => <small key={tag}>#{tag}</small>)}</div><strong>{work.rating}</strong></div>
+                      <div
+                        className="work-catalog-cover"
+                        style={{ background: work.palette }}
+                      >
+                        <span>{work.title.slice(0, 1)}</span>
+                        <small>{work.format}</small>
+                      </div>
+                      <div className="work-catalog-copy">
+                        <span>
+                          {work.genre} · {work.status}
+                        </span>
+                        <h3>{work.title}</h3>
+                        <p>by {work.creator}</p>
+                        <div>
+                          {work.tags.map((tag) => (
+                            <small key={tag}>#{tag}</small>
+                          ))}
+                        </div>
+                        <strong>{work.rating}</strong>
+                      </div>
                     </article>
                   ))}
                 </div>
-              ) : <div className="catalog-empty"><Search /><strong>No matching works</strong><p>Try a title, creator, genre, format, or tag.</p></div>}
+              ) : (
+                <div className="catalog-empty">
+                  <Search />
+                  <strong>No matching works</strong>
+                  <p>Try a title, creator, genre, format, or tag.</p>
+                </div>
+              )}
             </section>
           ) : null}
 
           {catalogTab === 'templates' ? (
-            <section className="catalog-panel" aria-label="Scene template catalog">
-              <div className="catalog-intro"><span>SCENE CATALOG</span><h2>Start with structure, then make it yours.</h2><p>Each template adds a fully editable scene with separate title, focal, and speech layers.</p></div>
+            <section
+              className="catalog-panel"
+              aria-label="Scene template catalog"
+            >
+              <div className="catalog-intro">
+                <span>SCENE CATALOG</span>
+                <h2>Start with structure, then make it yours.</h2>
+                <p>
+                  Each template adds a fully editable scene with separate title,
+                  focal, and speech layers.
+                </p>
+              </div>
               <div className="template-catalog-grid">
                 {sceneTemplates.map((template) => (
                   <article className="template-card" key={template.id}>
-                    <div className="template-preview" style={{ background: template.background }}><span style={{ color: template.accent }}>{template.title}</span><i style={{ background: template.accent }} /><small>{template.speech}</small></div>
-                    <div><h3>{template.name}</h3><p>{template.description}</p><Button onClick={() => addSceneFromTemplate(template.id)} size="sm"><Plus />Add scene</Button></div>
+                    <div
+                      className="template-preview"
+                      style={{ background: template.background }}
+                    >
+                      <span style={{ color: template.accent }}>
+                        {template.title}
+                      </span>
+                      <i style={{ background: template.accent }} />
+                      <small>{template.speech}</small>
+                    </div>
+                    <div>
+                      <h3>{template.name}</h3>
+                      <p>{template.description}</p>
+                      <Button
+                        onClick={() => addSceneFromTemplate(template.id)}
+                        size="sm"
+                      >
+                        <Plus />
+                        Add scene
+                      </Button>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -2606,15 +4508,50 @@ export function MotusStudio() {
           ) : null}
 
           {catalogTab === 'motion' ? (
-            <section className="catalog-panel" aria-label="Motion preset catalog">
-              <div className="catalog-intro"><span>MOTION CATALOG</span><h2>Presets remain editable block programs.</h2><p>Apply one to the selected layer, then reorder or tune every generated block in the inspector.</p></div>
+            <section
+              className="catalog-panel"
+              aria-label="Motion preset catalog"
+            >
+              <div className="catalog-intro">
+                <span>MOTION CATALOG</span>
+                <h2>Presets remain editable block programs.</h2>
+                <p>
+                  Apply one to the selected layer, then reorder or tune every
+                  generated block in the inspector.
+                </p>
+              </div>
               <div className="motion-preset-grid">
                 {motionPresets.map((preset) => (
                   <article className="motion-preset-card" key={preset.id}>
                     <div className="preset-block-stack">
-                      {preset.blocks.map((block, index) => <span className={`block-${createMotionBlock(block.kind, `${preset.id}-${index}`).category}`} key={`${preset.id}-${block.kind}-${index}`}>{index + 1}. {createMotionBlock(block.kind, `${preset.id}-${index}`).label}</span>)}
+                      {preset.blocks.map((block, index) => (
+                        <span
+                          className={`block-${createMotionBlock(block.kind, `${preset.id}-${index}`).category}`}
+                          key={`${preset.id}-${block.kind}-${index}`}
+                        >
+                          {index + 1}.{' '}
+                          {
+                            createMotionBlock(
+                              block.kind,
+                              `${preset.id}-${index}`,
+                            ).label
+                          }
+                        </span>
+                      ))}
                     </div>
-                    <div><h3>{preset.name}</h3><p>{preset.description}</p><small>{preset.blocks.length} editable blocks</small><Button disabled={!selectedElement} onClick={() => applyMotionPreset(preset.id)} size="sm"><Sparkles />Apply to {selectedElement?.name ?? 'a selected layer'}</Button></div>
+                    <div>
+                      <h3>{preset.name}</h3>
+                      <p>{preset.description}</p>
+                      <small>{preset.blocks.length} editable blocks</small>
+                      <Button
+                        disabled={!selectedElement}
+                        onClick={() => applyMotionPreset(preset.id)}
+                        size="sm"
+                      >
+                        <Sparkles />
+                        Apply to {selectedElement?.name ?? 'a selected layer'}
+                      </Button>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -2626,7 +4563,10 @@ export function MotusStudio() {
       {deletionUndo ? (
         <div aria-atomic="true" aria-live="polite" className="deletion-undo">
           <span>{deletionUndo.message}</span>
-          <Button onClick={undoDeletion} size="sm" variant="secondary"><Undo2 />Undo</Button>
+          <Button onClick={undoDeletion} size="sm" variant="secondary">
+            <Undo2 />
+            Undo
+          </Button>
         </div>
       ) : null}
 
@@ -2635,16 +4575,26 @@ export function MotusStudio() {
           <CloudOff aria-hidden="true" />
           <div>
             <strong>Draft is not safely saved</strong>
-            <p>Browser storage may be full or unavailable. Download a portable backup before closing this tab.</p>
+            <p>
+              Browser storage may be full or unavailable. Download a portable
+              backup before closing this tab.
+            </p>
           </div>
           <Button
-            onClick={externalDraftChange ? () => setConflictOpen(true) : saveCurrentProject}
+            onClick={
+              externalDraftChange
+                ? () => setConflictOpen(true)
+                : saveCurrentProject
+            }
             size="sm"
             variant="outline"
           >
             {externalDraftChange ? 'Resolve conflict' : 'Retry save'}
           </Button>
-          <Button onClick={exportProject} size="sm"><Download />Download backup</Button>
+          <Button onClick={exportProject} size="sm">
+            <Download />
+            Download backup
+          </Button>
         </div>
       ) : null}
 
@@ -2660,13 +4610,23 @@ export function MotusStudio() {
             <CloudOff />
             <div>
               <strong>Choose which draft should continue</strong>
-              <p>Loading the saved draft downloads this tab’s version first. Keeping this draft makes it the newest recoverable copy.</p>
+              <p>
+                Loading the saved draft downloads this tab’s version first.
+                Keeping this draft makes it the newest recoverable copy.
+              </p>
             </div>
           </div>
           <div className="conflict-actions">
-            <Button onClick={() => setConflictOpen(false)} variant="ghost">Review later</Button>
-            <Button onClick={keepCurrentDraft} variant="outline">Keep this draft</Button>
-            <Button onClick={loadOtherTabDraft}><Download />Back up &amp; load saved</Button>
+            <Button onClick={() => setConflictOpen(false)} variant="ghost">
+              Review later
+            </Button>
+            <Button onClick={keepCurrentDraft} variant="outline">
+              Keep this draft
+            </Button>
+            <Button onClick={loadOtherTabDraft}>
+              <Download />
+              Back up &amp; load saved
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -2679,22 +4639,39 @@ export function MotusStudio() {
       >
         <DialogContent className="new-work-dialog">
           <DialogHeader>
-            <DialogTitle>Import {pendingProjectImport?.project.title}?</DialogTitle>
+            <DialogTitle>
+              Import {pendingProjectImport?.project.title}?
+            </DialogTitle>
             <DialogDescription>
-              {pendingProjectImport?.fileName} contains {pendingProjectImport?.project.scenes.length}{' '}
-              scene{pendingProjectImport?.project.scenes.length === 1 ? '' : 's'} and will replace the draft currently open in the editor.
+              {pendingProjectImport?.fileName} contains{' '}
+              {pendingProjectImport?.project.scenes.length} scene
+              {pendingProjectImport?.project.scenes.length === 1
+                ? ''
+                : 's'} and
+              will replace the draft currently open in the editor.
             </DialogDescription>
           </DialogHeader>
           <div className="new-work-backup">
             <Download />
             <div>
               <strong>Your current work downloads first</strong>
-              <p>Motus also verifies that the imported draft fits in both recovery slots before switching projects.</p>
+              <p>
+                Motus also verifies that the imported draft fits in both
+                recovery slots before switching projects.
+              </p>
             </div>
           </div>
           <div className="new-work-actions">
-            <Button onClick={() => setPendingProjectImport(null)} variant="outline">Cancel</Button>
-            <Button onClick={confirmProjectImport}><Upload />Back up &amp; import</Button>
+            <Button
+              onClick={() => setPendingProjectImport(null)}
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button onClick={confirmProjectImport}>
+              <Upload />
+              Back up &amp; import
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -2707,21 +4684,37 @@ export function MotusStudio() {
       >
         <DialogContent className="new-work-dialog">
           <DialogHeader>
-            <DialogTitle>Remove revision {pendingRevisionRemoval?.revision}?</DialogTitle>
+            <DialogTitle>
+              Remove revision {pendingRevisionRemoval?.revision}?
+            </DialogTitle>
             <DialogDescription>
-              This removes an older immutable snapshot from this device. The current published revision stays untouched.
+              This removes an older immutable snapshot from this device. The
+              current published revision stays untouched.
             </DialogDescription>
           </DialogHeader>
           <div className="new-work-backup">
             <Download />
             <div>
               <strong>A complete project backup downloads first</strong>
-              <p>You can import that file later if you need this revision again.</p>
+              <p>
+                You can import that file later if you need this revision again.
+              </p>
             </div>
           </div>
           <div className="new-work-actions">
-            <Button onClick={() => { setPendingRevisionRemoval(null); setPublishOpen(true); }} variant="outline">Cancel</Button>
-            <Button onClick={confirmRevisionRemoval} variant="destructive"><Trash2 />Back up &amp; remove</Button>
+            <Button
+              onClick={() => {
+                setPendingRevisionRemoval(null);
+                setPublishOpen(true);
+              }}
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button onClick={confirmRevisionRemoval} variant="destructive">
+              <Trash2 />
+              Back up &amp; remove
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -2731,19 +4724,28 @@ export function MotusStudio() {
           <DialogHeader>
             <DialogTitle>Start a new work?</DialogTitle>
             <DialogDescription>
-              Motus will download a complete backup of “{project.title}” before opening a blank scene.
+              Motus will download a complete backup of “{project.title}” before
+              opening a blank scene.
             </DialogDescription>
           </DialogHeader>
           <div className="new-work-backup">
             <Download />
             <div>
               <strong>Your current work stays recoverable</strong>
-              <p>Import the downloaded .motus.json file at any time to continue exactly where you left off.</p>
+              <p>
+                Import the downloaded .motus.json file at any time to continue
+                exactly where you left off.
+              </p>
             </div>
           </div>
           <div className="new-work-actions">
-            <Button onClick={() => setNewWorkOpen(false)} variant="outline">Keep editing</Button>
-            <Button onClick={startNewWork}><FilePlus2 />Back up &amp; start</Button>
+            <Button onClick={() => setNewWorkOpen(false)} variant="outline">
+              Keep editing
+            </Button>
+            <Button onClick={startNewWork}>
+              <FilePlus2 />
+              Back up &amp; start
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -2753,7 +4755,8 @@ export function MotusStudio() {
           <DialogHeader>
             <DialogTitle>Project details</DialogTitle>
             <DialogDescription>
-              Update the title and reader-facing context without publishing a new revision.
+              Update the title and reader-facing context without publishing a
+              new revision.
             </DialogDescription>
           </DialogHeader>
           <div className="publish-grid">
@@ -2773,16 +4776,55 @@ export function MotusStudio() {
               />
             </label>
             <div className="publish-field-row identity-field-row">
-              <label className="publish-field" htmlFor="project-details-creator"><span>Creator</span><Input {...textHistoryProps} id="project-details-creator" maxLength={MAX_PROJECT_TITLE_LENGTH} onChange={(event) => commitProject((draft) => { draft.creatorName = event.target.value; }, 'project:creator')} value={project.creatorName} /></label>
-              <label className="publish-field" htmlFor="project-details-chapter"><span>Chapter</span><Input {...textHistoryProps} id="project-details-chapter" maxLength={MAX_PROJECT_TITLE_LENGTH} onChange={(event) => commitProject((draft) => { draft.chapterTitle = event.target.value; }, 'project:chapter')} value={project.chapterTitle} /></label>
+              <label
+                className="publish-field"
+                htmlFor="project-details-creator"
+              >
+                <span>Creator</span>
+                <Input
+                  {...textHistoryProps}
+                  id="project-details-creator"
+                  maxLength={MAX_PROJECT_TITLE_LENGTH}
+                  onChange={(event) =>
+                    commitProject((draft) => {
+                      draft.creatorName = event.target.value;
+                    }, 'project:creator')
+                  }
+                  value={project.creatorName}
+                />
+              </label>
+              <label
+                className="publish-field"
+                htmlFor="project-details-chapter"
+              >
+                <span>Chapter</span>
+                <Input
+                  {...textHistoryProps}
+                  id="project-details-chapter"
+                  maxLength={MAX_PROJECT_TITLE_LENGTH}
+                  onChange={(event) =>
+                    commitProject((draft) => {
+                      draft.chapterTitle = event.target.value;
+                    }, 'project:chapter')
+                  }
+                  value={project.chapterTitle}
+                />
+              </label>
             </div>
-            <label className="publish-field" htmlFor="project-details-description">
+            <label
+              className="publish-field"
+              htmlFor="project-details-description"
+            >
               <span>Description</span>
               <Textarea
                 {...textHistoryProps}
                 id="project-details-description"
                 maxLength={MAX_PROJECT_DESCRIPTION_LENGTH}
-                onChange={(event) => commitProject((draft) => { draft.description = event.target.value; }, 'project:description')}
+                onChange={(event) =>
+                  commitProject((draft) => {
+                    draft.description = event.target.value;
+                  }, 'project:description')
+                }
                 placeholder="What should readers know before they begin?"
                 value={project.description}
               />
@@ -2794,7 +4836,9 @@ export function MotusStudio() {
                 maxLength={400}
                 onBlur={(event) => {
                   endHistoryTransaction();
-                  setPublishTagsInput(parseProjectTags(event.currentTarget.value).join(', '));
+                  setPublishTagsInput(
+                    parseProjectTags(event.currentTarget.value).join(', '),
+                  );
                 }}
                 onChange={(event) => {
                   const value = event.target.value;
@@ -2806,7 +4850,9 @@ export function MotusStudio() {
                 placeholder="mystery, science fiction"
                 value={publishTagsInput}
               />
-              <span className="publish-field-hint">Separate tags with commas.</span>
+              <span className="publish-field-hint">
+                Separate tags with commas.
+              </span>
             </label>
           </div>
           <div className="new-work-actions">
@@ -2837,11 +4883,16 @@ export function MotusStudio() {
               <span>MATURE CONTENT</span>
               <h3 id="reader-mature-title">Continue to this reader?</h3>
               <p id="reader-mature-description">
-                The creator marked this work as Mature. Continue only if this content is appropriate for you.
+                The creator marked this work as Mature. Continue only if this
+                content is appropriate for you.
               </p>
               <div>
-                <Button onClick={() => setReaderOpen(false)} variant="ghost">Go back</Button>
-                <Button onClick={() => setReaderMatureConfirmed(true)}>Continue to reader</Button>
+                <Button onClick={() => setReaderOpen(false)} variant="ghost">
+                  Go back
+                </Button>
+                <Button onClick={() => setReaderMatureConfirmed(true)}>
+                  Continue to reader
+                </Button>
               </div>
             </section>
           ) : (
@@ -2849,7 +4900,8 @@ export function MotusStudio() {
               <div className="reader-toolbar">
                 <span>Motion plays as each scene enters view.</span>
                 <Button onClick={replayReader} size="sm" variant="secondary">
-                  <Play fill="currentColor" />Replay from start
+                  <Play fill="currentColor" />
+                  Replay from start
                 </Button>
               </div>
               <div className="reader-scroll" ref={readerScroll}>
@@ -2872,7 +4924,8 @@ export function MotusStudio() {
           <DialogHeader>
             <DialogTitle>Publish {project.title}</DialogTitle>
             <DialogDescription>
-              Create an immutable reader snapshot. Later edits stay in your draft until you publish again.
+              Create an immutable reader snapshot. Later edits stay in your
+              draft until you publish again.
             </DialogDescription>
           </DialogHeader>
 
@@ -2893,8 +4946,34 @@ export function MotusStudio() {
               />
             </label>
             <div className="publish-field-row identity-field-row">
-              <label className="publish-field" htmlFor="publish-creator"><span>Creator</span><Input {...textHistoryProps} id="publish-creator" maxLength={MAX_PROJECT_TITLE_LENGTH} onChange={(event) => commitProject((draft) => { draft.creatorName = event.target.value; }, 'project:creator')} value={project.creatorName} /></label>
-              <label className="publish-field" htmlFor="publish-chapter"><span>Chapter</span><Input {...textHistoryProps} id="publish-chapter" maxLength={MAX_PROJECT_TITLE_LENGTH} onChange={(event) => commitProject((draft) => { draft.chapterTitle = event.target.value; }, 'project:chapter')} value={project.chapterTitle} /></label>
+              <label className="publish-field" htmlFor="publish-creator">
+                <span>Creator</span>
+                <Input
+                  {...textHistoryProps}
+                  id="publish-creator"
+                  maxLength={MAX_PROJECT_TITLE_LENGTH}
+                  onChange={(event) =>
+                    commitProject((draft) => {
+                      draft.creatorName = event.target.value;
+                    }, 'project:creator')
+                  }
+                  value={project.creatorName}
+                />
+              </label>
+              <label className="publish-field" htmlFor="publish-chapter">
+                <span>Chapter</span>
+                <Input
+                  {...textHistoryProps}
+                  id="publish-chapter"
+                  maxLength={MAX_PROJECT_TITLE_LENGTH}
+                  onChange={(event) =>
+                    commitProject((draft) => {
+                      draft.chapterTitle = event.target.value;
+                    }, 'project:chapter')
+                  }
+                  value={project.chapterTitle}
+                />
+              </label>
             </div>
             <label className="publish-field" htmlFor="publish-description">
               <span>Description</span>
@@ -2902,7 +4981,11 @@ export function MotusStudio() {
                 {...textHistoryProps}
                 id="publish-description"
                 maxLength={MAX_PROJECT_DESCRIPTION_LENGTH}
-                onChange={(event) => commitProject((draft) => { draft.description = event.target.value; }, 'project:description')}
+                onChange={(event) =>
+                  commitProject((draft) => {
+                    draft.description = event.target.value;
+                  }, 'project:description')
+                }
                 placeholder="What should readers know before they begin?"
                 value={project.description}
               />
@@ -2914,7 +4997,9 @@ export function MotusStudio() {
                 maxLength={400}
                 onBlur={(event) => {
                   endHistoryTransaction();
-                  setPublishTagsInput(parseProjectTags(event.currentTarget.value).join(', '));
+                  setPublishTagsInput(
+                    parseProjectTags(event.currentTarget.value).join(', '),
+                  );
                 }}
                 onChange={(event) => {
                   const value = event.target.value;
@@ -2926,16 +5011,20 @@ export function MotusStudio() {
                 placeholder="mystery, science fiction"
                 value={publishTagsInput}
               />
-              <small className="publish-field-hint">Comma-separated · up to 8 tags</small>
+              <small className="publish-field-hint">
+                Comma-separated · up to 8 tags
+              </small>
             </label>
 
             <label className="publish-field" htmlFor="publish-cover-scene">
               <span>Cover scene</span>
               <NativeSelect
                 id="publish-cover-scene"
-                onChange={(event) => commitProject((draft) => {
-                  draft.coverSceneId = event.target.value;
-                })}
+                onChange={(event) =>
+                  commitProject((draft) => {
+                    draft.coverSceneId = event.target.value;
+                  })
+                }
                 value={project.coverSceneId}
               >
                 {project.scenes.map((scene, index) => (
@@ -2952,7 +5041,15 @@ export function MotusStudio() {
             <div className="publish-field-row">
               <label className="publish-field" htmlFor="publish-language">
                 <span>Language</span>
-                <NativeSelect id="publish-language" onChange={(event) => commitProject((draft) => { draft.language = event.target.value; })} value={project.language}>
+                <NativeSelect
+                  id="publish-language"
+                  onChange={(event) =>
+                    commitProject((draft) => {
+                      draft.language = event.target.value;
+                    })
+                  }
+                  value={project.language}
+                >
                   <NativeSelectOption value="en">English</NativeSelectOption>
                   <NativeSelectOption value="tr">Turkish</NativeSelectOption>
                   <NativeSelectOption value="es">Spanish</NativeSelectOption>
@@ -2962,23 +5059,48 @@ export function MotusStudio() {
               </label>
               <label className="publish-field" htmlFor="publish-rating">
                 <span>Content rating</span>
-                <NativeSelect id="publish-rating" onChange={(event) => commitProject((draft) => { draft.contentRating = event.target.value as ContentRating; })} value={project.contentRating}>
-                  <NativeSelectOption value="all-ages">All ages</NativeSelectOption>
+                <NativeSelect
+                  id="publish-rating"
+                  onChange={(event) =>
+                    commitProject((draft) => {
+                      draft.contentRating = event.target.value as ContentRating;
+                    })
+                  }
+                  value={project.contentRating}
+                >
+                  <NativeSelectOption value="all-ages">
+                    All ages
+                  </NativeSelectOption>
                   <NativeSelectOption value="teen">Teen</NativeSelectOption>
                   <NativeSelectOption value="mature">Mature</NativeSelectOption>
                 </NativeSelect>
               </label>
               <label className="publish-field" htmlFor="publish-visibility">
                 <span>Visibility</span>
-                <NativeSelect id="publish-visibility" onChange={(event) => commitProject((draft) => { draft.visibility = event.target.value as PublicationVisibility; })} value={project.visibility}>
-                  <NativeSelectOption value="private">Private</NativeSelectOption>
-                  <NativeSelectOption value="public">Public metadata</NativeSelectOption>
+                <NativeSelect
+                  id="publish-visibility"
+                  onChange={(event) =>
+                    commitProject((draft) => {
+                      draft.visibility = event.target
+                        .value as PublicationVisibility;
+                    })
+                  }
+                  value={project.visibility}
+                >
+                  <NativeSelectOption value="private">
+                    Private
+                  </NativeSelectOption>
+                  <NativeSelectOption value="public">
+                    Public metadata
+                  </NativeSelectOption>
                 </NativeSelect>
               </label>
             </div>
 
             <p className="publish-note">
-              This alpha site remains owner-only. Choosing public records your intended visibility in the revision but does not change site access.
+              This alpha site remains owner-only. Choosing public records your
+              intended visibility in the revision but does not change site
+              access.
             </p>
 
             <section
@@ -2991,21 +5113,29 @@ export function MotusStudio() {
               </span>
               <div>
                 <strong id="publish-readiness-title">
-                  {publicationReadiness.ready ? 'Ready to publish' : 'Finish before publishing'}
+                  {publicationReadiness.ready
+                    ? 'Ready to publish'
+                    : 'Finish before publishing'}
                 </strong>
                 <small>
-                  {publicationReadiness.sceneCount} scenes · {publicationReadiness.visibleLayerCount} visible layers
+                  {publicationReadiness.sceneCount} scenes ·{' '}
+                  {publicationReadiness.visibleLayerCount} visible layers
                 </small>
                 {publicationReadiness.issues.length > 0 ? (
                   <ul>
-                    {publicationReadiness.issues.map((issue) => <li key={issue}>{issue}</li>)}
+                    {publicationReadiness.issues.map((issue) => (
+                      <li key={issue}>{issue}</li>
+                    ))}
                   </ul>
                 ) : null}
               </div>
             </section>
 
             {project.publications.length > 0 ? (
-              <section className="revision-history" aria-labelledby="revision-history-title">
+              <section
+                className="revision-history"
+                aria-labelledby="revision-history-title"
+              >
                 <div className="revision-history-heading">
                   <strong id="revision-history-title">Revision history</strong>
                   <span>{project.publications.length} saved</span>
@@ -3015,13 +5145,46 @@ export function MotusStudio() {
                     <div className="revision-row" key={revision.id}>
                       <div>
                         <strong>Revision {revision.revision}</strong>
-                        <small>{revision.createdAt.slice(0, 16).replace('T', ' ')} · {revision.scenes.length} scenes{revision.revision === project.publishedRevision ? ' · Current' : ''}</small>
+                        <small>
+                          {revision.createdAt.slice(0, 16).replace('T', ' ')} ·{' '}
+                          {revision.scenes.length} scenes
+                          {revision.revision === project.publishedRevision
+                            ? ' · Current'
+                            : ''}
+                        </small>
                       </div>
                       <div className="revision-actions">
-                        <Button onClick={() => { setPublishOpen(false); openReader(revision); }} size="sm" variant="outline">View</Button>
-                        <Button aria-label={`Restore revision ${revision.revision} as the editable draft`} onClick={() => restoreRevision(revision)} size="sm" variant="outline"><RotateCcw />Restore</Button>
+                        <Button
+                          onClick={() => {
+                            setPublishOpen(false);
+                            openReader(revision);
+                          }}
+                          size="sm"
+                          variant="outline"
+                        >
+                          View
+                        </Button>
+                        <Button
+                          aria-label={`Restore revision ${revision.revision} as the editable draft`}
+                          onClick={() => restoreRevision(revision)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          <RotateCcw />
+                          Restore
+                        </Button>
                         {revision.revision !== project.publishedRevision ? (
-                          <Button aria-label={`Remove revision ${revision.revision}`} onClick={() => { setPublishOpen(false); setPendingRevisionRemoval(revision); }} size="icon-sm" variant="destructive"><Trash2 /></Button>
+                          <Button
+                            aria-label={`Remove revision ${revision.revision}`}
+                            onClick={() => {
+                              setPublishOpen(false);
+                              setPendingRevisionRemoval(revision);
+                            }}
+                            size="icon-sm"
+                            variant="destructive"
+                          >
+                            <Trash2 />
+                          </Button>
                         ) : null}
                       </div>
                     </div>
@@ -3036,10 +5199,20 @@ export function MotusStudio() {
               {!publicationReadiness.ready
                 ? `${publicationReadiness.issues.length} item${publicationReadiness.issues.length === 1 ? '' : 's'} to finish`
                 : publicationHasChanges
-                ? `Next: revision ${project.publishedRevision + 1}`
-                : `Revision ${project.publishedRevision} is current`}
+                  ? `Next: revision ${project.publishedRevision + 1}`
+                  : `Revision ${project.publishedRevision} is current`}
             </span>
-            <Button disabled={!publicationReadiness.ready || !publicationHasChanges || externalDraftChange} onClick={publishRevision}><Send />Publish revision</Button>
+            <Button
+              disabled={
+                !publicationReadiness.ready ||
+                !publicationHasChanges ||
+                externalDraftChange
+              }
+              onClick={publishRevision}
+            >
+              <Send />
+              Publish revision
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
