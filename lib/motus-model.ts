@@ -173,6 +173,35 @@ export type MotusProject = {
   updatedAt: string;
 };
 
+export type MotusReaderSource = {
+  mode: 'draft' | 'revision';
+  revision: number | null;
+  title: string;
+  visibility: PublicationVisibility;
+  scenes: MotusScene[];
+};
+
+export function resolveReaderSource(
+  project: MotusProject,
+  revision: MotusPublicationRevision | null = null,
+): MotusReaderSource {
+  return revision
+    ? {
+        mode: 'revision',
+        revision: revision.revision,
+        title: revision.title,
+        visibility: revision.visibility,
+        scenes: revision.scenes,
+      }
+    : {
+        mode: 'draft',
+        revision: null,
+        title: project.title,
+        visibility: project.visibility,
+        scenes: project.scenes,
+      };
+}
+
 const motion = (
   moveX = 0,
   moveY = 0,

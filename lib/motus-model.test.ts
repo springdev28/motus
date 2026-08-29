@@ -23,6 +23,7 @@ import {
   reorderScenes,
   resolveDraftConflict,
   resolveEditorSelection,
+  resolveReaderSource,
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
@@ -339,6 +340,26 @@ void test('publication changes are detected against the current revision', () =>
 
   project.scenes[0].elements[0].text = 'A revised opening';
   assert.equal(hasUnpublishedChanges(project), true);
+});
+
+void test('reader source defaults to the edited draft after publication', () => {
+  const project = createDefaultProject();
+  const revision = createPublicationRevision(project, '2026-08-29T03:00:00.000Z');
+  project.publications.push(revision);
+  project.publishedRevision = revision.revision;
+  project.title = 'Edited draft title';
+  project.scenes[0].name = 'Edited draft scene';
+
+  const draftSource = resolveReaderSource(project);
+  assert.equal(draftSource.mode, 'draft');
+  assert.equal(draftSource.title, 'Edited draft title');
+  assert.equal(draftSource.scenes[0].name, 'Edited draft scene');
+
+  const revisionSource = resolveReaderSource(project, revision);
+  assert.equal(revisionSource.mode, 'revision');
+  assert.equal(revisionSource.revision, 1);
+  assert.equal(revisionSource.title, 'Signal in the Fog');
+  assert.equal(revisionSource.scenes[0].name, 'The signal');
 });
 
 void test('a published revision can be recovered as a new editable draft', () => {

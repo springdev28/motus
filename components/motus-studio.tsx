@@ -78,6 +78,7 @@ import {
   reorderScenes,
   resolveDraftConflict,
   resolveEditorSelection,
+  resolveReaderSource,
   restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
@@ -962,12 +963,11 @@ export function MotusStudio() {
     setNotice('New work started · previous draft downloaded');
   };
 
-  const openReader = (revision?: MotusPublicationRevision) => {
-    const selectedRevision = revision ?? project.publications.at(-1) ?? null;
-    setReaderRevision(selectedRevision ? structuredClone(selectedRevision) : null);
+  const openReader = (revision: MotusPublicationRevision | null = null) => {
+    setReaderRevision(revision ? structuredClone(revision) : null);
     setPreviewKey((key) => key + 1);
     setReaderOpen(true);
-    setNotice(selectedRevision ? `Viewing revision ${selectedRevision.revision}` : 'Previewing draft');
+    setNotice(revision ? `Viewing revision ${revision.revision}` : 'Previewing draft');
   };
 
   const publishRevision = () => {
@@ -1138,8 +1138,16 @@ export function MotusStudio() {
   });
 
   const artboardWidth = Math.round(430 * (zoom / 64));
-  const readerScenes = readerRevision?.scenes ?? project.scenes;
-  const readerTitle = readerRevision?.title ?? project.title;
+  const publicationHasChanges = hasUnpublishedChanges(project);
+  const readerSource = resolveReaderSource(project, readerRevision);
+  const readerDescription =
+    readerSource.mode === 'revision'
+      ? `Published revision ${readerSource.revision} · ${readerSource.visibility}`
+      : project.publishedRevision === 0
+        ? 'Unpublished draft preview'
+        : publicationHasChanges
+          ? `Draft preview · changes since published revision ${project.publishedRevision}`
+          : `Draft preview · matches published revision ${project.publishedRevision}`;
   const saveCurrentProject = () => {
     if (externalDraftChange) {
       setConflictOpen(true);
@@ -1155,7 +1163,6 @@ export function MotusStudio() {
     setPublishTagsInput(project.tags.join(', '));
     setPublishOpen(true);
   };
-  const publicationHasChanges = hasUnpublishedChanges(project);
   const displayedNotice = externalDraftChange
     ? 'Autosave paused · draft changed in another tab'
     : isDirty
@@ -1218,7 +1225,7 @@ export function MotusStudio() {
           <Button onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
             <Play data-icon="inline-start" fill="currentColor" />Preview
           </Button>
-          <Button onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" />Reader</Button>
+          <Button onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" />Draft reader</Button>
           <Button onClick={openPublish}><Send data-icon="inline-start" />Publish</Button>
           <Button aria-label="Import Motus project" onClick={() => externalDraftChange ? setConflictOpen(true) : projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
           <Button aria-label="Export Motus project" onClick={exportProject} size="icon" variant="outline"><Download /></Button>
@@ -1492,15 +1499,11 @@ export function MotusStudio() {
       <Dialog onOpenChange={setReaderOpen} open={readerOpen}>
         <DialogContent className="reader-dialog">
           <DialogHeader>
-            <DialogTitle>{readerTitle}</DialogTitle>
-            <DialogDescription>
-              {readerRevision
-                ? `Published revision ${readerRevision.revision} · ${readerRevision.visibility}`
-                : 'Unpublished draft preview'}
-            </DialogDescription>
+            <DialogTitle>{readerSource.title}</DialogTitle>
+            <DialogDescription>{readerDescription}</DialogDescription>
           </DialogHeader>
           <div className="reader-scroll">
-            {readerScenes.map((scene, index) => (
+            {readerSource.scenes.map((scene, index) => (
               <ReaderScene
                 index={index}
                 key={`${scene.id}-${previewKey}`}
