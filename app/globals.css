@@ -376,6 +376,12 @@
 
 .reader-dialog { width: min(92vw, 940px) !important; max-width: 940px !important; height: min(92vh, 860px); grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: #171521 !important; color: #f8f5ff !important; }
 .reader-dialog [data-slot='dialog-description'] { color: #aaa2b7; }
+.reader-maturity { display: flex; min-height: 0; flex-direction: column; align-items: center; justify-content: center; border: 1px solid #4a4359; border-radius: 8px; background: #0f0e16; padding: 32px; text-align: center; }
+.reader-maturity > svg { width: 42px; height: 42px; margin-bottom: 15px; color: #c7baff; }
+.reader-maturity > span { color: #a99bc2; font-family: var(--font-mono); font-size: 8px; font-weight: 750; letter-spacing: .14em; }
+.reader-maturity h3 { margin: 7px 0 0; color: #fff; font-size: 22px; }
+.reader-maturity p { max-width: 430px; margin: 9px 0 0; color: #aaa2b7; font-size: 11px; line-height: 1.6; }
+.reader-maturity > div { display: flex; gap: 8px; margin-top: 21px; }
 .reader-scroll { min-height: 0; overflow-y: auto; border-radius: 8px; background: #0f0e16; padding: 28px 18px 56px; }
 .reader-scene { width: min(520px, 92%); margin: 0 auto 28px; }
 .reader-scene-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }

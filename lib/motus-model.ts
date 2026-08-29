@@ -178,6 +178,7 @@ export type MotusReaderSource = {
   mode: 'draft' | 'revision';
   revision: number | null;
   title: string;
+  contentRating: ContentRating;
   visibility: PublicationVisibility;
   scenes: MotusScene[];
 };
@@ -191,6 +192,7 @@ export function resolveReaderSource(
         mode: 'revision',
         revision: revision.revision,
         title: revision.title,
+        contentRating: revision.contentRating,
         visibility: revision.visibility,
         scenes: revision.scenes,
       }
@@ -198,6 +200,7 @@ export function resolveReaderSource(
         mode: 'draft',
         revision: null,
         title: project.title,
+        contentRating: project.contentRating,
         visibility: project.visibility,
         scenes: project.scenes,
       };

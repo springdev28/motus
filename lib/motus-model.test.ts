@@ -389,17 +389,20 @@ void test('reader source defaults to the edited draft after publication', () => 
   project.publications.push(revision);
   project.publishedRevision = revision.revision;
   project.title = 'Edited draft title';
+  project.contentRating = 'mature';
   project.scenes[0].name = 'Edited draft scene';
 
   const draftSource = resolveReaderSource(project);
   assert.equal(draftSource.mode, 'draft');
   assert.equal(draftSource.title, 'Edited draft title');
+  assert.equal(draftSource.contentRating, 'mature');
   assert.equal(draftSource.scenes[0].name, 'Edited draft scene');
 
   const revisionSource = resolveReaderSource(project, revision);
   assert.equal(revisionSource.mode, 'revision');
   assert.equal(revisionSource.revision, 1);
   assert.equal(revisionSource.title, 'Signal in the Fog');
+  assert.equal(revisionSource.contentRating, 'all-ages');
   assert.equal(revisionSource.scenes[0].name, 'The signal');
 });
 

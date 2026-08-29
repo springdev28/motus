@@ -385,6 +385,7 @@ export function MotusStudio() {
   const [zoom, setZoom] = useState(64);
   const [previewKey, setPreviewKey] = useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
+  const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishTagsInput, setPublishTagsInput] = useState(
     'science fiction, mystery',
@@ -1052,6 +1053,7 @@ export function MotusStudio() {
 
   const openReader = (revision: MotusPublicationRevision | null = null) => {
     setReaderRevision(revision ? structuredClone(revision) : null);
+    setReaderMatureConfirmed(false);
     setPreviewKey((key) => key + 1);
     setReaderOpen(true);
     setNotice(revision ? `Viewing revision ${revision.revision}` : 'Previewing draft');
@@ -1080,6 +1082,7 @@ export function MotusStudio() {
     });
     setPublishOpen(false);
     setReaderRevision(revision);
+    setReaderMatureConfirmed(false);
     setPreviewKey((key) => key + 1);
     setReaderOpen(true);
     setNotice(`Revision ${revision.revision} published`);
@@ -1665,22 +1668,47 @@ export function MotusStudio() {
         </DialogContent>
       </Dialog>
 
-      <Dialog onOpenChange={setReaderOpen} open={readerOpen}>
+      <Dialog
+        onOpenChange={(open) => {
+          setReaderOpen(open);
+          if (!open) setReaderMatureConfirmed(false);
+        }}
+        open={readerOpen}
+      >
         <DialogContent className="reader-dialog">
           <DialogHeader>
             <DialogTitle>{readerSource.title}</DialogTitle>
             <DialogDescription>{readerDescription}</DialogDescription>
           </DialogHeader>
-          <div className="reader-scroll">
-            {readerSource.scenes.map((scene, index) => (
-              <ReaderScene
-                index={index}
-                key={`${scene.id}-${previewKey}`}
-                scene={scene}
-                sessionKey={previewKey || 1}
-              />
-            ))}
-          </div>
+          {readerSource.contentRating === 'mature' && !readerMatureConfirmed ? (
+            <section
+              aria-describedby="reader-mature-description"
+              aria-labelledby="reader-mature-title"
+              className="reader-maturity"
+            >
+              <EyeOff aria-hidden="true" />
+              <span>MATURE CONTENT</span>
+              <h3 id="reader-mature-title">Continue to this reader?</h3>
+              <p id="reader-mature-description">
+                The creator marked this work as Mature. Continue only if this content is appropriate for you.
+              </p>
+              <div>
+                <Button onClick={() => setReaderOpen(false)} variant="ghost">Go back</Button>
+                <Button onClick={() => setReaderMatureConfirmed(true)}>Continue to reader</Button>
+              </div>
+            </section>
+          ) : (
+            <div className="reader-scroll">
+              {readerSource.scenes.map((scene, index) => (
+                <ReaderScene
+                  index={index}
+                  key={`${scene.id}-${previewKey}`}
+                  scene={scene}
+                  sessionKey={previewKey || 1}
+                />
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
