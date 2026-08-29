@@ -15,6 +15,7 @@ import {
   constrainElementToCanvas,
   createDefaultProject,
   createElement,
+  createElementCopy,
   createProjectHistoryEntry,
   createProjectBackupFileName,
   createPublicationRevision,
@@ -339,6 +340,28 @@ void test('editor shortcuts resolve save, history, and duplication commands', ()
   assert.equal(getEditorShortcut('d', true), 'duplicate');
   assert.equal(getEditorShortcut('s', false), null);
   assert.equal(getEditorShortcut('p', true), null);
+});
+
+void test('element copies are independent and stay inside the canvas', () => {
+  const source = createElement('text', 1, {
+    id: 'source-layer',
+    name: 'Caption',
+    x: CANVAS_WIDTH - 200,
+    y: CANVAS_HEIGHT - 100,
+    width: 200,
+    height: 100,
+    text: 'Original',
+  });
+  const copy = createElementCopy(source, 'copied-layer');
+
+  assert.equal(copy.id, 'copied-layer');
+  assert.equal(copy.name, 'Caption copy');
+  assert.equal(copy.x, CANVAS_WIDTH - copy.width);
+  assert.equal(copy.y, CANVAS_HEIGHT - copy.height);
+  copy.text = 'Changed';
+  copy.motion.moveX = 999;
+  assert.equal(source.text, 'Original');
+  assert.notEqual(source.motion.moveX, 999);
 });
 
 void test('canvas fit sizing respects both workspace axes and safe fallbacks', () => {

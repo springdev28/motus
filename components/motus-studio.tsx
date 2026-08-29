@@ -84,6 +84,7 @@ import {
   createBlankProject,
   createDefaultProject,
   createElement,
+  createElementCopy,
   createProjectHistoryEntry,
   createProjectBackupFileName,
   createPublicationRevision,
@@ -137,6 +138,7 @@ const LEGACY_STORAGE_KEY = 'motus.project.v2';
 const DRAFT_SLOT_A_KEY = 'motus.project.slot.a.v4';
 const DRAFT_SLOT_B_KEY = 'motus.project.slot.b.v4';
 const DRAFT_POINTER_KEY = 'motus.project.active-slot.v4';
+const MOTUS_LAYER_CLIPBOARD_TYPE = 'application/x-motus-layer';
 
 type DeletionUndo = {
   message: string;
@@ -302,7 +304,11 @@ function SceneView({
           // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
           <div
             aria-describedby={interactive ? 'canvas-instructions' : undefined}
-            aria-keyshortcuts={interactive ? 'ArrowLeft ArrowRight ArrowUp ArrowDown' : undefined}
+            aria-keyshortcuts={
+              interactive
+                ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Meta+C Control+C Meta+V Control+V'
+                : undefined
+            }
             aria-label={describeElementForAccessibility(element)}
             aria-pressed={interactive ? selected : undefined}
             className={`canvas-element element-${element.type} ${
@@ -492,6 +498,7 @@ export function MotusStudio() {
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
+  const copiedElement = useRef<MotusElement | null>(null);
 
   const resetEditorHistory = useCallback(() => {
     const reset = resetProjectTimeline({
@@ -1082,18 +1089,12 @@ export function MotusStudio() {
     reader.readAsText(file);
   };
 
-  const duplicateElement = (elementId: string) => {
+  const addElementCopy = (source: MotusElement, successMessage: string) => {
     if (!canAddElementToScene(activeScene)) {
       setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
-      return;
+      return false;
     }
-    const source = findElement(project, activeScene.id, elementId);
-    if (!source) return;
-    const copy = structuredClone(source);
-    copy.id = uniqueId(source.type);
-    copy.name = `${source.name} copy`;
-    copy.x = Math.min(CANVAS_WIDTH - copy.width, copy.x + 28);
-    copy.y = Math.min(CANVAS_HEIGHT - copy.height, copy.y + 28);
+    const copy = createElementCopy(source, uniqueId(source.type));
     const addCopyToDraft = (draft: MotusProject) => {
       draft.scenes
         .find((scene) => scene.id === activeScene.id)
@@ -1103,11 +1104,17 @@ export function MotusStudio() {
       addCopyToDraft,
       'Layer copy cannot fit in device storage',
     )) {
-      return;
+      return false;
     }
     setSelectedElementId(copy.id);
-    setNotice('Layer duplicated');
+    setNotice(successMessage);
     focusEditorTarget(activeScene.id, copy.id);
+    return true;
+  };
+
+  const duplicateElement = (elementId: string) => {
+    const source = findElement(project, activeScene.id, elementId);
+    if (source) addElementCopy(source, 'Layer duplicated');
   };
 
   const addScene = () => {
@@ -1570,35 +1577,85 @@ export function MotusStudio() {
       }
     };
 
+    const onCopy = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || !selectedElement || !event.clipboardData) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      const insideTextControl = target?.closest(
+        'input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"]',
+      );
+      const modalOpen =
+        readerOpen ||
+        publishOpen ||
+        projectDetailsOpen ||
+        Boolean(pendingProjectImport) ||
+        Boolean(pendingRevisionRemoval) ||
+        newWorkOpen ||
+        conflictOpen;
+      const textSelection = window.getSelection();
+      if (
+        insideTextControl ||
+        modalOpen ||
+        (textSelection && !textSelection.isCollapsed)
+      ) {
+        return;
+      }
+
+      copiedElement.current = structuredClone(selectedElement);
+      event.clipboardData.setData(MOTUS_LAYER_CLIPBOARD_TYPE, selectedElement.id);
+      event.preventDefault();
+      setNotice(`${selectedElement.name} copied`);
+    };
+
     const onPaste = (event: ClipboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target instanceof Element ? event.target : null;
       const insideTextControl = target?.closest(
         'input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
-      const modalOpen = readerOpen || publishOpen || projectDetailsOpen || Boolean(pendingProjectImport) || Boolean(pendingRevisionRemoval) || newWorkOpen || conflictOpen;
+      const modalOpen =
+        readerOpen ||
+        publishOpen ||
+        projectDetailsOpen ||
+        Boolean(pendingProjectImport) ||
+        Boolean(pendingRevisionRemoval) ||
+        newWorkOpen ||
+        conflictOpen;
       const clipboard = event.clipboardData;
       if (insideTextControl || modalOpen || !clipboard) return;
 
-      let image = findSupportedImageFile(clipboard.files);
-      if (!image) {
-        const itemFiles = Array.from(clipboard.items)
-          .map((item) => (item.kind === 'file' ? item.getAsFile() : null))
-          .filter((file): file is File => file !== null);
-        image = findSupportedImageFile(itemFiles);
+      const files = Array.from(clipboard.files);
+      if (files.length === 0) {
+        files.push(
+          ...Array.from(clipboard.items)
+            .map((item) => (item.kind === 'file' ? item.getAsFile() : null))
+            .filter((file): file is File => file !== null),
+        );
       }
-      if (!image) return;
+      const image = findSupportedImageFile(files);
+      if (image) {
+        event.preventDefault();
+        void uploadImage(image);
+        return;
+      }
+      if (files.length > 0) return;
 
+      const source = copiedElement.current;
+      const marker = clipboard.getData(MOTUS_LAYER_CLIPBOARD_TYPE);
+      if (!source || marker !== source.id) return;
       event.preventDefault();
-      void uploadImage(image);
+      addElementCopy(source, 'Layer pasted');
     };
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('copy', onCopy);
     window.addEventListener('paste', onPaste);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('copy', onCopy);
       window.removeEventListener('paste', onPaste);
     };
   });
@@ -1893,7 +1950,7 @@ export function MotusStudio() {
 
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
-            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag, paste, or use arrow keys · Shift moves 10 px</span><kbd>⌘/Ctrl+S save</kbd><kbd>⌘/Ctrl+D duplicate</kbd><kbd>⌫ delete</kbd></div>
+            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag, paste, or use arrow keys · Shift moves 10 px</span><kbd>⌘/Ctrl+S save</kbd><kbd>⌘/Ctrl+C/V layer</kbd><kbd>⌫ delete</kbd></div>
             <output aria-live="polite" className="workspace-notice">{displayedNotice}</output>
             <fieldset className="zoom-control" aria-label="Canvas zoom">
               <button aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 10))} type="button">−</button>

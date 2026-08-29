@@ -595,6 +595,21 @@ export function createElement(
   });
 }
 
+export function createElementCopy(
+  source: MotusElement,
+  id: string,
+  offset = 28,
+): MotusElement {
+  const copy = structuredClone(source);
+  return constrainElementToCanvas({
+    ...copy,
+    id,
+    name: `${source.name} copy`,
+    x: source.x + offset,
+    y: source.y + offset,
+  });
+}
+
 const scene = (
   id: string,
   name: string,
