@@ -169,6 +169,7 @@
   display: grid;
   min-height: calc(100vh - 60px);
   grid-template-columns: 66px 220px minmax(440px, 1fr) 292px;
+  grid-template-areas: 'tools layers workspace inspector';
 }
 
 .tool-rail,
@@ -176,6 +177,7 @@
 .inspector-panel { background: #f8f5ef; }
 
 .tool-rail {
+  grid-area: tools;
   position: relative;
   z-index: 5;
   display: flex;
@@ -205,6 +207,7 @@
 .tool-button[data-active] { box-shadow: inset 3px 0 #7058ec; }
 
 .layers-panel {
+  grid-area: layers;
   position: relative;
   z-index: 4;
   min-width: 0;
@@ -257,6 +260,7 @@
 
 .workspace {
   display: grid;
+  grid-area: workspace;
   min-width: 0;
   grid-template-rows: 42px minmax(0, 1fr) 98px;
   background:
@@ -335,7 +339,7 @@
 .scene-action { height: 72px !important; flex: 0 0 auto; border-style: dashed !important; }
 .scene-icon-action { flex: 0 0 auto; }
 
-.inspector-panel { display: grid; min-width: 0; grid-template-rows: 43px minmax(0, 1fr); overflow: hidden; border-left: 1px solid #d4cec6; }
+.inspector-panel { display: grid; min-width: 0; grid-area: inspector; grid-template-rows: 43px minmax(0, 1fr); overflow: hidden; border-left: 1px solid #d4cec6; }
 .inspector-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #d9d3cc; }
 .inspector-tabs button { position: relative; border: 0; background: transparent; color: #8a838e; cursor: pointer; font-size: 11px; font-weight: 700; }
 .inspector-tabs button:focus-visible { z-index: 1; outline: 2px solid #654ee0; outline-offset: -3px; }
@@ -446,19 +450,41 @@
 @media (max-width: 900px) {
   .studio-topbar { grid-template-columns: 160px 1fr; }
   .project-title-input { display: none; }
-  .studio-grid { grid-template-columns: 58px minmax(380px, 1fr) 250px; }
+  .studio-grid { grid-template-columns: 58px minmax(380px, 1fr) 250px; grid-template-areas: 'tools workspace inspector'; }
   .layers-panel { display: none; }
   .brand-product { display: none; }
 }
 
 @media (max-width: 690px) {
-  .topbar-actions button:nth-of-type(1), .topbar-actions button:nth-of-type(2), .topbar-actions button:last-child { display: none; }
-  .studio-grid { grid-template-columns: 54px minmax(0, 1fr); }
-  .inspector-panel { display: none; }
+  .studio-shell { overflow: auto; }
+  .studio-topbar { grid-template-columns: auto minmax(0, 1fr); gap: 6px; padding: 0 8px; }
+  .brand-lockup { gap: 6px; }
+  .brand-mark { width: 22px; height: 22px; }
+  .brand-name { font-size: 12px; letter-spacing: .12em; }
+  .topbar-actions { min-width: 0; gap: 3px; }
+  .topbar-actions .topbar-mobile-hide, .topbar-actions .save-state { display: none; }
+  .topbar-reader span, .topbar-publish span { display: none; }
+  .studio-grid {
+    min-height: 0;
+    grid-template-columns: 54px minmax(0, 1fr);
+    grid-template-areas:
+      'tools workspace'
+      'inspector inspector'
+      'layers layers';
+  }
+  .workspace { min-height: calc(100svh - 60px); }
+  .layers-panel { display: block; overflow: visible; border-top: 1px solid #d4cec6; border-right: 0; }
+  .inspector-panel { display: grid; grid-template-rows: 43px auto; overflow: visible; border-top: 1px solid #d4cec6; border-left: 0; }
+  .inspector-content { overflow: visible; }
   .tool-button span { display: none; }
-  .tool-button { min-height: 43px; }
+  .tool-button { min-height: 48px; }
   .canvas-stage { padding: 12px; }
   .artboard-frame { min-width: 270px; }
+  .scene-palette button { width: 36px; height: 36px; }
+  .layer-select { min-height: 44px; }
+  .layer-actions { grid-template-columns: repeat(2, 36px); gap: 3px; }
+  .layer-actions button { width: 36px; height: 36px; }
+  .layer-actions svg { width: 15px; }
   .publish-field-row { grid-template-columns: 1fr; }
   .save-recovery { grid-template-columns: 20px minmax(0, 1fr); }
   .save-recovery button { grid-column: span 1; }

@@ -1294,15 +1294,15 @@ export function MotusStudio() {
 
         <div className="topbar-actions">
           <button className="save-state" onClick={saveCurrentProject} title="Save draft now" type="button"><Cloud />{displayedNotice}</button>
-          <Button aria-label="Start a new work" onClick={() => externalDraftChange ? setConflictOpen(true) : setNewWorkOpen(true)} size="icon" variant="outline"><FilePlus2 /></Button>
+          <Button aria-label="Start a new work" className="topbar-mobile-hide" onClick={() => externalDraftChange ? setConflictOpen(true) : setNewWorkOpen(true)} size="icon" variant="outline"><FilePlus2 /></Button>
           <Button aria-label="Undo" disabled={!canUndo} onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
           <Button aria-label="Redo" disabled={!canRedo} onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>
-          <Button onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
+          <Button className="topbar-mobile-hide" onClick={() => setPreviewKey((key) => key + 1)} variant="secondary">
             <Play data-icon="inline-start" fill="currentColor" />Preview
           </Button>
-          <Button onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" />Draft reader</Button>
-          <Button onClick={openPublish}><Send data-icon="inline-start" />Publish</Button>
-          <Button aria-label="Import Motus project" onClick={() => externalDraftChange ? setConflictOpen(true) : projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
+          <Button aria-label="Open draft reader" className="topbar-reader" onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" /><span>Draft reader</span></Button>
+          <Button aria-label="Publish work" className="topbar-publish" onClick={openPublish}><Send data-icon="inline-start" /><span>Publish</span></Button>
+          <Button aria-label="Import Motus project" className="topbar-mobile-hide" onClick={() => externalDraftChange ? setConflictOpen(true) : projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
           <Button aria-label="Export Motus project" onClick={exportProject} size="icon" variant="outline"><Download /></Button>
         </div>
       </header>
