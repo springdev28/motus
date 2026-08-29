@@ -472,6 +472,8 @@
   .studio-shell { overflow: auto; }
   .studio-topbar { grid-template-columns: 160px 1fr; }
   .project-title-input { display: none; }
+  .topbar-actions .topbar-mobile-hide, .topbar-actions .save-state { display: none; }
+  .topbar-actions .topbar-mobile-more { display: inline-flex !important; }
   .studio-grid {
     min-height: 0;
     grid-template-columns: 58px minmax(380px, 1fr) 250px;
@@ -497,8 +499,6 @@
   .brand-mark { width: 22px; height: 22px; }
   .brand-name { font-size: 12px; letter-spacing: .12em; }
   .topbar-actions { min-width: 0; gap: 3px; }
-  .topbar-actions .topbar-mobile-hide, .topbar-actions .save-state { display: none; }
-  .topbar-actions .topbar-mobile-more { display: inline-flex !important; }
   .topbar-reader span, .topbar-publish span { display: none; }
   .studio-grid {
     min-height: 0;

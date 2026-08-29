@@ -32,6 +32,7 @@ import {
   MessageSquareText,
   MousePointer2,
   Move,
+  Pencil,
   Play,
   Plus,
   Redo2,
@@ -430,6 +431,7 @@ export function MotusStudio() {
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
   const [publishTagsInput, setPublishTagsInput] = useState(
     'science fiction, mystery',
   );
@@ -1370,7 +1372,7 @@ export function MotusStudio() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      const modalOpen = readerOpen || publishOpen || newWorkOpen || conflictOpen;
+      const modalOpen = readerOpen || publishOpen || projectDetailsOpen || newWorkOpen || conflictOpen;
       const insideNativeControl = target?.closest(
         'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
@@ -1482,6 +1484,16 @@ export function MotusStudio() {
     setPublishTagsInput(project.tags.join(', '));
     setPublishOpen(true);
   };
+  const openProjectDetails = () => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    if (externalDraftChange) {
+      setConflictOpen(true);
+      return;
+    }
+    setPublishTagsInput(project.tags.join(', '));
+    setProjectDetailsOpen(true);
+  };
   const displayedNotice =
     draftSaveStatus === 'conflict'
       ? 'Autosave paused · draft changed in another tab'
@@ -1559,6 +1571,10 @@ export function MotusStudio() {
               <Ellipsis />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-48" sideOffset={8}>
+              <DropdownMenuItem className="min-h-10 px-2.5" onClick={openProjectDetails}>
+                <Pencil />Project details
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem className="min-h-10 px-2.5" onClick={saveCurrentProject}>
                 <Cloud />Save now
               </DropdownMenuItem>
@@ -1891,6 +1907,68 @@ export function MotusStudio() {
           <div className="new-work-actions">
             <Button onClick={() => setNewWorkOpen(false)} variant="outline">Keep editing</Button>
             <Button onClick={startNewWork}><FilePlus2 />Back up &amp; start</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog onOpenChange={setProjectDetailsOpen} open={projectDetailsOpen}>
+        <DialogContent className="publish-dialog">
+          <DialogHeader>
+            <DialogTitle>Project details</DialogTitle>
+            <DialogDescription>
+              Update the title and reader-facing context without publishing a new revision.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="publish-grid">
+            <label className="publish-field" htmlFor="project-details-title">
+              <span>Title</span>
+              <Input
+                {...textHistoryProps}
+                id="project-details-title"
+                maxLength={MAX_PROJECT_TITLE_LENGTH}
+                onChange={(event) =>
+                  commitProject((draft) => {
+                    draft.title = event.target.value;
+                  }, 'project:title')
+                }
+                placeholder="Name this work"
+                value={project.title}
+              />
+            </label>
+            <label className="publish-field" htmlFor="project-details-description">
+              <span>Description</span>
+              <Textarea
+                {...textHistoryProps}
+                id="project-details-description"
+                onChange={(event) => commitProject((draft) => { draft.description = event.target.value; }, 'project:description')}
+                placeholder="What should readers know before they begin?"
+                value={project.description}
+              />
+            </label>
+            <label className="publish-field" htmlFor="project-details-tags">
+              <span>Tags</span>
+              <Input
+                id="project-details-tags"
+                maxLength={400}
+                onBlur={(event) => {
+                  endHistoryTransaction();
+                  setPublishTagsInput(parseProjectTags(event.currentTarget.value).join(', '));
+                }}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setPublishTagsInput(value);
+                  commitProject((draft) => {
+                    draft.tags = parseProjectTags(value);
+                  }, 'project:tags');
+                }}
+                placeholder="mystery, science fiction"
+                value={publishTagsInput}
+              />
+              <span className="publish-field-hint">Separate tags with commas.</span>
+            </label>
+          </div>
+          <div className="new-work-actions">
+            <Button onClick={() => setProjectDetailsOpen(false)}>Done</Button>
           </div>
         </DialogContent>
       </Dialog>
