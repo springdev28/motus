@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
@@ -250,6 +251,7 @@ function SceneView({
             className={`canvas-element element-${element.type} ${
               playingKey ? 'is-playing' : ''
             }`}
+            data-interactive={interactive || undefined}
             data-locked={element.locked || undefined}
             data-selected={selected || undefined}
             key={`${element.id}-${playingKey}`}
@@ -397,6 +399,21 @@ export function MotusStudio() {
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const deletionUndoTimer = useRef<number | null>(null);
+
+  const handleInspectorTabKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    let nextTab: 'design' | 'motion' | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'Home') nextTab = 'design';
+    if (event.key === 'ArrowRight' || event.key === 'End') nextTab = 'motion';
+    if (!nextTab) return;
+
+    event.preventDefault();
+    setInspectorTab(nextTab);
+    requestAnimationFrame(() => {
+      document.getElementById(`inspector-tab-${nextTab}`)?.focus();
+    });
+  };
 
   const clearDeletionUndo = useCallback(() => {
     if (deletionUndoTimer.current !== null) {
@@ -1418,12 +1435,39 @@ export function MotusStudio() {
         </section>
 
         <aside className="inspector-panel" aria-label="Selected element settings">
-          <div className="inspector-tabs" role="tablist">
-            <button aria-selected={inspectorTab === 'design'} onClick={() => setInspectorTab('design')} role="tab" type="button">Design</button>
-            <button aria-selected={inspectorTab === 'motion'} onClick={() => setInspectorTab('motion')} role="tab" type="button">Motion</button>
+          <div aria-label="Element property sections" className="inspector-tabs" role="tablist">
+            <button
+              aria-controls="inspector-panel"
+              aria-selected={inspectorTab === 'design'}
+              id="inspector-tab-design"
+              onClick={() => setInspectorTab('design')}
+              onKeyDown={handleInspectorTabKeyDown}
+              role="tab"
+              tabIndex={inspectorTab === 'design' ? 0 : -1}
+              type="button"
+            >
+              Design
+            </button>
+            <button
+              aria-controls="inspector-panel"
+              aria-selected={inspectorTab === 'motion'}
+              id="inspector-tab-motion"
+              onClick={() => setInspectorTab('motion')}
+              onKeyDown={handleInspectorTabKeyDown}
+              role="tab"
+              tabIndex={inspectorTab === 'motion' ? 0 : -1}
+              type="button"
+            >
+              Motion
+            </button>
           </div>
 
-          <div className="inspector-content">
+          <div
+            aria-labelledby={`inspector-tab-${inspectorTab}`}
+            className="inspector-content"
+            id="inspector-panel"
+            role="tabpanel"
+          >
             {!selectedElement ? (
               <div className="empty-inspector"><MousePointer2 /><strong>Select an element</strong><p>Click a layer or an item on the canvas to edit it.</p></div>
             ) : (
