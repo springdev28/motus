@@ -25,6 +25,7 @@ import {
   MOTION_BLOCK_KINDS,
   MOTION_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
+  alignSelectedElements,
   canAddElementToScene,
   canAddSceneToProject,
   compileElementMotion,
@@ -40,6 +41,7 @@ import {
   createPublicationRevision,
   describeElementForAccessibility,
   detectImageFormat,
+  distributeSelectedElements,
   findSupportedImageFile,
   getPublicationReadiness,
   getDraftSaveStatus,
@@ -76,6 +78,7 @@ import {
   shouldEndContinuousHistoryOnKey,
   trimProjectHistory,
   transformElementByPointer,
+  translateSelectedElements,
   type CompiledMotionKeyframe,
   type ProjectHistoryState,
   validateImageAsset,
@@ -385,6 +388,331 @@ void test('pointer transforms use a fixed origin and stay inside the canvas', ()
   assert.equal(resized.width, CANVAS_WIDTH - source.x);
   assert.equal(resized.y, source.y);
   assert.equal(resized.height, MIN_ELEMENT_HEIGHT);
+});
+
+void test('selected elements translate with one shared canvas-clamped delta', () => {
+  const nearTopLeft = createElement('shape', 1, {
+    id: 'near-top-left',
+    x: 10,
+    y: 20,
+    width: 100,
+    height: 80,
+  });
+  const nearBottomRight = createElement('text', 2, {
+    id: 'near-bottom-right',
+    x: 850,
+    y: 1_200,
+    width: 200,
+    height: 200,
+  });
+  const locked = createElement('speech', 3, {
+    id: 'locked',
+    x: 5,
+    y: 5,
+    width: 160,
+    height: 120,
+    locked: true,
+  });
+  const unselected = createElement('shape', 4, {
+    id: 'unselected',
+    x: 300,
+    y: 500,
+    width: 140,
+    height: 140,
+  });
+  const elements = [nearBottomRight, locked, nearTopLeft, unselected];
+  const original = structuredClone(elements);
+  const moved = translateSelectedElements(
+    elements,
+    ['near-top-left', 'near-bottom-right', 'locked', 'missing'],
+    500,
+    500,
+  );
+
+  assert.deepEqual(
+    moved.map((element) => element.id),
+    elements.map((element) => element.id),
+  );
+  assert.deepEqual(
+    moved.map(({ id, x, y }) => ({ id, x, y })),
+    [
+      { id: 'near-bottom-right', x: 880, y: 1_240 },
+      { id: 'locked', x: 5, y: 5 },
+      { id: 'near-top-left', x: 40, y: 60 },
+      { id: 'unselected', x: 300, y: 500 },
+    ],
+  );
+  assert.equal(moved[0].x - moved[2].x, nearBottomRight.x - nearTopLeft.x);
+  assert.equal(moved[0].y - moved[2].y, nearBottomRight.y - nearTopLeft.y);
+  assert.strictEqual(moved[1], locked);
+  assert.strictEqual(moved[3], unselected);
+  assert.deepEqual(elements, original);
+
+  const movedToOrigin = translateSelectedElements(
+    elements,
+    ['near-top-left', 'near-bottom-right'],
+    -10_000,
+    -10_000,
+  );
+  assert.deepEqual(
+    movedToOrigin.map(({ id, x, y }) => ({ id, x, y })),
+    [
+      { id: 'near-bottom-right', x: 840, y: 1_180 },
+      { id: 'locked', x: 5, y: 5 },
+      { id: 'near-top-left', x: 0, y: 0 },
+      { id: 'unselected', x: 300, y: 500 },
+    ],
+  );
+});
+
+void test('selected elements align to editable cohort bounds in every direction', () => {
+  const first = createElement('shape', 1, {
+    id: 'first',
+    x: 100,
+    y: 100,
+    width: 100,
+    height: 80,
+  });
+  const second = createElement('text', 2, {
+    id: 'second',
+    x: 400,
+    y: 300,
+    width: 200,
+    height: 120,
+  });
+  const locked = createElement('speech', 3, {
+    id: 'locked',
+    x: 10,
+    y: 20,
+    width: 400,
+    height: 300,
+    locked: true,
+  });
+  const unselected = createElement('shape', 4, {
+    id: 'unselected',
+    x: 700,
+    y: 700,
+    width: 100,
+    height: 100,
+  });
+  const elements = [second, locked, unselected, first];
+  const original = structuredClone(elements);
+  const selectedIds = ['first', 'second', 'locked'];
+  const expected = {
+    left: [
+      { x: 100, y: 300 },
+      { x: 100, y: 100 },
+    ],
+    center: [
+      { x: 250, y: 300 },
+      { x: 300, y: 100 },
+    ],
+    right: [
+      { x: 400, y: 300 },
+      { x: 500, y: 100 },
+    ],
+    top: [
+      { x: 400, y: 100 },
+      { x: 100, y: 100 },
+    ],
+    middle: [
+      { x: 400, y: 200 },
+      { x: 100, y: 220 },
+    ],
+    bottom: [
+      { x: 400, y: 300 },
+      { x: 100, y: 340 },
+    ],
+  } as const;
+
+  for (const alignment of [
+    'left',
+    'center',
+    'right',
+    'top',
+    'middle',
+    'bottom',
+  ] as const) {
+    const aligned = alignSelectedElements(elements, selectedIds, alignment);
+    assert.deepEqual(
+      [aligned[0], aligned[3]].map(({ x, y }) => ({ x, y })),
+      expected[alignment],
+    );
+    assert.deepEqual(
+      aligned.map((element) => element.id),
+      elements.map((element) => element.id),
+    );
+    assert.strictEqual(aligned[1], locked);
+    assert.strictEqual(aligned[2], unselected);
+  }
+  assert.deepEqual(elements, original);
+});
+
+void test('selected elements distribute with fixed spatial anchors and stable z-order', () => {
+  const horizontalFirst = createElement('shape', 1, {
+    id: 'horizontal-first',
+    x: 100,
+    y: 100,
+    width: 100,
+    height: 80,
+  });
+  const horizontalMiddleOne = createElement('shape', 2, {
+    id: 'horizontal-middle-one',
+    x: 320,
+    y: 100,
+    width: 50,
+    height: 80,
+  });
+  const horizontalMiddleTwo = createElement('shape', 3, {
+    id: 'horizontal-middle-two',
+    x: 600,
+    y: 100,
+    width: 100,
+    height: 80,
+  });
+  const horizontalLast = createElement('shape', 4, {
+    id: 'horizontal-last',
+    x: 960,
+    y: 100,
+    width: 100,
+    height: 80,
+  });
+  const locked = createElement('shape', 5, {
+    id: 'locked',
+    x: 0,
+    y: 0,
+    width: 60,
+    height: 60,
+    locked: true,
+  });
+  const elements = [
+    horizontalMiddleTwo,
+    horizontalLast,
+    locked,
+    horizontalFirst,
+    horizontalMiddleOne,
+  ];
+  const original = structuredClone(elements);
+  const selectedIds = elements.map((element) => element.id);
+  const distributed = distributeSelectedElements(
+    elements,
+    selectedIds,
+    'horizontal',
+  );
+
+  assert.deepEqual(
+    distributed.map(({ id, x }) => ({ id, x })),
+    [
+      { id: 'horizontal-middle-two', x: 660 },
+      { id: 'horizontal-last', x: 960 },
+      { id: 'locked', x: 0 },
+      { id: 'horizontal-first', x: 100 },
+      { id: 'horizontal-middle-one', x: 400 },
+    ],
+  );
+  assert.strictEqual(distributed[1], horizontalLast);
+  assert.strictEqual(distributed[2], locked);
+  assert.strictEqual(distributed[3], horizontalFirst);
+  assert.deepEqual(elements, original);
+
+  const verticalFirst = createElement('shape', 6, {
+    id: 'vertical-first',
+    x: 100,
+    y: 100,
+    width: 80,
+    height: 100,
+  });
+  const verticalMiddle = createElement('shape', 7, {
+    id: 'vertical-middle',
+    x: 100,
+    y: 500,
+    width: 80,
+    height: 200,
+  });
+  const verticalLast = createElement('shape', 8, {
+    id: 'vertical-last',
+    x: 100,
+    y: 1_100,
+    width: 80,
+    height: 100,
+  });
+  const vertical = [verticalMiddle, verticalLast, verticalFirst];
+  const verticallyDistributed = distributeSelectedElements(
+    vertical,
+    vertical.map((element) => element.id),
+    'vertical',
+  );
+
+  assert.deepEqual(
+    verticallyDistributed.map(({ id, y }) => ({ id, y })),
+    [
+      { id: 'vertical-middle', y: 550 },
+      { id: 'vertical-last', y: 1_100 },
+      { id: 'vertical-first', y: 100 },
+    ],
+  );
+  assert.strictEqual(verticallyDistributed[1], verticalLast);
+  assert.strictEqual(verticallyDistributed[2], verticalFirst);
+});
+
+void test('selection layout helpers leave undersized editable cohorts unchanged', () => {
+  const unlocked = createElement('shape', 1, { id: 'unlocked' });
+  const locked = createElement('shape', 2, { id: 'locked', locked: true });
+  const elements = [locked, unlocked];
+
+  const translated = translateSelectedElements(elements, ['locked'], 80, 90);
+  const aligned = alignSelectedElements(
+    elements,
+    ['locked', 'unlocked'],
+    'left',
+  );
+  const distributed = distributeSelectedElements(
+    elements,
+    ['locked', 'unlocked'],
+    'horizontal',
+  );
+
+  assert.deepEqual(translated, elements);
+  assert.deepEqual(aligned, elements);
+  assert.deepEqual(distributed, elements);
+  assert.notStrictEqual(translated, elements);
+  assert.notStrictEqual(aligned, elements);
+  assert.notStrictEqual(distributed, elements);
+  assert.strictEqual(translated[0], locked);
+  assert.strictEqual(aligned[1], unlocked);
+});
+
+void test('distribution refuses an unsafe proposal instead of clamping members apart', () => {
+  const first = createElement('shape', 1, {
+    id: 'first',
+    x: 0,
+    width: 60,
+  });
+  const wideOne = createElement('shape', 2, {
+    id: 'wide-one',
+    x: 40,
+    width: 1_000,
+  });
+  const wideTwo = createElement('shape', 3, {
+    id: 'wide-two',
+    x: 60,
+    width: 1_000,
+  });
+  const last = createElement('shape', 4, {
+    id: 'last',
+    x: 1_020,
+    width: 60,
+  });
+  const elements = [wideTwo, last, first, wideOne];
+  const distributed = distributeSelectedElements(
+    elements,
+    elements.map((element) => element.id),
+    'horizontal',
+  );
+
+  assert.deepEqual(distributed, elements);
+  assert.notStrictEqual(distributed, elements);
+  assert.ok(distributed.every((element, index) => element === elements[index]));
 });
 
 void test('directional resize handles anchor the opposite sides', () => {

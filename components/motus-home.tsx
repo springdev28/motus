@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 
 import { readNewestMotusDraft } from '@/lib/motus-draft-storage';
+import { MotusLogo } from '@/components/motus-logo';
 import type { MotusProject } from '@/lib/motus-model';
 
 const discoverWorks = [
@@ -105,10 +106,7 @@ export function MotusHome() {
     <div className="home-shell">
       <header className="home-header">
         <a aria-label="Motus home" className="home-brand" href="/">
-          <span aria-hidden="true" className="home-brand-mark">
-            <span />
-            <span />
-          </span>
+          <MotusLogo className="home-brand-mark" />
           <span>MOTUS</span>
         </a>
         <nav aria-label="Primary navigation" className="home-nav">

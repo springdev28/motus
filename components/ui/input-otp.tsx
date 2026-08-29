@@ -75,6 +75,9 @@ function InputOTPSeparator({ ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="input-otp-separator"
       className="[&_svg:not([class*='size-'])]:size-4 flex items-center"
+      // The inline separator participates in the OTP flex layout; an hr would
+      // introduce block styling and change this primitive's element API.
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
       role="separator"
       {...props}
     >

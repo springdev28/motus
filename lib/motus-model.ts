@@ -2956,6 +2956,191 @@ export function transformElementByPointer(
   return { ...element, ...resized };
 }
 
+export type ElementAlignment =
+  | 'left'
+  | 'center'
+  | 'right'
+  | 'top'
+  | 'middle'
+  | 'bottom';
+
+export type ElementDistributionAxis = 'horizontal' | 'vertical';
+
+type IndexedElement = {
+  element: MotusElement;
+  index: number;
+};
+
+function getEditableSelectedElements(
+  elements: readonly MotusElement[],
+  selectedElementIds: Iterable<string>,
+): IndexedElement[] {
+  const selectedIds = new Set(selectedElementIds);
+  return elements.flatMap((element, index) =>
+    selectedIds.has(element.id) && !element.locked ? [{ element, index }] : [],
+  );
+}
+
+/**
+ * Moves a selection with one shared bounded delta so members cannot shear apart
+ * when the cohort reaches a canvas edge.
+ */
+export function translateSelectedElements(
+  elements: readonly MotusElement[],
+  selectedElementIds: Iterable<string>,
+  deltaX: number,
+  deltaY: number,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): MotusElement[] {
+  const selected = getEditableSelectedElements(elements, selectedElementIds);
+  if (selected.length === 0) return [...elements];
+
+  const safeCanvasWidth = Math.max(0, finite(canvasWidth, CANVAS_WIDTH));
+  const safeCanvasHeight = Math.max(0, finite(canvasHeight, CANVAS_HEIGHT));
+  const minimumX = Math.min(...selected.map(({ element }) => element.x));
+  const minimumY = Math.min(...selected.map(({ element }) => element.y));
+  const maximumX = Math.max(
+    ...selected.map(({ element }) => element.x + element.width),
+  );
+  const maximumY = Math.max(
+    ...selected.map(({ element }) => element.y + element.height),
+  );
+  const minimumDeltaX = -minimumX;
+  const maximumDeltaX = safeCanvasWidth - maximumX;
+  const minimumDeltaY = -minimumY;
+  const maximumDeltaY = safeCanvasHeight - maximumY;
+  const boundedDeltaX =
+    minimumDeltaX <= maximumDeltaX
+      ? clamp(Math.round(finite(deltaX, 0)), minimumDeltaX, maximumDeltaX)
+      : 0;
+  const boundedDeltaY =
+    minimumDeltaY <= maximumDeltaY
+      ? clamp(Math.round(finite(deltaY, 0)), minimumDeltaY, maximumDeltaY)
+      : 0;
+  const selectedIndexes = new Set(selected.map(({ index }) => index));
+
+  return elements.map((element, index) =>
+    selectedIndexes.has(index) && (boundedDeltaX !== 0 || boundedDeltaY !== 0)
+      ? {
+          ...element,
+          x: element.x + boundedDeltaX,
+          y: element.y + boundedDeltaY,
+        }
+      : element,
+  );
+}
+
+/** Aligns editable selected elements to their collective authored bounds. */
+export function alignSelectedElements(
+  elements: readonly MotusElement[],
+  selectedElementIds: Iterable<string>,
+  alignment: ElementAlignment,
+): MotusElement[] {
+  const selected = getEditableSelectedElements(elements, selectedElementIds);
+  if (selected.length < 2) return [...elements];
+
+  const left = Math.min(...selected.map(({ element }) => element.x));
+  const top = Math.min(...selected.map(({ element }) => element.y));
+  const right = Math.max(
+    ...selected.map(({ element }) => element.x + element.width),
+  );
+  const bottom = Math.max(
+    ...selected.map(({ element }) => element.y + element.height),
+  );
+  const horizontalCenter = (left + right) / 2;
+  const verticalCenter = (top + bottom) / 2;
+  const updates = new Map<number, { x: number; y: number }>();
+
+  for (const { element, index } of selected) {
+    let x = element.x;
+    let y = element.y;
+    if (alignment === 'left') x = left;
+    else if (alignment === 'center') x = horizontalCenter - element.width / 2;
+    else if (alignment === 'right') x = right - element.width;
+    else if (alignment === 'top') y = top;
+    else if (alignment === 'middle') y = verticalCenter - element.height / 2;
+    else if (alignment === 'bottom') y = bottom - element.height;
+    updates.set(index, { x, y });
+  }
+
+  return elements.map((element, index) => {
+    const update = updates.get(index);
+    if (!update || (update.x === element.x && update.y === element.y)) {
+      return element;
+    }
+    return { ...element, ...update };
+  });
+}
+
+/**
+ * Spaces editable selected elements evenly between their first and last
+ * spatial anchors while keeping scene stacking order unchanged.
+ */
+export function distributeSelectedElements(
+  elements: readonly MotusElement[],
+  selectedElementIds: Iterable<string>,
+  axis: ElementDistributionAxis,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): MotusElement[] {
+  const selected = getEditableSelectedElements(elements, selectedElementIds);
+  if (selected.length < 3) return [...elements];
+
+  const ordered = [...selected].sort((left, right) => {
+    const positionDifference =
+      axis === 'horizontal'
+        ? left.element.x - right.element.x
+        : left.element.y - right.element.y;
+    return positionDifference || left.index - right.index;
+  });
+  const first = ordered[0].element;
+  const last = ordered.at(-1)!.element;
+  const middleSize = ordered
+    .slice(1, -1)
+    .reduce(
+      (total, { element }) =>
+        total + (axis === 'horizontal' ? element.width : element.height),
+      0,
+    );
+  const firstEnd =
+    axis === 'horizontal' ? first.x + first.width : first.y + first.height;
+  const lastStart = axis === 'horizontal' ? last.x : last.y;
+  const gap = (lastStart - firstEnd - middleSize) / (ordered.length - 1);
+  const updates = new Map<number, number>();
+  let cursor = firstEnd + gap;
+
+  for (const { element, index } of ordered.slice(1, -1)) {
+    updates.set(index, cursor);
+    cursor += (axis === 'horizontal' ? element.width : element.height) + gap;
+  }
+
+  const axisLimit = Math.max(
+    0,
+    finite(
+      axis === 'horizontal' ? canvasWidth : canvasHeight,
+      axis === 'horizontal' ? CANVAS_WIDTH : CANVAS_HEIGHT,
+    ),
+  );
+  const proposalFitsCanvas = ordered
+    .slice(1, -1)
+    .every(({ element, index }) => {
+      const position = updates.get(index)!;
+      const size = axis === 'horizontal' ? element.width : element.height;
+      return position >= 0 && position + size <= axisLimit;
+    });
+  if (!proposalFitsCanvas) return [...elements];
+
+  return elements.map((element, index) => {
+    const position = updates.get(index);
+    if (position === undefined) return element;
+    if (axis === 'horizontal') {
+      return position === element.x ? element : { ...element, x: position };
+    }
+    return position === element.y ? element : { ...element, y: position };
+  });
+}
+
 export function hasPointerDragStarted(
   deltaX: number,
   deltaY: number,

@@ -58,14 +58,17 @@ function Carousel({
     },
     plugins,
   );
-  const [canScrollPrev, setCanScrollPrev] = React.useState(false);
-  const [canScrollNext, setCanScrollNext] = React.useState(false);
+  const [, refreshScrollState] = React.useReducer(
+    (revision) => revision + 1,
+    0,
+  );
 
-  const onSelect = React.useCallback((api: CarouselApi) => {
-    if (!api) return;
-    setCanScrollPrev(api.canScrollPrev());
-    setCanScrollNext(api.canScrollNext());
+  const onSelect = React.useCallback(() => {
+    refreshScrollState();
   }, []);
+
+  const canScrollPrev = api?.canScrollPrev() ?? false;
+  const canScrollNext = api?.canScrollNext() ?? false;
 
   const scrollPrev = React.useCallback(() => {
     api?.scrollPrev();
@@ -95,12 +98,12 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api) return;
-    onSelect(api);
     api.on('reInit', onSelect);
     api.on('select', onSelect);
 
     return () => {
-      api?.off('select', onSelect);
+      api.off('reInit', onSelect);
+      api.off('select', onSelect);
     };
   }, [api, onSelect]);
 
@@ -121,6 +124,9 @@ function Carousel({
       <div
         onKeyDownCapture={handleKeyDown}
         className={cn('relative', className)}
+        // WAI-ARIA's carousel pattern uses a named region with a custom role
+        // description while this polymorphic primitive keeps its div API.
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
         role="region"
         aria-roledescription="carousel"
         data-slot="carousel"
@@ -158,6 +164,8 @@ function CarouselItem({ className, ...props }: React.ComponentProps<'div'>) {
 
   return (
     <div
+      // A slide is a grouped composite rather than a form fieldset.
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
       role="group"
       aria-roledescription="slide"
       data-slot="carousel-item"

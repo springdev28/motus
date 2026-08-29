@@ -10,7 +10,8 @@ export const metadata: Metadata = {
   description:
     'Build layered motion comics with a visual canvas and editable animation blocks.',
   icons: {
-    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180' }],
+    icon: [{ url: '/motus-logo-256.png', sizes: '256x256', type: 'image/png' }],
   },
   openGraph: {
     title: 'Motus — Motion comics, made visual',

@@ -29,6 +29,8 @@ function ButtonGroup({
 }: React.ComponentProps<'div'> & VariantProps<typeof buttonGroupVariants>) {
   return (
     <div
+      // A button group is a composite control, not a form fieldset.
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
       role="group"
       data-slot="button-group"
       data-orientation={orientation}

@@ -39,13 +39,22 @@ import {
 import { CSS as DndCss } from '@dnd-kit/utilities';
 import {
   Activity,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
   AlignCenter,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalSpaceBetween,
   AlignLeft,
   AlignRight,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalSpaceBetween,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  Check,
   Circle,
   Clock3,
   Cloud,
@@ -87,6 +96,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { MotusLogo } from '@/components/motus-logo';
 import {
   Dialog,
   DialogContent,
@@ -139,6 +149,7 @@ import {
   MIN_ELEMENT_LETTER_SPACING,
   MIN_ELEMENT_LINE_HEIGHT,
   MIN_ELEMENT_WIDTH,
+  alignSelectedElements,
   canAddElementToScene,
   canAddSceneToProject,
   cloneProject,
@@ -156,6 +167,7 @@ import {
   createPublicationRevision,
   describeElementForAccessibility,
   detectImageFormat,
+  distributeSelectedElements,
   findSupportedImageFile,
   getPublicationReadiness,
   getDraftSaveStatus,
@@ -192,6 +204,7 @@ import {
   shouldEndContinuousHistoryOnKey,
   trimProjectHistory,
   transformElementByPointer,
+  translateSelectedElements,
   validateImageAsset,
   writeDraftJournal,
   type BounceJump,
@@ -200,6 +213,8 @@ import {
   type ElementPointerTransformMode,
   type ElementFontPreset,
   type ElementFontWeight,
+  type ElementAlignment,
+  type ElementDistributionAxis,
   type ElementTextAlignment,
   type ElementTypography,
   type ElementType,
@@ -382,6 +397,7 @@ type DeletionUndo = {
   message: string;
   sceneId: string;
   elementId: string;
+  elementIds?: string[];
 };
 
 type PendingProjectImport = {
@@ -1111,11 +1127,12 @@ type SceneViewProps = {
   scene: MotusScene;
   elementLimit?: number;
   selectedId?: string;
+  selectedIds?: ReadonlySet<string>;
   playingKey?: number;
   playingElementId?: string;
   onPlaybackComplete?: () => void;
   interactive?: boolean;
-  onSelect?: (id: string) => void;
+  onSelect?: (id: string, additive?: boolean) => void;
   editingTextId?: string | null;
   onBeginTextEdit?: (elementId: string) => void;
   onTextChange?: (elementId: string, value: string) => void;
@@ -1138,6 +1155,7 @@ function SceneView({
   scene,
   elementLimit,
   selectedId,
+  selectedIds,
   playingKey = 0,
   playingElementId,
   onPlaybackComplete,
@@ -1239,12 +1257,18 @@ function SceneView({
   }, [playingElementId, playingKey, renderedElements]);
 
   return (
-    <div className="artboard" style={{ background: scene.background }}>
+    <section
+      aria-label={interactive ? `${scene.name} layers` : undefined}
+      className="artboard"
+      style={{ background: scene.background }}
+    >
       <div className="artboard-grid" />
       <div className="artboard-horizon" />
       {renderedElements.map((element) => {
         if (!element.visible) return null;
-        const selected = selectedId === element.id;
+        const selected =
+          selectedIds?.has(element.id) ?? selectedId === element.id;
+        const primarySelected = selectedId === element.id;
         const textEditable =
           element.type === 'text' || element.type === 'speech';
         const editingText =
@@ -1298,15 +1322,21 @@ function SceneView({
             aria-describedby={interactive ? 'canvas-instructions' : undefined}
             aria-keyshortcuts={
               interactive
-                ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Meta+C Control+C Meta+X Control+X Meta+V Control+V'
+                ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Enter Space Shift+Enter Shift+Space Meta+A Control+A Meta+C Control+C Meta+X Control+X Meta+V Control+V'
                 : undefined
             }
-            aria-label={
-              interactive && textEditable && selected
-                ? `${describeElementForAccessibility(element)} Press Enter to edit text.`
-                : describeElementForAccessibility(element)
-            }
-            aria-pressed={interactive && !editingText ? selected : undefined}
+            aria-label={`${
+              interactive && selected
+                ? primarySelected
+                  ? 'Primary selected layer. '
+                  : 'Selected layer. '
+                : ''
+            }${describeElementForAccessibility(element)}${
+              interactive && textEditable && primarySelected
+                ? ' Press Enter to edit text.'
+                : ''
+            }`}
+            aria-current={interactive && primarySelected ? 'true' : undefined}
             className={`canvas-element element-${element.type}`}
             data-edge-bottom={
               element.y + element.height >= CANVAS_HEIGHT - 48 || undefined
@@ -1319,13 +1349,17 @@ function SceneView({
             data-editing={editingText || undefined}
             data-interactive={interactive || undefined}
             data-locked={element.locked || undefined}
+            data-primary-selected={primarySelected || undefined}
             data-selected={selected || undefined}
             key={`${element.id}-${playingKey}`}
             onClick={
               interactive && !editingText
                 ? (event) => {
                     event.stopPropagation();
-                    onSelect?.(element.id);
+                    onSelect?.(
+                      element.id,
+                      event.shiftKey || event.metaKey || event.ctrlKey,
+                    );
                   }
                 : undefined
             }
@@ -1348,7 +1382,7 @@ function SceneView({
                     if (nudge) {
                       event.preventDefault();
                       event.stopPropagation();
-                      onSelect?.(element.id);
+                      if (!selected) onSelect?.(element.id);
                       onKeyboardNudge?.(element.id, event.key, event.shiftKey);
                       return;
                     }
@@ -1357,14 +1391,20 @@ function SceneView({
                       event.stopPropagation();
                       if (
                         event.key === 'Enter' &&
-                        selected &&
+                        !event.shiftKey &&
+                        !event.metaKey &&
+                        !event.ctrlKey &&
+                        primarySelected &&
                         textEditable &&
                         !element.locked
                       ) {
                         onBeginTextEdit?.(element.id);
                         return;
                       }
-                      onSelect?.(element.id);
+                      onSelect?.(
+                        element.id,
+                        event.shiftKey || event.metaKey || event.ctrlKey,
+                      );
                     }
                   }
                 : undefined
@@ -1406,7 +1446,7 @@ function SceneView({
             ) : (
               renderElementContent(element)
             )}
-            {selected &&
+            {primarySelected &&
             interactive &&
             textEditable &&
             !element.locked &&
@@ -1416,6 +1456,7 @@ function SceneView({
               <span
                 aria-hidden="true"
                 className="canvas-edit-text-control"
+                onClick={(event) => event.stopPropagation()}
                 onPointerDown={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -1427,7 +1468,10 @@ function SceneView({
                 Edit text
               </span>
             ) : null}
-            {selected && interactive && !element.locked && !editingText ? (
+            {primarySelected &&
+            interactive &&
+            !element.locked &&
+            !editingText ? (
               <>
                 {ELEMENT_RESIZE_HANDLES.map((handle) => (
                   // Pointer transforms are visual; keyboard users retain exact inspector controls.
@@ -1436,6 +1480,7 @@ function SceneView({
                     aria-hidden="true"
                     className={`resize-handle resize-handle-${handle}`}
                     key={handle}
+                    onClick={(event) => event.stopPropagation()}
                     onPointerDown={(event) => {
                       event.stopPropagation();
                       onPointerAction?.(event, element.id, `resize-${handle}`);
@@ -1447,6 +1492,7 @@ function SceneView({
                 <span
                   aria-hidden="true"
                   className="rotate-handle"
+                  onClick={(event) => event.stopPropagation()}
                   onPointerDown={(event) => {
                     event.stopPropagation();
                     onPointerAction?.(event, element.id, 'rotate');
@@ -1460,7 +1506,7 @@ function SceneView({
           </div>
         );
       })}
-    </div>
+    </section>
   );
 }
 
@@ -1531,7 +1577,15 @@ function ReaderScene({ scene, index, sessionKey }: ReaderSceneProps) {
 export function MotusStudio() {
   const [project, setProject] = useState<MotusProject>(createDefaultProject);
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
-  const [selectedElementId, setSelectedElementId] = useState('scene-1-orb');
+  const [selectedElementId, setPrimarySelectedElementId] =
+    useState('scene-1-orb');
+  const [selectedElementIds, setSelectedElementIds] = useState<string[]>([
+    'scene-1-orb',
+  ]);
+  const setSelectedElementId = useCallback((elementId: string) => {
+    setPrimarySelectedElementId(elementId);
+    setSelectedElementIds(elementId ? [elementId] : []);
+  }, []);
   const [editingTextElementId, setEditingTextElementId] = useState<
     string | null
   >(null);
@@ -1609,7 +1663,7 @@ export function MotusStudio() {
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
-  const copiedElement = useRef<MotusElement | null>(null);
+  const copiedElements = useRef<MotusElement[]>([]);
   const motionSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 7 },
@@ -1708,6 +1762,78 @@ export function MotusStudio() {
       activeScene.elements.find((element) => element.id === selectedElementId),
     [activeScene.elements, selectedElementId],
   );
+  const selectedElementIdSet = useMemo(
+    () => new Set(selectedElementIds),
+    [selectedElementIds],
+  );
+  const selectedElements = useMemo(
+    () =>
+      activeScene.elements.filter((element) =>
+        selectedElementIdSet.has(element.id),
+      ),
+    [activeScene.elements, selectedElementIdSet],
+  );
+  const unlockedSelectedElementIds = useMemo(
+    () =>
+      selectedElements
+        .filter((element) => !element.locked)
+        .map((element) => element.id),
+    [selectedElements],
+  );
+  const selectElement = (elementId: string, additive = false) => {
+    if (!additive) {
+      if (
+        selectedElementIds.length > 1 &&
+        selectedElementIdSet.has(elementId)
+      ) {
+        setPrimarySelectedElementId(elementId);
+        setEditingTextElementId(null);
+        endHistoryTransaction();
+        const primary = activeScene.elements.find(
+          (element) => element.id === elementId,
+        );
+        setNotice(
+          `${primary?.name ?? 'Layer'} is primary · ${selectedElementIds.length} layers selected`,
+        );
+        return;
+      }
+      setSelectedElementId(elementId);
+      return;
+    }
+    const validSelection = selectedElementIds.filter((id) =>
+      activeScene.elements.some((element) => element.id === id),
+    );
+    const nextSelection = validSelection.includes(elementId)
+      ? validSelection.filter((id) => id !== elementId)
+      : [...validSelection, elementId];
+    setSelectedElementIds(nextSelection);
+    setPrimarySelectedElementId(
+      nextSelection.includes(elementId)
+        ? elementId
+        : (nextSelection.at(-1) ?? ''),
+    );
+    setEditingTextElementId(null);
+    endHistoryTransaction();
+    setNotice(
+      nextSelection.length > 1
+        ? `${nextSelection.length} layers selected`
+        : nextSelection.length === 1
+          ? '1 layer selected'
+          : 'Selection cleared',
+    );
+  };
+  const selectAllLayers = () => {
+    const elementIds = activeScene.elements.map((element) => element.id);
+    setSelectedElementIds(elementIds);
+    setPrimarySelectedElementId(elementIds.at(-1) ?? '');
+    setEditingTextElementId(null);
+    endHistoryTransaction();
+    setNotice(
+      elementIds.length
+        ? `${elementIds.length} layers selected`
+        : 'This scene has no layers',
+    );
+  };
   const selectedTypography = selectedElement
     ? (normalizeElementTypography(
         selectedElement.type,
@@ -1901,7 +2027,7 @@ export function MotusStudio() {
     return () => {
       active = false;
     };
-  }, [resetEditorHistory]);
+  }, [resetEditorHistory, setSelectedElementId]);
 
   useEffect(() => {
     if (
@@ -2006,6 +2132,7 @@ export function MotusStudio() {
     isDirty,
     resetEditorHistory,
     selectedElementId,
+    setSelectedElementId,
   ]);
 
   const commitProject = (
@@ -2137,6 +2264,31 @@ export function MotusStudio() {
     setSelectedElementId(selection.elementId);
   };
 
+  const restoreHistorySelection = (
+    candidate: MotusProject,
+    sceneId: string,
+    elementId: string,
+  ) => {
+    const selection = resolveEditorSelection(candidate, sceneId, elementId);
+    const scene = candidate.scenes.find(
+      (item) => item.id === selection.sceneId,
+    );
+    const preservedSelection = selectedElementIds.filter((id) =>
+      scene?.elements.some((element) => element.id === id),
+    );
+    setActiveSceneId(selection.sceneId);
+    if (preservedSelection.length > 1) {
+      setSelectedElementIds(preservedSelection);
+      setPrimarySelectedElementId(
+        preservedSelection.includes(selection.elementId)
+          ? selection.elementId
+          : preservedSelection.at(-1)!,
+      );
+      return;
+    }
+    setSelectedElementId(selection.elementId);
+  };
+
   const undo = () => {
     activePointerCleanup.current?.();
     clearDeletionUndo();
@@ -2153,8 +2305,11 @@ export function MotusStudio() {
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
     setIsDirty(true);
-    setActiveSceneId(previous.selection.sceneId);
-    setSelectedElementId(previous.selection.elementId);
+    restoreHistorySelection(
+      previous.project,
+      previous.selection.sceneId,
+      previous.selection.elementId,
+    );
     setProject(previous.project);
     setNotice('Undid change');
   };
@@ -2175,8 +2330,11 @@ export function MotusStudio() {
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
     setIsDirty(true);
-    setActiveSceneId(next.selection.sceneId);
-    setSelectedElementId(next.selection.elementId);
+    restoreHistorySelection(
+      next.project,
+      next.selection.sceneId,
+      next.selection.elementId,
+    );
     setProject(next.project);
     setNotice('Redid change');
   };
@@ -2186,7 +2344,12 @@ export function MotusStudio() {
     const recovery = deletionUndo;
     undo();
     setActiveSceneId(recovery.sceneId);
-    setSelectedElementId(recovery.elementId);
+    if (recovery.elementIds && recovery.elementIds.length > 1) {
+      setSelectedElementIds(recovery.elementIds);
+      setPrimarySelectedElementId(recovery.elementId);
+    } else {
+      setSelectedElementId(recovery.elementId);
+    }
     focusEditorTarget(recovery.sceneId, recovery.elementId);
   };
 
@@ -2260,6 +2423,40 @@ export function MotusStudio() {
     focusEditorTarget(activeScene.id, nextSelectedElementId);
   };
 
+  const deleteSelection = (action: 'delete' | 'cut' = 'delete') => {
+    if (selectedElements.length < 2) {
+      if (selectedElementId) deleteElement(selectedElementId, action);
+      return;
+    }
+    const deletedIds = selectedElements.map((element) => element.id);
+    const deletedIdSet = new Set(deletedIds);
+    const remainingElements = activeScene.elements.filter(
+      (element) => !deletedIdSet.has(element.id),
+    );
+    const nextSelectedElementId = remainingElements.at(-1)?.id ?? '';
+    const primaryElementId = selectedElementId || deletedIds.at(-1)!;
+    commitProject((draft) => {
+      const scene = draft.scenes.find((item) => item.id === activeScene.id);
+      if (!scene) return;
+      scene.elements = scene.elements.filter(
+        (element) => !deletedIdSet.has(element.id),
+      );
+    });
+    setSelectedElementId(nextSelectedElementId);
+    setNotice(
+      action === 'cut'
+        ? `${deletedIds.length} layers cut · paste to move them`
+        : `${deletedIds.length} layers deleted`,
+    );
+    showDeletionUndo({
+      message: `${deletedIds.length} layers ${action === 'cut' ? 'cut' : 'deleted'}`,
+      sceneId: activeScene.id,
+      elementId: primaryElementId,
+      elementIds: deletedIds,
+    });
+    focusEditorTarget(activeScene.id, nextSelectedElementId);
+  };
+
   const moveLayer = (elementId: string, direction: -1 | 1) => {
     commitProject((draft) => {
       const elements = draft.scenes.find(
@@ -2281,6 +2478,30 @@ export function MotusStudio() {
     const delta = getKeyboardNudgeDelta(key, accelerated);
     const element = findElement(project, activeScene.id, elementId);
     if (!delta || !element) return;
+    if (
+      selectedElements.length > 1 &&
+      selectedElementIdSet.has(elementId) &&
+      unlockedSelectedElementIds.length > 0
+    ) {
+      const selectionIds = [...unlockedSelectedElementIds];
+      commitProject(
+        (draft) => {
+          const scene = draft.scenes.find((item) => item.id === activeScene.id);
+          if (!scene) return;
+          scene.elements = translateSelectedElements(
+            scene.elements,
+            selectionIds,
+            delta.x,
+            delta.y,
+          );
+        },
+        `selection:${[...selectionIds].sort().join(',')}:keyboard-position`,
+      );
+      setNotice(
+        `${selectionIds.length} unlocked ${selectionIds.length === 1 ? 'layer' : 'layers'} moved${accelerated ? ' 10 px' : ' 1 px'}`,
+      );
+      return;
+    }
     if (element.locked) {
       setNotice(`Unlock ${element.name} to move it`);
       return;
@@ -2296,6 +2517,74 @@ export function MotusStudio() {
       `element:${elementId}:keyboard-position`,
     );
     setNotice(`${element.name} moved${accelerated ? ' 10 px' : ' 1 px'}`);
+  };
+
+  const alignSelection = (alignment: ElementAlignment) => {
+    if (unlockedSelectedElementIds.length < 2) {
+      setNotice('Select at least two unlocked layers to align them');
+      return;
+    }
+    const nextElements = alignSelectedElements(
+      activeScene.elements,
+      unlockedSelectedElementIds,
+      alignment,
+    );
+    if (
+      nextElements.every(
+        (element, index) => element === activeScene.elements[index],
+      )
+    ) {
+      setNotice(`Layers are already aligned ${alignment}`);
+      return;
+    }
+    endHistoryTransaction();
+    commitProject((draft) => {
+      const scene = draft.scenes.find((item) => item.id === activeScene.id);
+      if (!scene) return;
+      scene.elements = alignSelectedElements(
+        scene.elements,
+        unlockedSelectedElementIds,
+        alignment,
+      );
+    });
+    setNotice(
+      `${unlockedSelectedElementIds.length} layers aligned ${alignment}`,
+    );
+  };
+
+  const distributeSelection = (axis: ElementDistributionAxis) => {
+    if (unlockedSelectedElementIds.length < 3) {
+      setNotice('Select at least three unlocked layers to distribute them');
+      return;
+    }
+    const nextElements = distributeSelectedElements(
+      activeScene.elements,
+      unlockedSelectedElementIds,
+      axis,
+    );
+    if (
+      nextElements.every(
+        (element, index) => element === activeScene.elements[index],
+      )
+    ) {
+      setNotice(
+        `Spacing unchanged · layers are already even or need more ${axis} room`,
+      );
+      return;
+    }
+    endHistoryTransaction();
+    commitProject((draft) => {
+      const scene = draft.scenes.find((item) => item.id === activeScene.id);
+      if (!scene) return;
+      scene.elements = distributeSelectedElements(
+        scene.elements,
+        unlockedSelectedElementIds,
+        axis,
+      );
+    });
+    setNotice(
+      `${unlockedSelectedElementIds.length} layers distributed ${axis}`,
+    );
   };
 
   const moveScene = (direction: -1 | 1) => {
@@ -2836,6 +3125,56 @@ export function MotusStudio() {
     if (source) addElementCopy(source, 'Layer duplicated');
   };
 
+  const addElementCopies = (
+    sources: readonly MotusElement[],
+    successMessage: string,
+  ) => {
+    if (sources.length === 0) return false;
+    if (activeScene.elements.length + sources.length > MAX_SCENE_ELEMENTS) {
+      setNotice(
+        `Not enough layer slots · this scene allows ${MAX_SCENE_ELEMENTS}`,
+      );
+      return false;
+    }
+    const copyIds = sources.map((source) => uniqueId(source.type));
+    const copyOrigins = sources.map((source, index) => ({
+      ...createElementCopy(source, copyIds[index], 0),
+      locked: false,
+    }));
+    const copies = translateSelectedElements(copyOrigins, copyIds, 28, 28).map(
+      (copy, index) => ({
+        ...copy,
+        locked: sources[index].locked,
+      }),
+    );
+    if (
+      !commitProjectWithStoragePreflight((draft) => {
+        draft.scenes
+          .find((scene) => scene.id === activeScene.id)
+          ?.elements.push(...copies);
+      }, 'Layer copies cannot fit in device storage')
+    ) {
+      return false;
+    }
+    setSelectedElementIds(copyIds);
+    setPrimarySelectedElementId(copyIds.at(-1)!);
+    setEditingTextElementId(null);
+    setNotice(successMessage);
+    focusEditorTarget(activeScene.id, copyIds.at(-1)!);
+    return true;
+  };
+
+  const duplicateSelection = () => {
+    if (selectedElements.length > 1) {
+      addElementCopies(
+        selectedElements,
+        `${selectedElements.length} layers duplicated`,
+      );
+      return;
+    }
+    if (selectedElementId) duplicateElement(selectedElementId);
+  };
+
   const addScene = () => {
     if (!canAddSceneToProject(project)) {
       setNotice(`This work has reached the ${MAX_PROJECT_SCENES}-scene limit`);
@@ -3156,7 +3495,7 @@ export function MotusStudio() {
     return () => {
       active = false;
     };
-  }, [hydrated, resetEditorHistory]);
+  }, [hydrated, resetEditorHistory, setSelectedElementId]);
 
   const publishRevision = () => {
     if (externalDraftChange) {
@@ -3229,6 +3568,9 @@ export function MotusStudio() {
     elementId: string,
     mode: ElementPointerTransformMode,
   ) => {
+    if (mode === 'move' && (event.shiftKey || event.metaKey || event.ctrlKey)) {
+      return;
+    }
     const element = findElement(project, activeScene.id, elementId);
     const artboard = event.currentTarget.closest(
       '.artboard',
@@ -3244,10 +3586,37 @@ export function MotusStudio() {
     event.preventDefault();
     event.stopPropagation();
     activePointerCleanup.current?.();
-    setSelectedElementId(elementId);
+    const groupMove =
+      mode === 'move' &&
+      selectedElementIdSet.has(elementId) &&
+      selectedElements.length > 1;
+    const moveSelectionIds = groupMove
+      ? [...unlockedSelectedElementIds]
+      : [elementId];
+    if (groupMove) {
+      setPrimarySelectedElementId(elementId);
+      setEditingTextElementId(null);
+      endHistoryTransaction();
+    } else {
+      setSelectedElementId(elementId);
+    }
 
     const bounds = artboard.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
+    const originGeometry = new Map(
+      activeScene.elements
+        .filter((item) => moveSelectionIds.includes(item.id))
+        .map((item) => [
+          item.id,
+          {
+            x: item.x,
+            y: item.y,
+            width: item.width,
+            height: item.height,
+            rotation: item.rotation,
+          },
+        ]),
+    );
     const pointerId = event.pointerId;
     const pointerType = event.pointerType;
     const startX = event.clientX;
@@ -3321,6 +3690,22 @@ export function MotusStudio() {
       }
       setProject((current) => {
         const next = cloneProject(current);
+        if (groupMove) {
+          const scene = next.scenes.find((item) => item.id === activeScene.id);
+          if (!scene) return current;
+          const originElements = scene.elements.map((item) => {
+            const geometry = originGeometry.get(item.id);
+            return geometry ? { ...item, ...geometry } : item;
+          });
+          scene.elements = translateSelectedElements(
+            originElements,
+            moveSelectionIds,
+            transformDeltaX,
+            transformDeltaY,
+          );
+          next.updatedAt = new Date().toISOString();
+          return next;
+        }
         const target = findElement(next, activeScene.id, elementId);
         if (!target) return current;
         Object.assign(
@@ -3353,11 +3738,13 @@ export function MotusStudio() {
       cleanup();
       if (moved) {
         setNotice(
-          mode === 'move'
-            ? 'Element moved'
-            : mode === 'rotate'
-              ? 'Element rotated'
-              : 'Element resized',
+          groupMove
+            ? `${moveSelectionIds.length} unlocked ${moveSelectionIds.length === 1 ? 'layer' : 'layers'} moved`
+            : mode === 'move'
+              ? 'Element moved'
+              : mode === 'rotate'
+                ? 'Element rotated'
+                : 'Element resized',
         );
       }
     }
@@ -3393,6 +3780,9 @@ export function MotusStudio() {
       const insideNativeControl = target?.closest(
         'input, textarea, select, button, a, [role="separator"], [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
+      const insideTextControl = target?.closest(
+        'input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"]',
+      );
       if (event.defaultPrevented || event.isComposing) return;
 
       const shortcut = getEditorShortcut(
@@ -3405,7 +3795,19 @@ export function MotusStudio() {
         if (!event.repeat) saveCurrentProject();
         return;
       }
-      if (modalOpen || insideNativeControl) return;
+      if (modalOpen) return;
+
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !insideTextControl &&
+        event.key.toLocaleLowerCase() === 'a'
+      ) {
+        event.preventDefault();
+        selectAllLayers();
+        return;
+      }
+      if (insideTextControl) return;
 
       if (shortcut === 'undo' || shortcut === 'redo') {
         event.preventDefault();
@@ -3415,7 +3817,7 @@ export function MotusStudio() {
       }
       if (shortcut === 'duplicate' && selectedElementId) {
         event.preventDefault();
-        duplicateElement(selectedElementId);
+        duplicateSelection();
         return;
       }
       if (
@@ -3423,9 +3825,10 @@ export function MotusStudio() {
         selectedElementId
       ) {
         event.preventDefault();
-        deleteElement(selectedElementId);
+        deleteSelection();
         return;
       }
+      if (insideNativeControl) return;
       if (selectedElement && getKeyboardNudgeDelta(event.key, event.shiftKey)) {
         event.preventDefault();
         nudgeElement(selectedElement.id, event.key, event.shiftKey);
@@ -3471,23 +3874,32 @@ export function MotusStudio() {
         return null;
       }
 
-      copiedElement.current = structuredClone(selectedElement);
+      const sources =
+        selectedElements.length > 1 ? selectedElements : [selectedElement];
+      copiedElements.current = structuredClone(sources);
       event.clipboardData.setData(
         MOTUS_LAYER_CLIPBOARD_TYPE,
-        selectedElement.id,
+        JSON.stringify(sources.map((source) => source.id)),
       );
       event.preventDefault();
-      return selectedElement;
+      return sources;
     };
 
     const onCopy = (event: ClipboardEvent) => {
-      const source = writeSelectedLayerToClipboard(event);
-      if (source) setNotice(`${source.name} copied`);
+      const sources = writeSelectedLayerToClipboard(event);
+      if (!sources) return;
+      setNotice(
+        sources.length > 1
+          ? `${sources.length} layers copied`
+          : `${sources[0].name} copied`,
+      );
     };
 
     const onCut = (event: ClipboardEvent) => {
-      const source = writeSelectedLayerToClipboard(event);
-      if (source) deleteElement(source.id, 'cut');
+      const sources = writeSelectedLayerToClipboard(event);
+      if (!sources) return;
+      if (sources.length > 1) deleteSelection('cut');
+      else deleteElement(sources[0].id, 'cut');
     };
 
     const onPaste = (event: ClipboardEvent) => {
@@ -3523,11 +3935,19 @@ export function MotusStudio() {
       }
       if (files.length > 0) return;
 
-      const source = copiedElement.current;
+      const sources = copiedElements.current;
       const marker = clipboard.getData(MOTUS_LAYER_CLIPBOARD_TYPE);
-      if (!source || marker !== source.id) return;
+      if (
+        sources.length === 0 ||
+        marker !== JSON.stringify(sources.map((source) => source.id))
+      )
+        return;
       event.preventDefault();
-      addElementCopy(source, 'Layer pasted');
+      if (sources.length > 1) {
+        addElementCopies(sources, `${sources.length} layers pasted`);
+      } else {
+        addElementCopy(sources[0], 'Layer pasted');
+      }
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -4010,10 +4430,7 @@ export function MotusStudio() {
             }
           }}
         >
-          <span className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-          </span>
+          <MotusLogo className="brand-mark" />
           <span className="brand-name">MOTUS</span>
           <span className="brand-product">STUDIO</span>
         </a>
@@ -4410,13 +4827,52 @@ export function MotusStudio() {
               return (
                 <div
                   className="layer-row"
-                  data-selected={selectedElementId === element.id || undefined}
+                  data-primary-selected={
+                    selectedElementId === element.id || undefined
+                  }
+                  data-selected={
+                    selectedElementIdSet.has(element.id) || undefined
+                  }
                   key={element.id}
                 >
                   <button
-                    aria-pressed={selectedElementId === element.id}
+                    aria-label={
+                      selectedElementIdSet.has(element.id)
+                        ? `Remove ${element.name} from selection`
+                        : `Add ${element.name} to selection`
+                    }
+                    aria-pressed={selectedElementIdSet.has(element.id)}
+                    className="layer-multi-toggle"
+                    onClick={() => selectElement(element.id, true)}
+                    title={
+                      selectedElementIdSet.has(element.id)
+                        ? 'Remove from selection'
+                        : 'Add to selection'
+                    }
+                    type="button"
+                  >
+                    {selectedElementIdSet.has(element.id) ? (
+                      <Check aria-hidden="true" />
+                    ) : (
+                      <Plus aria-hidden="true" />
+                    )}
+                  </button>
+                  <button
+                    aria-current={
+                      selectedElementId === element.id ? 'true' : undefined
+                    }
+                    aria-label={
+                      selectedElementId === element.id
+                        ? `Edit ${element.name}, primary layer`
+                        : `Edit ${element.name} and make it primary`
+                    }
                     className="layer-select"
-                    onClick={() => setSelectedElementId(element.id)}
+                    onClick={(event) =>
+                      selectElement(
+                        element.id,
+                        event.shiftKey || event.metaKey || event.ctrlKey,
+                      )
+                    }
                     type="button"
                   >
                     <span className="layer-icon">
@@ -4506,15 +4962,22 @@ export function MotusStudio() {
               <span>
                 {inspectorTab === 'motion'
                   ? 'Stage · select layers, then edit their blocks'
-                  : 'Stage · drag layers · double-click text to edit'}
+                  : selectedElements.length > 1
+                    ? `Stage · ${selectedElements.length} layers selected · drag together`
+                    : 'Stage · drag layers · double-click text to edit'}
               </span>
               <span className="canvas-sr-instructions" id="canvas-instructions">
                 Select a layer on the stage. Use arrow keys to move it one
                 pixel, or hold Shift to move it ten pixels. Use Control or
-                Command with C, X, and V to copy, cut, and paste the layer.
-                Double-click text, or press Enter on selected text, to edit it
-                directly on the stage. For exact keyboard resizing and rotation,
-                use Width, Height, and Rotation in the Design inspector.
+                Command with C, X, and V to copy, cut, and paste the layer. Hold
+                Shift, Control, or Command while clicking to add or remove a
+                layer from the current selection. Selected unlocked layers move
+                together. The add/remove buttons in Layers provide the same
+                control on touch screens. Press Control or Command plus A to
+                select every layer. Double-click text, or press Enter on
+                selected text, to edit it directly on the stage. For exact
+                keyboard resizing and rotation, use Width, Height, and Rotation
+                in the Design inspector.
               </span>
               {inspectorTab === 'design' ? (
                 <>
@@ -4619,7 +5082,7 @@ export function MotusStudio() {
                 onKeyboardNudgeEnd={endHistoryTransaction}
                 onPlaybackComplete={finishCanvasPreview}
                 onPointerAction={beginPointerAction}
-                onSelect={setSelectedElementId}
+                onSelect={selectElement}
                 onTextChange={changeTextOnCanvas}
                 playingElementId={
                   previewScope === 'selected'
@@ -4629,6 +5092,7 @@ export function MotusStudio() {
                 playingKey={canvasPreviewKey}
                 scene={activeScene}
                 selectedId={selectedElementId}
+                selectedIds={selectedElementIdSet}
               />
             </div>
           </div>
@@ -4893,26 +5357,143 @@ export function MotusStudio() {
               )
             ) : (
               <>
+                {inspectorTab === 'design' && selectedElements.length > 1 ? (
+                  <section
+                    aria-labelledby="selection-layout-title"
+                    className="selection-layout-panel"
+                  >
+                    <header>
+                      <div>
+                        <Layers3 aria-hidden="true" />
+                        <strong id="selection-layout-title">
+                          {selectedElements.length} layers
+                        </strong>
+                      </div>
+                      <span>{unlockedSelectedElementIds.length} movable</span>
+                    </header>
+                    <fieldset className="selection-layout-actions">
+                      <legend className="sr-only">
+                        Align and distribute selected layers
+                      </legend>
+                      <button
+                        aria-label="Align selected layers left"
+                        disabled={unlockedSelectedElementIds.length < 2}
+                        onClick={() => alignSelection('left')}
+                        title="Align left"
+                        type="button"
+                      >
+                        <AlignStartVertical aria-hidden="true" />
+                        <span>Left</span>
+                      </button>
+                      <button
+                        aria-label="Align selected layers to horizontal center"
+                        disabled={unlockedSelectedElementIds.length < 2}
+                        onClick={() => alignSelection('center')}
+                        title="Center horizontally"
+                        type="button"
+                      >
+                        <AlignCenterVertical aria-hidden="true" />
+                        <span>Center</span>
+                      </button>
+                      <button
+                        aria-label="Align selected layers right"
+                        disabled={unlockedSelectedElementIds.length < 2}
+                        onClick={() => alignSelection('right')}
+                        title="Align right"
+                        type="button"
+                      >
+                        <AlignEndVertical aria-hidden="true" />
+                        <span>Right</span>
+                      </button>
+                      <button
+                        aria-label="Distribute selected layers horizontally"
+                        disabled={unlockedSelectedElementIds.length < 3}
+                        onClick={() => distributeSelection('horizontal')}
+                        title="Distribute horizontally"
+                        type="button"
+                      >
+                        <AlignHorizontalSpaceBetween aria-hidden="true" />
+                        <span>Space X</span>
+                      </button>
+                      <button
+                        aria-label="Align selected layers to top"
+                        disabled={unlockedSelectedElementIds.length < 2}
+                        onClick={() => alignSelection('top')}
+                        title="Align top"
+                        type="button"
+                      >
+                        <AlignStartHorizontal aria-hidden="true" />
+                        <span>Top</span>
+                      </button>
+                      <button
+                        aria-label="Align selected layers to vertical middle"
+                        disabled={unlockedSelectedElementIds.length < 2}
+                        onClick={() => alignSelection('middle')}
+                        title="Center vertically"
+                        type="button"
+                      >
+                        <AlignCenterHorizontal aria-hidden="true" />
+                        <span>Middle</span>
+                      </button>
+                      <button
+                        aria-label="Align selected layers to bottom"
+                        disabled={unlockedSelectedElementIds.length < 2}
+                        onClick={() => alignSelection('bottom')}
+                        title="Align bottom"
+                        type="button"
+                      >
+                        <AlignEndHorizontal aria-hidden="true" />
+                        <span>Bottom</span>
+                      </button>
+                      <button
+                        aria-label="Distribute selected layers vertically"
+                        disabled={unlockedSelectedElementIds.length < 3}
+                        onClick={() => distributeSelection('vertical')}
+                        title="Distribute vertically"
+                        type="button"
+                      >
+                        <AlignVerticalSpaceBetween aria-hidden="true" />
+                        <span>Space Y</span>
+                      </button>
+                    </fieldset>
+                    <footer>
+                      <span>Modifier-click or layer + to select</span>
+                      <kbd>⌘/Ctrl+A</kbd>
+                    </footer>
+                  </section>
+                ) : null}
                 <div className="selected-element-card">
                   <span
                     className={`element-swatch swatch-${selectedElement.type}`}
                     style={{ background: selectedElement.fill }}
                   />
                   <div>
-                    <small>Selected</small>
+                    <small>
+                      {selectedElements.length > 1
+                        ? 'Primary layer'
+                        : 'Selected'}
+                    </small>
                     <strong>{selectedElement.name}</strong>
                   </div>
                   <Button
-                    aria-label="Duplicate selected element"
-                    onClick={() => duplicateElement(selectedElement.id)}
+                    aria-label={
+                      selectedElements.length > 1
+                        ? `Duplicate ${selectedElements.length} selected layers`
+                        : 'Duplicate selected element'
+                    }
+                    onClick={duplicateSelection}
                     size="icon-sm"
                     variant="outline"
                   >
                     <Copy />
                   </Button>
                   <Button
-                    aria-label="Delete selected element"
-                    onClick={() => deleteElement(selectedElement.id)}
+                    aria-label={
+                      selectedElements.length > 1
+                        ? `Delete ${selectedElements.length} selected layers`
+                        : 'Delete selected element'
+                    }
+                    onClick={() => deleteSelection()}
                     size="icon-sm"
                     variant="destructive"
                   >
@@ -5142,14 +5723,14 @@ export function MotusStudio() {
                             <Input
                               {...numericDraftProps(
                                 `element:${selectedElement.id}:${property}`,
-                                Math.round(selectedElement[property]),
+                                Number(selectedElement[property].toFixed(2)),
                                 (candidate) => {
                                   if (!Number.isFinite(candidate)) {
-                                    return Math.round(
-                                      selectedElement[property],
+                                    return Number(
+                                      selectedElement[property].toFixed(2),
                                     );
                                   }
-                                  return Math.round(candidate);
+                                  return Number(candidate.toFixed(2));
                                 },
                                 (candidate) =>
                                   updateElement(
@@ -5176,6 +5757,7 @@ export function MotusStudio() {
                                     ? MIN_ELEMENT_HEIGHT
                                     : 0
                               }
+                              step="0.1"
                               type="number"
                             />
                           </label>
