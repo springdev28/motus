@@ -1,7 +1,7 @@
+/* oxlint-disable next/no-html-link-for-pages -- Full-page transitions keep local draft recovery independent of router state. */
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import {
   ArrowRight,
   BookOpen,
@@ -104,23 +104,23 @@ export function MotusHome() {
   return (
     <div className="home-shell">
       <header className="home-header">
-        <Link aria-label="Motus home" className="home-brand" href="/">
+        <a aria-label="Motus home" className="home-brand" href="/">
           <span aria-hidden="true" className="home-brand-mark">
             <span />
             <span />
           </span>
           <span>MOTUS</span>
-        </Link>
+        </a>
         <nav aria-label="Primary navigation" className="home-nav">
-          <Link aria-current="page" href="/">
+          <a aria-current="page" href="/">
             Home
-          </Link>
+          </a>
           <a href="#discover">Discover</a>
         </nav>
-        <Link className="home-studio-link" href="/studio">
+        <a className="home-studio-link" href="/studio">
           <Plus aria-hidden="true" />
           Open Studio
-        </Link>
+        </a>
       </header>
 
       <main className="home-main">
@@ -147,9 +147,9 @@ export function MotusHome() {
                     : 'Your work'}
               </h2>
             </div>
-            <Link href="/studio">
+            <a href="/studio">
               View in Studio <ArrowRight aria-hidden="true" />
-            </Link>
+            </a>
           </header>
 
           {draft.status === 'loading' ? (
@@ -183,9 +183,9 @@ export function MotusHome() {
                     <h3>{draft.project.title}</h3>
                     <p>{draft.project.chapterTitle}</p>
                   </div>
-                  <Link className="home-continue-button" href="/studio">
+                  <a className="home-continue-button" href="/studio">
                     Continue editing <ArrowRight aria-hidden="true" />
-                  </Link>
+                  </a>
                 </div>
                 <dl className="home-project-stats">
                   <div>
@@ -216,9 +216,9 @@ export function MotusHome() {
                 <h3>Make your first motion comic</h3>
                 <p>A blank canvas and the full block catalog are ready.</p>
               </div>
-              <Link className="home-continue-button" href="/studio?new=1">
+              <a className="home-continue-button" href="/studio?new=1">
                 Start a work <ArrowRight aria-hidden="true" />
-              </Link>
+              </a>
             </article>
           )}
         </section>
@@ -231,23 +231,23 @@ export function MotusHome() {
             </div>
           </header>
           <div className="home-tool-grid">
-            <Link href="/studio">
+            <a href="/studio">
               <Layers3 aria-hidden="true" />
               <span>
                 <strong>Visual canvas</strong>
                 <small>Compose scenes and layers</small>
               </span>
               <ArrowRight aria-hidden="true" />
-            </Link>
-            <Link href="/studio?catalog=motion">
+            </a>
+            <a href="/studio?catalog=motion">
               <Code2 aria-hidden="true" />
               <span>
                 <strong>Block catalog</strong>
                 <small>Browse editable motion presets</small>
               </span>
               <ArrowRight aria-hidden="true" />
-            </Link>
-            <Link
+            </a>
+            <a
               href={
                 draft.status === 'ready' ? '/studio?reader=draft' : '/studio'
               }
@@ -264,7 +264,7 @@ export function MotusHome() {
                 </small>
               </span>
               <ArrowRight aria-hidden="true" />
-            </Link>
+            </a>
           </div>
         </section>
 
@@ -278,16 +278,13 @@ export function MotusHome() {
               <span>DISCOVER</span>
               <h2 id="discover-title">Motion stories</h2>
             </div>
-            <Link href="/studio?catalog=works">
+            <a href="/studio?catalog=works">
               Open catalog <ArrowRight aria-hidden="true" />
-            </Link>
+            </a>
           </header>
           <div className="home-discover-grid">
             {discoverWorks.map((work, index) => (
-              <Link
-                href={`/studio?catalog=works&work=${index}`}
-                key={work.title}
-              >
+              <a href={`/studio?catalog=works&work=${index}`} key={work.title}>
                 <span
                   aria-hidden="true"
                   className="home-work-cover"
@@ -301,7 +298,7 @@ export function MotusHome() {
                   <small>{work.creator}</small>
                   <em>{work.detail}</em>
                 </span>
-              </Link>
+              </a>
             ))}
           </div>
         </section>

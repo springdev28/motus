@@ -1,3 +1,4 @@
+/* oxlint-disable next/no-html-link-for-pages -- Home navigation performs a full transition after synchronously flushing the draft. */
 'use client';
 
 import {
@@ -13,7 +14,6 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
-import Link from 'next/link';
 import {
   DndContext,
   DragOverlay,
@@ -3474,7 +3474,7 @@ export function MotusStudio() {
       />
 
       <header className="studio-topbar">
-        <Link
+        <a
           aria-label="Motus home"
           className="brand-lockup"
           href="/"
@@ -3497,7 +3497,7 @@ export function MotusStudio() {
           </span>
           <span className="brand-name">MOTUS</span>
           <span className="brand-product">STUDIO</span>
-        </Link>
+        </a>
 
         <Input
           {...textHistoryProps}
