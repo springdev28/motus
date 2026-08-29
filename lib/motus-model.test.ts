@@ -12,12 +12,14 @@ import {
   createBlankProject,
   constrainElementToCanvas,
   createDefaultProject,
+  createElement,
   createProjectHistoryEntry,
   createProjectBackupFileName,
   createPublicationRevision,
   describeElementForAccessibility,
   detectImageFormat,
   hasUnpublishedChanges,
+  getPublicationReadiness,
   parseProjectTags,
   recordProjectHistory,
   reorderScenes,
@@ -360,6 +362,31 @@ void test('reader source defaults to the edited draft after publication', () => 
   assert.equal(revisionSource.revision, 1);
   assert.equal(revisionSource.title, 'Signal in the Fog');
   assert.equal(revisionSource.scenes[0].name, 'The signal');
+});
+
+void test('publication readiness blocks untitled or invisible work', () => {
+  const ready = getPublicationReadiness(createDefaultProject());
+  assert.equal(ready.ready, true);
+  assert.equal(ready.sceneCount, 3);
+  assert.equal(ready.visibleLayerCount, 9);
+
+  const blank = createBlankProject('empty-work');
+  blank.title = '   ';
+  assert.deepEqual(getPublicationReadiness(blank).issues, [
+    'Add a title for this work',
+    'Add at least one visible layer',
+  ]);
+
+  blank.title = 'A visible beginning';
+  blank.scenes[0].elements.push(createElement('shape', 1, { visible: false }));
+  assert.equal(getPublicationReadiness(blank).ready, false);
+  blank.scenes[0].elements[0].visible = true;
+  assert.equal(getPublicationReadiness(blank).ready, true);
+
+  blank.title = 'x'.repeat(161);
+  assert.deepEqual(getPublicationReadiness(blank).issues, [
+    'Shorten the title to 160 characters',
+  ]);
 });
 
 void test('a published revision can be recovered as a new editable draft', () => {

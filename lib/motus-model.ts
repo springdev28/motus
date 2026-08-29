@@ -15,6 +15,7 @@ export const MAX_IMAGE_BYTES = 750_000;
 export const MAX_IMAGE_DIMENSION = 4_096;
 export const MAX_IMAGE_PIXELS = 12_000_000;
 export const MAX_PROJECT_FILE_BYTES = 12_000_000;
+export const MAX_PROJECT_TITLE_LENGTH = 160;
 export const MAX_PROJECT_TAGS = 8;
 export const MAX_PROJECT_TAG_LENGTH = 40;
 const MAX_PROJECT_SCENES = 100;
@@ -200,6 +201,37 @@ export function resolveReaderSource(
         visibility: project.visibility,
         scenes: project.scenes,
       };
+}
+
+export type PublicationReadiness = {
+  ready: boolean;
+  issues: string[];
+  sceneCount: number;
+  visibleLayerCount: number;
+};
+
+export function getPublicationReadiness(
+  project: MotusProject,
+): PublicationReadiness {
+  const issues: string[] = [];
+  const visibleLayerCount = project.scenes.reduce(
+    (count, scene) =>
+      count + scene.elements.filter((element) => element.visible).length,
+    0,
+  );
+
+  if (!project.title.trim()) issues.push('Add a title for this work');
+  else if (project.title.length > MAX_PROJECT_TITLE_LENGTH) {
+    issues.push(`Shorten the title to ${MAX_PROJECT_TITLE_LENGTH} characters`);
+  }
+  if (visibleLayerCount === 0) issues.push('Add at least one visible layer');
+
+  return {
+    ready: issues.length === 0,
+    issues,
+    sceneCount: project.scenes.length,
+    visibleLayerCount,
+  };
 }
 
 const motion = (
@@ -845,6 +877,9 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
   }
   if (typeof candidate.title !== 'string') {
     return { project: null, error: 'Project title is missing' };
+  }
+  if (candidate.title.length > MAX_PROJECT_TITLE_LENGTH) {
+    return { project: null, error: 'Project title is too long' };
   }
 
   const sceneError = validateScenes(candidate.scenes, 'Project');

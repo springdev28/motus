@@ -59,6 +59,7 @@ import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   MAX_PROJECT_FILE_BYTES,
+  MAX_PROJECT_TITLE_LENGTH,
   MIN_ELEMENT_HEIGHT,
   MIN_ELEMENT_WIDTH,
   cloneProject,
@@ -72,6 +73,7 @@ import {
   createPublicationRevision,
   describeElementForAccessibility,
   detectImageFormat,
+  getPublicationReadiness,
   hasUnpublishedChanges,
   parseProjectTags,
   recordProjectHistory,
@@ -975,6 +977,11 @@ export function MotusStudio() {
       setConflictOpen(true);
       return;
     }
+    const readiness = getPublicationReadiness(project);
+    if (!readiness.ready) {
+      setNotice(readiness.issues[0]);
+      return;
+    }
     if (!hasUnpublishedChanges(project)) {
       setNotice('Published revision is already current');
       return;
@@ -1139,6 +1146,7 @@ export function MotusStudio() {
 
   const artboardWidth = Math.round(430 * (zoom / 64));
   const publicationHasChanges = hasUnpublishedChanges(project);
+  const publicationReadiness = getPublicationReadiness(project);
   const readerSource = resolveReaderSource(project, readerRevision);
   const readerDescription =
     readerSource.mode === 'revision'
@@ -1209,6 +1217,7 @@ export function MotusStudio() {
           {...textHistoryProps}
           aria-label="Project title"
           className="project-title-input"
+          maxLength={MAX_PROJECT_TITLE_LENGTH}
           onChange={(event) =>
             commitProject((draft) => {
               draft.title = event.target.value;
@@ -1525,6 +1534,21 @@ export function MotusStudio() {
           </DialogHeader>
 
           <div className="publish-grid">
+            <label className="publish-field" htmlFor="publish-title">
+              <span>Title</span>
+              <Input
+                {...textHistoryProps}
+                id="publish-title"
+                maxLength={MAX_PROJECT_TITLE_LENGTH}
+                onChange={(event) =>
+                  commitProject((draft) => {
+                    draft.title = event.target.value;
+                  }, 'project:title')
+                }
+                placeholder="Name this work"
+                value={project.title}
+              />
+            </label>
             <label className="publish-field" htmlFor="publish-description">
               <span>Description</span>
               <Textarea
@@ -1589,6 +1613,29 @@ export function MotusStudio() {
               This alpha site remains owner-only. Choosing public records your intended visibility in the revision but does not change site access.
             </p>
 
+            <section
+              className="publish-readiness"
+              data-ready={publicationReadiness.ready || undefined}
+              aria-labelledby="publish-readiness-title"
+            >
+              <span className="publish-readiness-mark" aria-hidden="true">
+                {publicationReadiness.ready ? '✓' : '!'}
+              </span>
+              <div>
+                <strong id="publish-readiness-title">
+                  {publicationReadiness.ready ? 'Ready to publish' : 'Finish before publishing'}
+                </strong>
+                <small>
+                  {publicationReadiness.sceneCount} scenes · {publicationReadiness.visibleLayerCount} visible layers
+                </small>
+                {publicationReadiness.issues.length > 0 ? (
+                  <ul>
+                    {publicationReadiness.issues.map((issue) => <li key={issue}>{issue}</li>)}
+                  </ul>
+                ) : null}
+              </div>
+            </section>
+
             {project.publications.length > 0 ? (
               <section className="revision-history" aria-labelledby="revision-history-title">
                 <div className="revision-history-heading">
@@ -1615,11 +1662,13 @@ export function MotusStudio() {
 
           <div className="publish-actions">
             <span>
-              {publicationHasChanges
+              {!publicationReadiness.ready
+                ? `${publicationReadiness.issues.length} item${publicationReadiness.issues.length === 1 ? '' : 's'} to finish`
+                : publicationHasChanges
                 ? `Next: revision ${project.publishedRevision + 1}`
                 : `Revision ${project.publishedRevision} is current`}
             </span>
-            <Button disabled={!publicationHasChanges || externalDraftChange} onClick={publishRevision}><Send />Publish revision</Button>
+            <Button disabled={!publicationReadiness.ready || !publicationHasChanges || externalDraftChange} onClick={publishRevision}><Send />Publish revision</Button>
           </div>
         </DialogContent>
       </Dialog>
