@@ -309,7 +309,7 @@ function SceneView({
             aria-describedby={interactive ? 'canvas-instructions' : undefined}
             aria-keyshortcuts={
               interactive
-                ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Meta+C Control+C Meta+V Control+V'
+                ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Meta+C Control+C Meta+X Control+X Meta+V Control+V'
                 : undefined
             }
             aria-label={describeElementForAccessibility(element)}
@@ -925,7 +925,10 @@ export function MotusStudio() {
     return true;
   };
 
-  const deleteElement = (elementId: string) => {
+  const deleteElement = (
+    elementId: string,
+    action: 'delete' | 'cut' = 'delete',
+  ) => {
     const deletedElement = findElement(project, activeScene.id, elementId);
     if (!deletedElement) {
       setSelectedElementId('');
@@ -942,9 +945,13 @@ export function MotusStudio() {
       scene.elements = scene.elements.filter((element) => element.id !== elementId);
     });
     setSelectedElementId(nextSelectedElementId);
-    setNotice('Layer deleted');
+    setNotice(
+      action === 'cut'
+        ? `${deletedElement.name} cut · paste to move it`
+        : 'Layer deleted',
+    );
     showDeletionUndo({
-      message: `${deletedElement.name} deleted`,
+      message: `${deletedElement.name} ${action === 'cut' ? 'cut' : 'deleted'}`,
       sceneId: activeScene.id,
       elementId,
     });
@@ -1580,9 +1587,9 @@ export function MotusStudio() {
       }
     };
 
-    const onCopy = (event: ClipboardEvent) => {
+    const writeSelectedLayerToClipboard = (event: ClipboardEvent) => {
       if (event.defaultPrevented || !selectedElement || !event.clipboardData) {
-        return;
+        return null;
       }
       const target = event.target instanceof Element ? event.target : null;
       const insideTextControl = target?.closest(
@@ -1602,13 +1609,23 @@ export function MotusStudio() {
         modalOpen ||
         (textSelection && !textSelection.isCollapsed)
       ) {
-        return;
+        return null;
       }
 
       copiedElement.current = structuredClone(selectedElement);
       event.clipboardData.setData(MOTUS_LAYER_CLIPBOARD_TYPE, selectedElement.id);
       event.preventDefault();
-      setNotice(`${selectedElement.name} copied`);
+      return selectedElement;
+    };
+
+    const onCopy = (event: ClipboardEvent) => {
+      const source = writeSelectedLayerToClipboard(event);
+      if (source) setNotice(`${source.name} copied`);
+    };
+
+    const onCut = (event: ClipboardEvent) => {
+      const source = writeSelectedLayerToClipboard(event);
+      if (source) deleteElement(source.id, 'cut');
     };
 
     const onPaste = (event: ClipboardEvent) => {
@@ -1654,11 +1671,13 @@ export function MotusStudio() {
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('copy', onCopy);
+    window.addEventListener('cut', onCut);
     window.addEventListener('paste', onPaste);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('copy', onCopy);
+      window.removeEventListener('cut', onCut);
       window.removeEventListener('paste', onPaste);
     };
   });
@@ -1954,7 +1973,7 @@ export function MotusStudio() {
 
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
-            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag, paste, or use arrow keys · Shift moves 10 px</span><kbd>⌘/Ctrl+S save</kbd><kbd>⌘/Ctrl+C/V layer</kbd><kbd>⌫ delete</kbd></div>
+            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag, paste, or use arrow keys · Shift moves 10 px</span><kbd>⌘/Ctrl+S save</kbd><kbd>⌘/Ctrl+C/X/V layer</kbd><kbd>⌫ delete</kbd></div>
             <output aria-live="polite" className="workspace-notice">{displayedNotice}</output>
             <fieldset className="zoom-control" aria-label="Canvas zoom">
               <button aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 10))} type="button">−</button>
