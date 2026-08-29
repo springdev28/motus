@@ -77,6 +77,7 @@ import {
   restorePublicationToDraft,
   restoreProject,
   restoreProjectWithError,
+  shouldAutosaveDraft,
   validateImageAsset,
   type ContentRating,
   type Easing,
@@ -365,6 +366,7 @@ export function MotusStudio() {
   const [readerRevision, setReaderRevision] =
     useState<MotusPublicationRevision | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [notice, setNotice] = useState('Ready');
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -434,6 +436,7 @@ export function MotusStudio() {
       const restored = readSavedDraft();
       if (restored) {
         setProject(restored.project);
+        setIsDirty(false);
         setActiveSceneId(restored.project.scenes[0].id);
         setSelectedElementId(restored.project.scenes[0].elements.at(-1)?.id ?? '');
         setNotice(restored.source === 'legacy' ? 'Legacy draft recovered' : 'Saved draft recovered');
@@ -446,35 +449,47 @@ export function MotusStudio() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated || externalDraftChange) return;
+    if (!shouldAutosaveDraft({ hydrated, dirty: isDirty, externalChange: externalDraftChange })) return;
     const timer = window.setTimeout(() => {
-      persistProject(project);
+      if (persistProject(project)) setIsDirty(false);
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [externalDraftChange, hydrated, project]);
+  }, [externalDraftChange, hydrated, isDirty, project]);
 
   useEffect(() => {
-    if (!hydrated || externalDraftChange) return;
+    if (!shouldAutosaveDraft({ hydrated, dirty: isDirty, externalChange: externalDraftChange })) return;
     const flush = () => {
       persistProject(project, false);
     };
     window.addEventListener('pagehide', flush);
     return () => window.removeEventListener('pagehide', flush);
-  }, [externalDraftChange, hydrated, project]);
+  }, [externalDraftChange, hydrated, isDirty, project]);
 
   useEffect(() => {
     if (!hydrated) return;
     const handleStorage = (event: StorageEvent) => {
       if (
         event.storageArea !== window.localStorage ||
-        !event.key ||
-        ![
-          LEGACY_STORAGE_KEY,
-          DRAFT_SLOT_A_KEY,
-          DRAFT_SLOT_B_KEY,
-          DRAFT_POINTER_KEY,
-        ].includes(event.key)
+        event.key !== DRAFT_POINTER_KEY
       ) {
+        return;
+      }
+      if (!isDirty) {
+        const saved = readSavedDraft();
+        if (saved) {
+          const selection = resolveEditorSelection(
+            saved.project,
+            activeSceneId,
+            selectedElementId,
+          );
+          setActiveSceneId(selection.sceneId);
+          setSelectedElementId(selection.elementId);
+          setProject(saved.project);
+          setIsDirty(false);
+          setExternalDraftChange(false);
+          setConflictOpen(false);
+          setNotice('Draft updated from another tab');
+        }
         return;
       }
       setExternalDraftChange(true);
@@ -483,12 +498,13 @@ export function MotusStudio() {
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, [hydrated]);
+  }, [activeSceneId, hydrated, isDirty, selectedElementId]);
 
   const commitProject = (
     mutate: (draft: MotusProject) => void,
     transactionKey: string | null = null,
   ) => {
+    setIsDirty(true);
     setCanUndo(true);
     setCanRedo(false);
     setProject((current) => {
@@ -544,6 +560,7 @@ export function MotusStudio() {
     if (!previous) return;
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
+    setIsDirty(true);
     reconcileSelection(previous);
     setProject((current) => {
       redoStack.current.push(cloneProject(current));
@@ -558,6 +575,7 @@ export function MotusStudio() {
     if (!next) return;
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
+    setIsDirty(true);
     reconcileSelection(next);
     setProject((current) => {
       undoStack.current.push(cloneProject(current));
@@ -697,6 +715,7 @@ export function MotusStudio() {
       setCanUndo(true);
       setCanRedo(false);
       setProject(restored);
+      setIsDirty(false);
       setActiveSceneId(restored.scenes[0].id);
       setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
       setNotice('Project imported');
@@ -800,6 +819,7 @@ export function MotusStudio() {
     setCanRedo(false);
     reconcileSelection(resolved);
     setProject(resolved);
+    setIsDirty(false);
     setExternalDraftChange(false);
     setConflictOpen(false);
     setNotice('Other tab’s draft loaded · this draft downloaded');
@@ -817,6 +837,7 @@ export function MotusStudio() {
       return;
     }
     setProject(resolved);
+    setIsDirty(false);
     setExternalDraftChange(false);
     setConflictOpen(false);
     setNotice('This tab’s draft kept');
@@ -836,6 +857,7 @@ export function MotusStudio() {
     setCanUndo(true);
     setCanRedo(false);
     setProject(blank);
+    setIsDirty(false);
     setActiveSceneId(blank.scenes[0].id);
     setSelectedElementId('');
     setActiveTool('select');
@@ -879,6 +901,7 @@ export function MotusStudio() {
     setCanUndo(true);
     setCanRedo(false);
     setProject(restored);
+    setIsDirty(true);
     setActiveSceneId(restored.scenes[0].id);
     setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
     setPublishOpen(false);
@@ -910,6 +933,7 @@ export function MotusStudio() {
         endHistoryTransaction();
         setCanUndo(true);
         setCanRedo(false);
+        setIsDirty(true);
         moved = true;
       }
       const deltaX = ((pointer.clientX - startX) / bounds.width) * CANVAS_WIDTH;
@@ -998,9 +1022,18 @@ export function MotusStudio() {
   const artboardWidth = Math.round(430 * (zoom / 64));
   const readerScenes = readerRevision?.scenes ?? project.scenes;
   const readerTitle = readerRevision?.title ?? project.title;
+  const saveCurrentProject = () => {
+    if (externalDraftChange) {
+      setConflictOpen(true);
+      return;
+    }
+    if (persistProject(project)) setIsDirty(false);
+  };
   const displayedNotice = externalDraftChange
     ? 'Autosave paused · draft changed in another tab'
-    : notice;
+    : isDirty
+      ? 'Saving changes…'
+      : notice;
   const textHistoryProps = { onBlur: endHistoryTransaction };
   const continuousHistoryProps = {
     onBlur: endHistoryTransaction,
@@ -1051,7 +1084,7 @@ export function MotusStudio() {
         />
 
         <div className="topbar-actions">
-          <button className="save-state" onClick={() => externalDraftChange ? setConflictOpen(true) : persistProject(project)} title="Save draft now" type="button"><Cloud />{displayedNotice}</button>
+          <button className="save-state" onClick={saveCurrentProject} title="Save draft now" type="button"><Cloud />{displayedNotice}</button>
           <Button aria-label="Start a new work" onClick={() => externalDraftChange ? setConflictOpen(true) : setNewWorkOpen(true)} size="icon" variant="outline"><FilePlus2 /></Button>
           <Button aria-label="Undo" disabled={!canUndo} onClick={undo} size="icon" variant="ghost"><Undo2 /></Button>
           <Button aria-label="Redo" disabled={!canRedo} onClick={redo} size="icon" variant="ghost"><Redo2 /></Button>

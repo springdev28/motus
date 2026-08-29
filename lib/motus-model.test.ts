@@ -23,6 +23,7 @@ import {
   restorePublicationToDraft,
   restoreProject,
   restoreProjectWithError,
+  shouldAutosaveDraft,
   type ProjectHistoryState,
   validateImageAsset,
 } from './motus-model.ts';
@@ -415,6 +416,25 @@ void test('draft conflict resolution preserves the selected source', () => {
   loaded.title = 'Edited saved resolution';
   assert.equal(current.title, 'Current tab');
   assert.equal(saved.title, 'Other tab');
+});
+
+void test('autosave runs only for hydrated, dirty, conflict-free drafts', () => {
+  assert.equal(
+    shouldAutosaveDraft({ hydrated: true, dirty: true, externalChange: false }),
+    true,
+  );
+  assert.equal(
+    shouldAutosaveDraft({ hydrated: false, dirty: true, externalChange: false }),
+    false,
+  );
+  assert.equal(
+    shouldAutosaveDraft({ hydrated: true, dirty: false, externalChange: false }),
+    false,
+  );
+  assert.equal(
+    shouldAutosaveDraft({ hydrated: true, dirty: true, externalChange: true }),
+    false,
+  );
 });
 
 void test('scene ordering moves one scene without mutating the source list', () => {

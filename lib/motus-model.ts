@@ -511,6 +511,16 @@ export function resolveDraftConflict(
   return resolved;
 }
 
+export type DraftAutosaveState = {
+  hydrated: boolean;
+  dirty: boolean;
+  externalChange: boolean;
+};
+
+export function shouldAutosaveDraft(state: DraftAutosaveState): boolean {
+  return state.hydrated && state.dirty && !state.externalChange;
+}
+
 export function createPublicationRevision(
   project: MotusProject,
   createdAt = new Date().toISOString(),
