@@ -156,6 +156,7 @@ export type MotusPublicationRevision = {
   language: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  coverSceneId: string;
   scenes: MotusScene[];
 };
 
@@ -168,6 +169,7 @@ export type MotusProject = {
   language: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  coverSceneId: string;
   publishedRevision: number;
   publications: MotusPublicationRevision[];
   scenes: MotusScene[];
@@ -180,8 +182,22 @@ export type MotusReaderSource = {
   title: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  coverSceneId: string;
   scenes: MotusScene[];
 };
+
+export function resolveCoverSceneId(
+  scenes: Array<Pick<MotusScene, 'id'>>,
+  candidate: unknown,
+): string {
+  if (
+    typeof candidate === 'string' &&
+    scenes.some((scene) => scene.id === candidate)
+  ) {
+    return candidate;
+  }
+  return scenes[0]?.id ?? '';
+}
 
 export function resolveReaderSource(
   project: MotusProject,
@@ -194,6 +210,7 @@ export function resolveReaderSource(
         title: revision.title,
         contentRating: revision.contentRating,
         visibility: revision.visibility,
+        coverSceneId: resolveCoverSceneId(revision.scenes, revision.coverSceneId),
         scenes: revision.scenes,
       }
     : {
@@ -202,6 +219,7 @@ export function resolveReaderSource(
         title: project.title,
         contentRating: project.contentRating,
         visibility: project.visibility,
+        coverSceneId: resolveCoverSceneId(project.scenes, project.coverSceneId),
         scenes: project.scenes,
       };
 }
@@ -228,6 +246,9 @@ export function getPublicationReadiness(
     issues.push(`Shorten the title to ${MAX_PROJECT_TITLE_LENGTH} characters`);
   }
   if (visibleLayerCount === 0) issues.push('Add at least one visible layer');
+  if (!project.scenes.some((scene) => scene.id === project.coverSceneId)) {
+    issues.push('Choose a cover scene');
+  }
 
   return {
     ready: issues.length === 0,
@@ -461,6 +482,7 @@ export const createDefaultProject = (): MotusProject => ({
   language: 'en',
   contentRating: 'all-ages',
   visibility: 'private',
+  coverSceneId: 'scene-1',
   publishedRevision: 0,
   publications: [],
   updatedAt: new Date().toISOString(),
@@ -497,6 +519,7 @@ export function createBlankProject(
   updatedAt = new Date().toISOString(),
 ): MotusProject {
   const projectId = id.trim() || 'untitled-work';
+  const openingSceneId = `${projectId}-scene-1`;
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: projectId,
@@ -506,12 +529,13 @@ export function createBlankProject(
     language: 'en',
     contentRating: 'all-ages',
     visibility: 'private',
+    coverSceneId: openingSceneId,
     publishedRevision: 0,
     publications: [],
     updatedAt,
     scenes: [
       {
-        id: `${projectId}-scene-1`,
+        id: openingSceneId,
         name: 'Opening scene',
         background: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
         elements: [],
@@ -719,6 +743,7 @@ export function createPublicationRevision(
     language: project.language,
     contentRating: project.contentRating,
     visibility: project.visibility,
+    coverSceneId: resolveCoverSceneId(project.scenes, project.coverSceneId),
     scenes: structuredClone(project.scenes),
   };
 }
@@ -737,6 +762,7 @@ export function hasUnpublishedChanges(project: MotusProject): boolean {
     published.language !== project.language ||
     published.contentRating !== project.contentRating ||
     published.visibility !== project.visibility ||
+    published.coverSceneId !== project.coverSceneId ||
     JSON.stringify(published.scenes) !== JSON.stringify(project.scenes)
   );
 }
@@ -756,6 +782,7 @@ export function restorePublicationToDraft(
   restored.language = revision.language;
   restored.contentRating = revision.contentRating;
   restored.visibility = revision.visibility;
+  restored.coverSceneId = revision.coverSceneId;
   restored.scenes = structuredClone(revision.scenes);
   restored.updatedAt = updatedAt;
   return restored;
@@ -988,6 +1015,7 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
   const publications: MotusPublicationRevision[] = publicationValues.map(
     (publicationValue) => {
       const revision = publicationValue as UnknownRecord;
+      const scenes = normalizeScenes(revision.scenes as unknown[]);
       return {
         id: revision.id as string,
         revision: revision.revision as number,
@@ -999,7 +1027,8 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
         language: typeof revision.language === 'string' ? revision.language : 'en',
         contentRating: normalizeContentRating(revision.contentRating),
         visibility: normalizeVisibility(revision.visibility),
-        scenes: normalizeScenes(revision.scenes as unknown[]),
+        coverSceneId: resolveCoverSceneId(scenes, revision.coverSceneId),
+        scenes,
       };
     },
   );
@@ -1019,6 +1048,7 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
     id: 'imported-work',
     title: candidate.title,
   }).replace(/\.motus\.json$/, '');
+  const scenes = normalizeScenes(candidate.scenes as unknown[]);
 
   return {
     error: null,
@@ -1035,9 +1065,10 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
       language: typeof candidate.language === 'string' ? candidate.language : 'en',
       contentRating: normalizeContentRating(candidate.contentRating),
       visibility: normalizeVisibility(candidate.visibility),
+      coverSceneId: resolveCoverSceneId(scenes, candidate.coverSceneId),
       publishedRevision,
       publications,
-      scenes: normalizeScenes(candidate.scenes as unknown[]),
+      scenes,
       updatedAt,
     },
   };

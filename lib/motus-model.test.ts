@@ -50,6 +50,7 @@ void test('blank projects start private with one editable scene', () => {
   assert.equal(project.updatedAt, '2026-08-29T02:00:00.000Z');
   assert.equal(project.scenes.length, 1);
   assert.equal(project.scenes[0].id, 'work-123-scene-1');
+  assert.equal(project.coverSceneId, 'work-123-scene-1');
   assert.deepEqual(project.scenes[0].elements, []);
   assert.deepEqual(project.publications, []);
 });
@@ -337,8 +338,10 @@ void test('project import normalizes optional metadata without losing history', 
   project.publishedRevision = 1;
   const candidate = structuredClone(project) as unknown as Record<string, unknown>;
   delete candidate.id;
+  delete candidate.coverSceneId;
   delete candidate.updatedAt;
   const publications = candidate.publications as Array<Record<string, unknown>>;
+  delete publications[0].coverSceneId;
   delete publications[0].description;
   delete publications[0].tags;
   delete publications[0].visibility;
@@ -352,20 +355,25 @@ void test('project import normalizes optional metadata without losing history', 
   assert.equal(result.project.publications[0].description, '');
   assert.deepEqual(result.project.publications[0].tags, []);
   assert.equal(result.project.publications[0].visibility, 'private');
+  assert.equal(result.project.coverSceneId, 'scene-1');
+  assert.equal(result.project.publications[0].coverSceneId, 'scene-1');
   assert.equal(result.project.updatedAt, '1970-01-01T00:00:00.000Z');
 });
 
 void test('published revisions remain immutable when the draft changes', () => {
   const project = createDefaultProject();
+  project.coverSceneId = 'scene-2';
   const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
 
   project.title = 'Changed draft title';
+  project.coverSceneId = 'scene-3';
   project.tags.push('new tag');
   project.scenes[0].elements[0].text = 'Changed draft scene';
 
   assert.equal(revision.revision, 1);
   assert.equal(revision.createdAt, '2026-08-29T00:00:00.000Z');
   assert.equal(revision.title, 'Signal in the Fog');
+  assert.equal(revision.coverSceneId, 'scene-2');
   assert.deepEqual(revision.tags, ['science fiction', 'mystery']);
   assert.equal(revision.scenes[0].elements[0].text, 'Something moved beyond the fog.');
 });
@@ -380,6 +388,10 @@ void test('publication changes are detected against the current revision', () =>
   assert.equal(hasUnpublishedChanges(project), false);
 
   project.scenes[0].elements[0].text = 'A revised opening';
+  assert.equal(hasUnpublishedChanges(project), true);
+
+  project.scenes[0].elements[0].text = revision.scenes[0].elements[0].text;
+  project.coverSceneId = 'scene-2';
   assert.equal(hasUnpublishedChanges(project), true);
 });
 
@@ -396,6 +408,7 @@ void test('reader source defaults to the edited draft after publication', () => 
   assert.equal(draftSource.mode, 'draft');
   assert.equal(draftSource.title, 'Edited draft title');
   assert.equal(draftSource.contentRating, 'mature');
+  assert.equal(draftSource.coverSceneId, 'scene-1');
   assert.equal(draftSource.scenes[0].name, 'Edited draft scene');
 
   const revisionSource = resolveReaderSource(project, revision);
@@ -403,6 +416,7 @@ void test('reader source defaults to the edited draft after publication', () => 
   assert.equal(revisionSource.revision, 1);
   assert.equal(revisionSource.title, 'Signal in the Fog');
   assert.equal(revisionSource.contentRating, 'all-ages');
+  assert.equal(revisionSource.coverSceneId, 'scene-1');
   assert.equal(revisionSource.scenes[0].name, 'The signal');
 });
 
@@ -425,6 +439,10 @@ void test('publication readiness blocks untitled or invisible work', () => {
   blank.scenes[0].elements[0].visible = true;
   assert.equal(getPublicationReadiness(blank).ready, true);
 
+  blank.coverSceneId = 'missing-scene';
+  assert.deepEqual(getPublicationReadiness(blank).issues, ['Choose a cover scene']);
+  blank.coverSceneId = blank.scenes[0].id;
+
   blank.title = 'x'.repeat(161);
   assert.deepEqual(getPublicationReadiness(blank).issues, [
     'Shorten the title to 160 characters',
@@ -433,10 +451,12 @@ void test('publication readiness blocks untitled or invisible work', () => {
 
 void test('a published revision can be recovered as a new editable draft', () => {
   const project = createDefaultProject();
+  project.coverSceneId = 'scene-2';
   const revision = createPublicationRevision(project, '2026-08-29T00:00:00.000Z');
   project.publications.push(revision);
   project.publishedRevision = revision.revision;
   project.title = 'Later draft';
+  project.coverSceneId = 'scene-3';
   project.scenes[0].elements[0].text = 'Later scene copy';
 
   const restored = restorePublicationToDraft(
@@ -447,6 +467,7 @@ void test('a published revision can be recovered as a new editable draft', () =>
 
   assert.ok(restored);
   assert.equal(restored.title, revision.title);
+  assert.equal(restored.coverSceneId, 'scene-2');
   assert.equal(restored.scenes[0].elements[0].text, revision.scenes[0].elements[0].text);
   assert.equal(restored.updatedAt, '2026-08-29T01:00:00.000Z');
   assert.equal(restored.publishedRevision, 1);

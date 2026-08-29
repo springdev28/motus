@@ -87,6 +87,7 @@ import {
   reorderScenes,
   resetProjectTimeline,
   resolveDraftConflict,
+  resolveCoverSceneId,
   resolveEditorSelection,
   resolveReaderSource,
   resolveSelectionAfterElementDeletion,
@@ -953,6 +954,10 @@ export function MotusStudio() {
     const nextScene = project.scenes[sceneIndex === 0 ? 1 : sceneIndex - 1];
     commitProject((draft) => {
       draft.scenes = draft.scenes.filter((scene) => scene.id !== activeScene.id);
+      draft.coverSceneId = resolveCoverSceneId(
+        draft.scenes,
+        draft.coverSceneId,
+      );
     });
     setActiveSceneId(nextScene.id);
     setSelectedElementId(nextScene.elements.at(-1)?.id ?? '');
@@ -1767,6 +1772,26 @@ export function MotusStudio() {
                 value={publishTagsInput}
               />
               <small className="publish-field-hint">Comma-separated · up to 8 tags</small>
+            </label>
+
+            <label className="publish-field" htmlFor="publish-cover-scene">
+              <span>Cover scene</span>
+              <NativeSelect
+                id="publish-cover-scene"
+                onChange={(event) => commitProject((draft) => {
+                  draft.coverSceneId = event.target.value;
+                })}
+                value={project.coverSceneId}
+              >
+                {project.scenes.map((scene, index) => (
+                  <NativeSelectOption key={scene.id} value={scene.id}>
+                    {String(index + 1).padStart(2, '0')} · {scene.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <small className="publish-field-hint">
+                Used as this alpha revision’s cover metadata
+              </small>
             </label>
 
             <div className="publish-field-row">
