@@ -88,6 +88,7 @@ import {
   createPublicationRevision,
   describeElementForAccessibility,
   detectImageFormat,
+  findSupportedImageFile,
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
@@ -1500,7 +1501,14 @@ export function MotusStudio() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      const modalOpen = readerOpen || publishOpen || projectDetailsOpen || Boolean(pendingProjectImport) || Boolean(pendingRevisionRemoval) || newWorkOpen || conflictOpen;
+      const modalOpen =
+        readerOpen ||
+        publishOpen ||
+        projectDetailsOpen ||
+        Boolean(pendingProjectImport) ||
+        Boolean(pendingRevisionRemoval) ||
+        newWorkOpen ||
+        conflictOpen;
       const insideNativeControl = target?.closest(
         'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
@@ -1554,11 +1562,36 @@ export function MotusStudio() {
       }
     };
 
+    const onPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const insideTextControl = target?.closest(
+        'input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"]',
+      );
+      const modalOpen = readerOpen || publishOpen || projectDetailsOpen || Boolean(pendingProjectImport) || Boolean(pendingRevisionRemoval) || newWorkOpen || conflictOpen;
+      const clipboard = event.clipboardData;
+      if (insideTextControl || modalOpen || !clipboard) return;
+
+      let image = findSupportedImageFile(clipboard.files);
+      if (!image) {
+        const itemFiles = Array.from(clipboard.items)
+          .map((item) => (item.kind === 'file' ? item.getAsFile() : null))
+          .filter((file): file is File => file !== null);
+        image = findSupportedImageFile(itemFiles);
+      }
+      if (!image) return;
+
+      event.preventDefault();
+      void uploadImage(image);
+    };
+
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('paste', onPaste);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('paste', onPaste);
     };
   });
 
@@ -1846,13 +1879,13 @@ export function MotusStudio() {
           </div>
 
           {activeScene.elements.length === 0 ? (
-            <div className="empty-layers"><Square /><strong>Blank scene</strong><p>Add text, shapes, speech, or an image from the toolbar.</p></div>
+            <div className="empty-layers"><Square /><strong>Blank scene</strong><p>Add from the toolbar, or drop or paste a PNG or WebP.</p></div>
           ) : null}
         </aside>
 
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
-            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag or use arrow keys · Shift moves 10 px</span><kbd>⌘/Ctrl+S save</kbd><kbd>⌘/Ctrl+D duplicate</kbd><kbd>⌫ delete</kbd></div>
+            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag, paste, or use arrow keys · Shift moves 10 px</span><kbd>⌘/Ctrl+S save</kbd><kbd>⌘/Ctrl+D duplicate</kbd><kbd>⌫ delete</kbd></div>
             <output aria-live="polite" className="workspace-notice">{displayedNotice}</output>
             <fieldset className="zoom-control" aria-label="Canvas zoom">
               <button aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 10))} type="button">−</button>
@@ -1887,9 +1920,7 @@ export function MotusStudio() {
               event.preventDefault();
               setImageDropActive(false);
               const files = Array.from(event.dataTransfer.files);
-              const image = files.find((file) =>
-                file.type === 'image/png' || file.type === 'image/webp'
-              ) ?? files[0];
+              const image = findSupportedImageFile(files) ?? files[0];
               void uploadImage(image);
             }}
             onKeyDown={(event) => {

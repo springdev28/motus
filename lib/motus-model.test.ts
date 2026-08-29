@@ -20,7 +20,7 @@ import {
   createPublicationRevision,
   describeElementForAccessibility,
   detectImageFormat,
-  hasUnpublishedChanges,
+  findSupportedImageFile,
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
@@ -31,6 +31,7 @@ import {
   getTabIndexForKey,
   hasFileDrag,
   hasPointerDragStarted,
+  hasUnpublishedChanges,
   parseProjectTags,
   recordProjectHistory,
   removePublicationRevision,
@@ -932,6 +933,16 @@ void test('file drags are distinguished from internal text drags', () => {
   assert.equal(hasFileDrag(['text/plain', 'Files']), true);
   assert.equal(hasFileDrag(new Set(['files'])), true);
   assert.equal(hasFileDrag(['text/plain', 'text/html']), false);
+});
+
+void test('supported clipboard and drop images select the first safe format', () => {
+  const jpeg = { type: 'image/jpeg', name: 'photo.jpg' };
+  const png = { type: 'image/png', name: 'shot.png' };
+  const webp = { type: 'image/webp', name: 'art.webp' };
+
+  assert.equal(findSupportedImageFile([jpeg, png, webp]), png);
+  assert.equal(findSupportedImageFile(new Set([webp, png])), webp);
+  assert.equal(findSupportedImageFile([jpeg]), undefined);
 });
 
 void test('image validation enforces format, storage, and decoded dimensions', () => {

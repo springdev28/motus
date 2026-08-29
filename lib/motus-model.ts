@@ -55,6 +55,14 @@ export function hasFileDrag(types: Iterable<string>): boolean {
   return Array.from(types).some((type) => type.toLowerCase() === 'files');
 }
 
+export function findSupportedImageFile<T extends { type: string }>(
+  files: Iterable<T>,
+): T | undefined {
+  return Array.from(files).find(
+    (file) => file.type === 'image/png' || file.type === 'image/webp',
+  );
+}
+
 export function validateImageAsset(metadata: ImageAssetMetadata): string | null {
   if (metadata.mime !== 'image/png' && metadata.mime !== 'image/webp') {
     return 'Use a PNG or WebP image';
