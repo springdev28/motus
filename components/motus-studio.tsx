@@ -69,6 +69,8 @@ import {
   createProjectBackupFileName,
   createPublicationRevision,
   detectImageFormat,
+  hasUnpublishedChanges,
+  parseProjectTags,
   recordProjectHistory,
   reorderScenes,
   resolveDraftConflict,
@@ -360,6 +362,9 @@ export function MotusStudio() {
   const [previewKey, setPreviewKey] = useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [publishTagsInput, setPublishTagsInput] = useState(
+    'science fiction, mystery',
+  );
   const [newWorkOpen, setNewWorkOpen] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [externalDraftChange, setExternalDraftChange] = useState(false);
@@ -875,6 +880,14 @@ export function MotusStudio() {
   };
 
   const publishRevision = () => {
+    if (externalDraftChange) {
+      setConflictOpen(true);
+      return;
+    }
+    if (!hasUnpublishedChanges(project)) {
+      setNotice('Published revision is already current');
+      return;
+    }
     const createdAt = nowIso();
     const revision = createPublicationRevision(project, createdAt);
     commitProject((draft) => {
@@ -1029,6 +1042,15 @@ export function MotusStudio() {
     }
     if (persistProject(project)) setIsDirty(false);
   };
+  const openPublish = () => {
+    if (externalDraftChange) {
+      setConflictOpen(true);
+      return;
+    }
+    setPublishTagsInput(project.tags.join(', '));
+    setPublishOpen(true);
+  };
+  const publicationHasChanges = hasUnpublishedChanges(project);
   const displayedNotice = externalDraftChange
     ? 'Autosave paused · draft changed in another tab'
     : isDirty
@@ -1092,7 +1114,7 @@ export function MotusStudio() {
             <Play data-icon="inline-start" fill="currentColor" />Preview
           </Button>
           <Button onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" />Reader</Button>
-          <Button onClick={() => setPublishOpen(true)}><Send data-icon="inline-start" />Publish</Button>
+          <Button onClick={openPublish}><Send data-icon="inline-start" />Publish</Button>
           <Button aria-label="Import Motus project" onClick={() => externalDraftChange ? setConflictOpen(true) : projectInput.current?.click()} size="icon" variant="outline"><Upload /></Button>
           <Button aria-label="Export Motus project" onClick={exportProject} size="icon" variant="outline"><Download /></Button>
         </div>
@@ -1401,14 +1423,23 @@ export function MotusStudio() {
             <label className="publish-field" htmlFor="publish-tags">
               <span>Tags</span>
               <Input
-                {...textHistoryProps}
                 id="publish-tags"
-                onChange={(event) => commitProject((draft) => {
-                  draft.tags = event.target.value.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 8);
-                }, 'project:tags')}
+                maxLength={400}
+                onBlur={(event) => {
+                  endHistoryTransaction();
+                  setPublishTagsInput(parseProjectTags(event.currentTarget.value).join(', '));
+                }}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setPublishTagsInput(value);
+                  commitProject((draft) => {
+                    draft.tags = parseProjectTags(value);
+                  }, 'project:tags');
+                }}
                 placeholder="mystery, science fiction"
-                value={project.tags.join(', ')}
+                value={publishTagsInput}
               />
+              <small className="publish-field-hint">Comma-separated · up to 8 tags</small>
             </label>
 
             <div className="publish-field-row">
@@ -1468,8 +1499,12 @@ export function MotusStudio() {
           </div>
 
           <div className="publish-actions">
-            <span>Next: revision {project.publishedRevision + 1}</span>
-            <Button onClick={publishRevision}><Send />Publish revision</Button>
+            <span>
+              {publicationHasChanges
+                ? `Next: revision ${project.publishedRevision + 1}`
+                : `Revision ${project.publishedRevision} is current`}
+            </span>
+            <Button disabled={!publicationHasChanges || externalDraftChange} onClick={publishRevision}><Send />Publish revision</Button>
           </div>
         </DialogContent>
       </Dialog>

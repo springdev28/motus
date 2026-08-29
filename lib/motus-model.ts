@@ -15,6 +15,8 @@ export const MAX_IMAGE_BYTES = 750_000;
 export const MAX_IMAGE_DIMENSION = 4_096;
 export const MAX_IMAGE_PIXELS = 12_000_000;
 export const MAX_PROJECT_FILE_BYTES = 12_000_000;
+export const MAX_PROJECT_TAGS = 8;
+export const MAX_PROJECT_TAG_LENGTH = 40;
 const MAX_PROJECT_SCENES = 100;
 const MAX_SCENE_ELEMENTS = 500;
 const MAX_ELEMENT_TEXT_LENGTH = 50_000;
@@ -186,6 +188,27 @@ const finite = (value: unknown, fallback: number) =>
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value));
+
+function sanitizeProjectTags(values: unknown[]): string[] {
+  const tags: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const tag = value.trim().replace(/\s+/g, ' ').slice(0, MAX_PROJECT_TAG_LENGTH);
+    const key = tag.toLocaleLowerCase();
+    if (!tag || seen.has(key)) continue;
+    tags.push(tag);
+    seen.add(key);
+    if (tags.length === MAX_PROJECT_TAGS) break;
+  }
+
+  return tags;
+}
+
+export function parseProjectTags(value: string): string[] {
+  return sanitizeProjectTags(value.split(','));
+}
 
 function migrateMotion(value: Partial<ElementMotion> | undefined): ElementMotion {
   return {
@@ -540,6 +563,24 @@ export function createPublicationRevision(
   };
 }
 
+export function hasUnpublishedChanges(project: MotusProject): boolean {
+  const published =
+    project.publications.find(
+      (revision) => revision.revision === project.publishedRevision,
+    ) ?? project.publications.at(-1);
+  if (!published) return true;
+
+  return (
+    published.title !== project.title ||
+    published.description !== project.description ||
+    JSON.stringify(published.tags) !== JSON.stringify(project.tags) ||
+    published.language !== project.language ||
+    published.contentRating !== project.contentRating ||
+    published.visibility !== project.visibility ||
+    JSON.stringify(published.scenes) !== JSON.stringify(project.scenes)
+  );
+}
+
 export function restorePublicationToDraft(
   project: MotusProject,
   revisionId: string,
@@ -711,9 +752,7 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
 }
 
 function normalizeTags(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((tag): tag is string => typeof tag === 'string').slice(0, 8)
-    : [];
+  return Array.isArray(value) ? sanitizeProjectTags(value) : [];
 }
 
 function normalizeContentRating(value: unknown): ContentRating {

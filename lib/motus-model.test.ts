@@ -15,6 +15,8 @@ import {
   createProjectBackupFileName,
   createPublicationRevision,
   detectImageFormat,
+  hasUnpublishedChanges,
+  parseProjectTags,
   recordProjectHistory,
   reorderScenes,
   resolveDraftConflict,
@@ -50,6 +52,18 @@ void test('project backup names are portable and never empty', () => {
     createProjectBackupFileName({ id: 'fallback', title: '✨' }),
     'untitled-work.motus.json',
   );
+});
+
+void test('project tags preserve normal comma-separated entry safely', () => {
+  assert.deepEqual(
+    parseProjectTags(' mystery, Science   Fiction, mystery, quiet horror '),
+    ['mystery', 'Science Fiction', 'quiet horror'],
+  );
+  assert.equal(
+    parseProjectTags('one,two,three,four,five,six,seven,eight,nine').length,
+    8,
+  );
+  assert.equal(parseProjectTags('x'.repeat(80))[0].length, 40);
 });
 
 void test('continuous edit gestures occupy one undo history entry', () => {
@@ -276,6 +290,19 @@ void test('published revisions remain immutable when the draft changes', () => {
   assert.equal(revision.title, 'Signal in the Fog');
   assert.deepEqual(revision.tags, ['science fiction', 'mystery']);
   assert.equal(revision.scenes[0].elements[0].text, 'Something moved beyond the fog.');
+});
+
+void test('publication changes are detected against the current revision', () => {
+  const project = createDefaultProject();
+  assert.equal(hasUnpublishedChanges(project), true);
+
+  const revision = createPublicationRevision(project, '2026-08-29T03:00:00.000Z');
+  project.publications.push(revision);
+  project.publishedRevision = revision.revision;
+  assert.equal(hasUnpublishedChanges(project), false);
+
+  project.scenes[0].elements[0].text = 'A revised opening';
+  assert.equal(hasUnpublishedChanges(project), true);
 });
 
 void test('a published revision can be recovered as a new editable draft', () => {
