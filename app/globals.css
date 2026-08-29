@@ -1669,6 +1669,7 @@
   cursor: pointer;
 }
 .canvas-element[data-selected] {
+  z-index: 2;
   outline: 2px solid #d9ccff;
   outline-offset: 5px;
 }
@@ -1786,7 +1787,6 @@
   overflow-wrap: anywhere;
 }
 .element-image {
-  overflow: hidden;
   background: #fff;
 }
 .element-image img {
@@ -1797,21 +1797,138 @@
 }
 .resize-handle {
   position: absolute;
-  right: -11px;
-  bottom: -11px;
+  z-index: 7;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1px solid #654ee0;
+  border-radius: 3px;
+  background: white;
+  padding: 0 !important;
+  touch-action: none;
+  box-shadow: 0 1px 4px rgb(31 22 70 / 24%);
+}
+.resize-handle::after {
+  position: absolute;
+  inset: -10px;
+  content: '';
+}
+.resize-handle-nw,
+.resize-handle-ne,
+.resize-handle-se,
+.resize-handle-sw {
+  z-index: 9;
+}
+.resize-handle-nw {
+  top: -6px;
+  left: -6px;
+  cursor: nwse-resize;
+}
+.resize-handle-n {
+  top: -6px;
+  left: 50%;
+  cursor: ns-resize;
+  transform: translateX(-50%);
+}
+.resize-handle-ne {
+  top: -6px;
+  right: -6px;
+  cursor: nesw-resize;
+}
+.resize-handle-e {
+  top: 50%;
+  right: -6px;
+  cursor: ew-resize;
+  transform: translateY(-50%);
+}
+.resize-handle-se {
+  right: -6px;
+  bottom: -6px;
+  cursor: nwse-resize;
+}
+.resize-handle-s {
+  bottom: -6px;
+  left: 50%;
+  cursor: ns-resize;
+  transform: translateX(-50%);
+}
+.resize-handle-sw {
+  bottom: -6px;
+  left: -6px;
+  cursor: nesw-resize;
+}
+.resize-handle-w {
+  top: 50%;
+  left: -6px;
+  cursor: ew-resize;
+  transform: translateY(-50%);
+}
+.rotate-handle {
+  position: absolute;
+  z-index: 10;
+  top: -42px;
+  left: 50%;
   display: grid;
-  width: 21px;
-  height: 21px;
+  width: 26px;
+  height: 26px;
   place-items: center;
   border: 1px solid #654ee0;
-  border-radius: 5px;
+  border-radius: 999px;
   background: white;
+  padding: 0 !important;
   color: #4f38be;
-  cursor: nwse-resize;
+  cursor: grab;
   touch-action: none;
+  transform: translateX(-50%);
+  box-shadow: 0 2px 7px rgb(31 22 70 / 28%);
 }
-.resize-handle svg {
-  width: 11px;
+.rotate-handle::before {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 1px;
+  height: 16px;
+  background: #8874e8;
+  content: '';
+}
+.rotate-handle::after {
+  position: absolute;
+  inset: -7px;
+  content: '';
+}
+.rotate-handle:active {
+  cursor: grabbing;
+}
+.rotate-handle svg {
+  width: 13px;
+}
+.canvas-element[data-edge-top] > .resize-handle-nw,
+.canvas-element[data-edge-top] > .resize-handle-n,
+.canvas-element[data-edge-top] > .resize-handle-ne {
+  top: 2px;
+}
+.canvas-element[data-edge-right] > .resize-handle-ne,
+.canvas-element[data-edge-right] > .resize-handle-e,
+.canvas-element[data-edge-right] > .resize-handle-se {
+  right: 2px;
+}
+.canvas-element[data-edge-bottom] > .resize-handle-se,
+.canvas-element[data-edge-bottom] > .resize-handle-s,
+.canvas-element[data-edge-bottom] > .resize-handle-sw {
+  bottom: 2px;
+}
+.canvas-element[data-edge-left] > .resize-handle-sw,
+.canvas-element[data-edge-left] > .resize-handle-w,
+.canvas-element[data-edge-left] > .resize-handle-nw {
+  left: 2px;
+}
+.canvas-element[data-edge-top] > .rotate-handle {
+  top: 8px;
+}
+.canvas-element[data-edge-top] > .rotate-handle::before {
+  top: auto;
+  bottom: 100%;
+  height: 8px;
 }
 .canvas-element.is-playing {
   animation: element-enter var(--motion-duration) var(--motion-easing)
@@ -5601,19 +5718,24 @@
   .motion-inline-field select[data-slot='native-select'] {
     min-height: 40px !important;
   }
-  .resize-handle {
-    right: -18px;
-    bottom: -18px;
-    width: 40px;
-    height: 40px;
+  .resize-handle::after {
+    inset: -16px;
   }
   .canvas-edit-text-control {
     min-width: 44px;
     min-height: 44px;
     padding-inline: 10px !important;
   }
-  .resize-handle svg {
-    width: 16px;
+  .rotate-handle {
+    top: -46px;
+    width: 32px;
+    height: 32px;
+  }
+  .rotate-handle::after {
+    inset: -6px;
+  }
+  .rotate-handle svg {
+    width: 15px;
   }
 }
 
@@ -5629,6 +5751,10 @@
   .block-palette-drag-handle,
   .block-palette-empty button {
     border: 1px solid ButtonText;
+  }
+  .resize-handle,
+  .rotate-handle {
+    border: 2px solid ButtonText;
   }
   .mobile-pane-tab[data-active],
   .mobile-pane-tab[aria-pressed='true'],

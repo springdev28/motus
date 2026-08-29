@@ -371,8 +371,125 @@ void test('pointer transforms use a fixed origin and stay inside the canvas', ()
   assert.equal(source.x > 0, true);
   assert.equal(moved.x, 0);
   assert.equal(moved.y, CANVAS_HEIGHT - source.height);
-  assert.equal(resized.width, CANVAS_WIDTH);
+  assert.equal(resized.x, source.x);
+  assert.equal(resized.width, CANVAS_WIDTH - source.x);
+  assert.equal(resized.y, source.y);
   assert.equal(resized.height, MIN_ELEMENT_HEIGHT);
+});
+
+void test('directional resize handles anchor the opposite sides', () => {
+  const source = createDefaultProject().scenes[0].elements[0];
+  Object.assign(source, {
+    x: 300,
+    y: 400,
+    width: 240,
+    height: 160,
+    rotation: 0,
+  });
+
+  const west = transformElementByPointer(source, 'resize-w', -60, 0);
+  const northEast = transformElementByPointer(source, 'resize-ne', 40, -30);
+  const south = transformElementByPointer(source, 'resize-s', 0, 50);
+
+  assert.deepEqual(
+    { x: west.x, width: west.width, right: west.x + west.width },
+    { x: 240, width: 300, right: 540 },
+  );
+  assert.deepEqual(
+    {
+      x: northEast.x,
+      y: northEast.y,
+      width: northEast.width,
+      height: northEast.height,
+      left: northEast.x,
+      bottom: northEast.y + northEast.height,
+    },
+    { x: 300, y: 370, width: 280, height: 190, left: 300, bottom: 560 },
+  );
+  assert.deepEqual(
+    { y: south.y, height: south.height, top: south.y },
+    { y: 400, height: 210, top: 400 },
+  );
+});
+
+void test('directional resize follows a rotated element local axis', () => {
+  const source = createDefaultProject().scenes[0].elements[0];
+  Object.assign(source, {
+    x: 300,
+    y: 400,
+    width: 240,
+    height: 160,
+    rotation: 90,
+  });
+
+  const east = transformElementByPointer(source, 'resize-e', 0, 40);
+
+  assert.deepEqual(
+    {
+      x: east.x,
+      y: east.y,
+      width: east.width,
+      height: east.height,
+      rotation: east.rotation,
+    },
+    { x: 280, y: 420, width: 280, height: 160, rotation: 90 },
+  );
+});
+
+void test('corner resize clamps each dimension independently at canvas bounds', () => {
+  const source = createDefaultProject().scenes[0].elements[0];
+  Object.assign(source, {
+    x: 950,
+    y: 200,
+    width: 100,
+    height: 100,
+    rotation: 0,
+  });
+
+  const resized = transformElementByPointer(source, 'resize-se', 100, 300);
+
+  assert.deepEqual(
+    {
+      x: resized.x,
+      y: resized.y,
+      width: resized.width,
+      height: resized.height,
+    },
+    { x: 950, y: 200, width: 130, height: 400 },
+  );
+});
+
+void test('west resize preserves its fixed right edge at the canvas boundary', () => {
+  const source = createDefaultProject().scenes[0].elements[0];
+  Object.assign(source, {
+    x: 30,
+    y: 200,
+    width: 100,
+    height: 100,
+    rotation: 0,
+  });
+
+  const resized = transformElementByPointer(source, 'resize-w', -100, 0);
+
+  assert.deepEqual(
+    {
+      x: resized.x,
+      width: resized.width,
+      right: resized.x + resized.width,
+    },
+    { x: 0, width: 130, right: 130 },
+  );
+});
+
+void test('pointer rotation wraps cleanly inside the authored range', () => {
+  const source = createDefaultProject().scenes[0].elements[0];
+  source.rotation = 170;
+
+  const clockwise = transformElementByPointer(source, 'rotate', 35, 0);
+  const counterclockwise = transformElementByPointer(source, 'rotate', -400, 0);
+
+  assert.equal(clockwise.rotation, -155);
+  assert.equal(counterclockwise.rotation, 130);
 });
 
 void test('pointer drags ignore tap jitter across mouse, pen, and touch input', () => {

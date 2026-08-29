@@ -183,6 +183,7 @@ import {
   type BounceJump,
   type ContentRating,
   type Easing,
+  type ElementPointerTransformMode,
   type ElementType,
   type MotusElement,
   type MotionBlock,
@@ -229,6 +230,17 @@ const DEFAULT_BLOCK_WORKSPACE_LAYOUT: BlockWorkspaceLayout = {
   library: 30,
   script: 70,
 };
+
+const ELEMENT_RESIZE_HANDLES = [
+  'nw',
+  'n',
+  'ne',
+  'e',
+  'se',
+  's',
+  'sw',
+  'w',
+] as const;
 
 const STUDIO_PANEL_PRESETS: Record<
   'design' | 'motion',
@@ -1056,7 +1068,7 @@ type SceneViewProps = {
   onPointerAction?: (
     event: ReactPointerEvent<HTMLElement>,
     elementId: string,
-    mode: 'move' | 'resize',
+    mode: ElementPointerTransformMode,
   ) => void;
 };
 
@@ -1213,6 +1225,14 @@ function SceneView({
             }
             aria-pressed={interactive && !editingText ? selected : undefined}
             className={`canvas-element element-${element.type}`}
+            data-edge-bottom={
+              element.y + element.height >= CANVAS_HEIGHT - 48 || undefined
+            }
+            data-edge-left={element.x <= 48 || undefined}
+            data-edge-right={
+              element.x + element.width >= CANVAS_WIDTH - 48 || undefined
+            }
+            data-edge-top={element.y <= 140 || undefined}
             data-editing={editingText || undefined}
             data-interactive={interactive || undefined}
             data-locked={element.locked || undefined}
@@ -1325,19 +1345,34 @@ function SceneView({
               </span>
             ) : null}
             {selected && interactive && !element.locked && !editingText ? (
-              // Pointer resize stays visual-only; keyboard users resize through the inspector fields.
-              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
-              <span
-                aria-hidden="true"
-                className="resize-handle"
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  onPointerAction?.(event, element.id, 'resize');
-                }}
-                title={`Drag to resize ${element.name}`}
-              >
-                <Maximize2 />
-              </span>
+              <>
+                {ELEMENT_RESIZE_HANDLES.map((handle) => (
+                  // Pointer transforms are visual; keyboard users retain exact inspector controls.
+                  // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+                  <span
+                    aria-hidden="true"
+                    className={`resize-handle resize-handle-${handle}`}
+                    key={handle}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      onPointerAction?.(event, element.id, `resize-${handle}`);
+                    }}
+                    title={`Drag ${handle.toUpperCase()} handle to resize ${element.name}`}
+                  />
+                ))}
+                {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions */}
+                <span
+                  aria-hidden="true"
+                  className="rotate-handle"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    onPointerAction?.(event, element.id, 'rotate');
+                  }}
+                  title={`Drag to rotate ${element.name}; hold Shift to snap`}
+                >
+                  <RotateCcw />
+                </span>
+              </>
             ) : null}
           </div>
         );
@@ -3103,7 +3138,7 @@ export function MotusStudio() {
   const beginPointerAction = (
     event: ReactPointerEvent<HTMLElement>,
     elementId: string,
-    mode: 'move' | 'resize',
+    mode: ElementPointerTransformMode,
   ) => {
     const element = findElement(project, activeScene.id, elementId);
     const artboard = event.currentTarget.closest(
@@ -3133,7 +3168,17 @@ export function MotusStudio() {
       y: element.y,
       width: element.width,
       height: element.height,
+      rotation: element.rotation,
     };
+    const centerX = origin.x + origin.width / 2;
+    const centerY = origin.y + origin.height / 2;
+    const startCanvasX = ((startX - bounds.left) / bounds.width) * CANVAS_WIDTH;
+    const startCanvasY =
+      ((startY - bounds.top) / bounds.height) * CANVAS_HEIGHT;
+    const startRotationAngle = Math.atan2(
+      startCanvasY - centerY,
+      startCanvasX - centerX,
+    );
     let moved = false;
 
     function onMove(pointer: PointerEvent) {
@@ -3164,6 +3209,27 @@ export function MotusStudio() {
       }
       const deltaX = (clientDeltaX / bounds.width) * CANVAS_WIDTH;
       const deltaY = (clientDeltaY / bounds.height) * CANVAS_HEIGHT;
+      let transformDeltaX = deltaX;
+      let transformDeltaY = deltaY;
+      if (mode === 'rotate') {
+        const pointerCanvasX =
+          ((pointer.clientX - bounds.left) / bounds.width) * CANVAS_WIDTH;
+        const pointerCanvasY =
+          ((pointer.clientY - bounds.top) / bounds.height) * CANVAS_HEIGHT;
+        const pointerAngle = Math.atan2(
+          pointerCanvasY - centerY,
+          pointerCanvasX - centerX,
+        );
+        const rawAngleDelta =
+          ((pointerAngle - startRotationAngle) * 180) / Math.PI;
+        transformDeltaX = ((((rawAngleDelta + 180) % 360) + 360) % 360) - 180;
+        if (pointer.shiftKey) {
+          const snappedRotation =
+            Math.round((origin.rotation + transformDeltaX) / 15) * 15;
+          transformDeltaX = snappedRotation - origin.rotation;
+        }
+        transformDeltaY = 0;
+      }
       setProject((current) => {
         const next = cloneProject(current);
         const target = findElement(next, activeScene.id, elementId);
@@ -3173,8 +3239,8 @@ export function MotusStudio() {
           transformElementByPointer(
             { ...target, ...origin },
             mode,
-            deltaX,
-            deltaY,
+            transformDeltaX,
+            transformDeltaY,
           ),
         );
         next.updatedAt = new Date().toISOString();
@@ -3196,8 +3262,15 @@ export function MotusStudio() {
       if (pointer instanceof PointerEvent && pointer.pointerId !== pointerId)
         return;
       cleanup();
-      if (moved)
-        setNotice(mode === 'move' ? 'Element moved' : 'Element resized');
+      if (moved) {
+        setNotice(
+          mode === 'move'
+            ? 'Element moved'
+            : mode === 'rotate'
+              ? 'Element rotated'
+              : 'Element resized',
+        );
+      }
     }
 
     window.addEventListener('pointermove', onMove);
@@ -4289,7 +4362,8 @@ export function MotusStudio() {
                 pixel, or hold Shift to move it ten pixels. Use Control or
                 Command with C, X, and V to copy, cut, and paste the layer.
                 Double-click text, or press Enter on selected text, to edit it
-                directly on the stage.
+                directly on the stage. For exact keyboard resizing and rotation,
+                use Width, Height, and Rotation in the Design inspector.
               </span>
               {inspectorTab === 'design' ? (
                 <>

@@ -6,6 +6,18 @@ export const MIN_ELEMENT_WIDTH = 60;
 export const MIN_ELEMENT_HEIGHT = 50;
 
 export type ElementType = 'shape' | 'text' | 'speech' | 'image';
+export type ElementPointerTransformMode =
+  | 'move'
+  | 'resize'
+  | 'resize-n'
+  | 'resize-ne'
+  | 'resize-e'
+  | 'resize-se'
+  | 'resize-s'
+  | 'resize-sw'
+  | 'resize-w'
+  | 'resize-nw'
+  | 'rotate';
 export type Easing = 'linear' | 'ease-out' | 'ease-in-out';
 export const MOTION_BLOCK_CATEGORY_IDS = [
   'event',
@@ -2701,23 +2713,134 @@ export function constrainElementToCanvas(
 
 export function transformElementByPointer(
   element: MotusElement,
-  mode: 'move' | 'resize',
+  mode: ElementPointerTransformMode,
   deltaX: number,
   deltaY: number,
 ): MotusElement {
-  const transformed = {
-    ...element,
-    ...(mode === 'move'
-      ? {
-          x: Math.round(element.x + deltaX),
-          y: Math.round(element.y + deltaY),
-        }
-      : {
-          width: Math.round(element.width + deltaX),
-          height: Math.round(element.height + deltaY),
-        }),
+  if (mode === 'move') {
+    return constrainElementToCanvas({
+      ...element,
+      x: Math.round(element.x + deltaX),
+      y: Math.round(element.y + deltaY),
+    });
+  }
+
+  if (mode === 'rotate') {
+    const rotation =
+      ((((element.rotation + deltaX + 180) % 360) + 360) % 360) - 180;
+    return constrainElementToCanvas({
+      ...element,
+      rotation: Math.round(rotation),
+    });
+  }
+
+  const handle = mode === 'resize' ? 'se' : mode.slice('resize-'.length);
+  const resizeWest = handle.includes('w');
+  const resizeEast = handle.includes('e');
+  const resizeNorth = handle.includes('n');
+  const resizeSouth = handle.includes('s');
+  const radians = (element.rotation * Math.PI) / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  const localDeltaX = deltaX * cosine + deltaY * sine;
+  const localDeltaY = -deltaX * sine + deltaY * cosine;
+  const widthDelta = resizeWest ? -localDeltaX : resizeEast ? localDeltaX : 0;
+  const heightDelta = resizeNorth
+    ? -localDeltaY
+    : resizeSouth
+      ? localDeltaY
+      : 0;
+  const targetWidth = clamp(
+    element.width + widthDelta,
+    MIN_ELEMENT_WIDTH,
+    CANVAS_WIDTH,
+  );
+  const targetHeight = clamp(
+    element.height + heightDelta,
+    MIN_ELEMENT_HEIGHT,
+    CANVAS_HEIGHT,
+  );
+  const resizeToDimensions = (
+    widthCandidate: number,
+    heightCandidate: number,
+  ) => {
+    const width = Math.round(widthCandidate);
+    const height = Math.round(heightCandidate);
+    const localCenterShiftX = resizeWest
+      ? -(width - element.width) / 2
+      : resizeEast
+        ? (width - element.width) / 2
+        : 0;
+    const localCenterShiftY = resizeNorth
+      ? -(height - element.height) / 2
+      : resizeSouth
+        ? (height - element.height) / 2
+        : 0;
+    const centerX =
+      element.x +
+      element.width / 2 +
+      localCenterShiftX * cosine -
+      localCenterShiftY * sine;
+    const centerY =
+      element.y +
+      element.height / 2 +
+      localCenterShiftX * sine +
+      localCenterShiftY * cosine;
+    return {
+      x: Math.round(centerX - width / 2),
+      y: Math.round(centerY - height / 2),
+      width,
+      height,
+    };
   };
-  return constrainElementToCanvas(transformed);
+  const fitsCanvas = (candidate: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }) =>
+    candidate.x >= 0 &&
+    candidate.y >= 0 &&
+    candidate.x + candidate.width <= CANVAS_WIDTH &&
+    candidate.y + candidate.height <= CANVAS_HEIGHT;
+
+  let resized = resizeToDimensions(element.width, element.height);
+  const advanceDimension = (property: 'width' | 'height', target: number) => {
+    const start = resized[property];
+    const resizeAtProgress = (progress: number) =>
+      resizeToDimensions(
+        property === 'width'
+          ? start + (target - start) * progress
+          : resized.width,
+        property === 'height'
+          ? start + (target - start) * progress
+          : resized.height,
+      );
+    const targetGeometry = resizeAtProgress(1);
+    if (fitsCanvas(targetGeometry)) return targetGeometry;
+
+    let lower = 0;
+    let upper = 1;
+    let bounded = resizeAtProgress(0);
+    for (let iteration = 0; iteration < 32; iteration += 1) {
+      const progress = (lower + upper) / 2;
+      const candidate = resizeAtProgress(progress);
+      if (fitsCanvas(candidate)) {
+        lower = progress;
+        bounded = candidate;
+      } else {
+        upper = progress;
+      }
+    }
+    return bounded;
+  };
+
+  resized = advanceDimension('width', targetWidth);
+  resized = advanceDimension('height', targetHeight);
+  // A height reduction can make additional width available on a rotated box.
+  resized = advanceDimension('width', targetWidth);
+
+  return { ...element, ...resized };
 }
 
 export function hasPointerDragStarted(
