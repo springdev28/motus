@@ -239,6 +239,7 @@ type SceneViewProps = {
     accelerated: boolean,
   ) => void;
   onKeyboardNudgeEnd?: () => void;
+  onElementRef?: (elementId: string, node: HTMLDivElement | null) => void;
   onPointerAction?: (
     event: ReactPointerEvent<HTMLElement>,
     elementId: string,
@@ -254,6 +255,7 @@ function SceneView({
   onSelect,
   onKeyboardNudge,
   onKeyboardNudgeEnd,
+  onElementRef,
   onPointerAction,
 }: SceneViewProps) {
   return (
@@ -345,6 +347,11 @@ function SceneView({
                 : undefined
             }
             role={interactive ? 'button' : 'img'}
+            ref={
+              interactive
+                ? (node) => onElementRef?.(element.id, node)
+                : undefined
+            }
             style={elementStyle}
             tabIndex={interactive ? 0 : undefined}
           >
@@ -469,6 +476,7 @@ export function MotusStudio() {
   const projectInput = useRef<HTMLInputElement>(null);
   const canvasStage = useRef<HTMLDivElement>(null);
   const readerScroll = useRef<HTMLDivElement>(null);
+  const canvasElementRefs = useRef(new Map<string, HTMLDivElement>());
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
@@ -519,6 +527,17 @@ export function MotusStudio() {
       setDeletionUndo(null);
     }, 8_000);
   }, []);
+
+  const focusEditorTarget = (sceneId: string, elementId = '') => {
+    window.requestAnimationFrame(() => {
+      const element = canvasElementRefs.current.get(elementId);
+      if (element?.isConnected) {
+        element.focus();
+        return;
+      }
+      sceneButtonRefs.current.get(sceneId)?.focus();
+    });
+  };
 
   const activeScene =
     project.scenes.find((scene) => scene.id === activeSceneId) ?? project.scenes[0];
@@ -845,6 +864,7 @@ export function MotusStudio() {
     undo();
     setActiveSceneId(recovery.sceneId);
     setSelectedElementId(recovery.elementId);
+    focusEditorTarget(recovery.sceneId, recovery.elementId);
   };
 
   const addElement = (
@@ -876,6 +896,7 @@ export function MotusStudio() {
     setSelectedElementId(element.id);
     setInspectorTab('design');
     setNotice(`${element.name} added`);
+    focusEditorTarget(activeScene.id, element.id);
     return true;
   };
 
@@ -902,6 +923,7 @@ export function MotusStudio() {
       sceneId: activeScene.id,
       elementId,
     });
+    focusEditorTarget(activeScene.id, nextSelectedElementId);
   };
 
   const moveLayer = (elementId: string, direction: -1 | 1) => {
@@ -1066,6 +1088,7 @@ export function MotusStudio() {
     }
     setSelectedElementId(copy.id);
     setNotice('Layer duplicated');
+    focusEditorTarget(activeScene.id, copy.id);
   };
 
   const addScene = () => {
@@ -1084,6 +1107,7 @@ export function MotusStudio() {
     setActiveSceneId(id);
     setSelectedElementId('');
     setNotice('Blank scene added');
+    focusEditorTarget(id);
   };
 
   const duplicateScene = () => {
@@ -1105,8 +1129,10 @@ export function MotusStudio() {
       return;
     }
     setActiveSceneId(copy.id);
-    setSelectedElementId(copy.elements.at(-1)?.id ?? '');
+    const selectedCopyId = copy.elements.at(-1)?.id ?? '';
+    setSelectedElementId(selectedCopyId);
     setNotice('Scene duplicated');
+    focusEditorTarget(copy.id, selectedCopyId);
   };
 
   const deleteScene = () => {
@@ -1123,13 +1149,15 @@ export function MotusStudio() {
       );
     });
     setActiveSceneId(nextScene.id);
-    setSelectedElementId(nextScene.elements.at(-1)?.id ?? '');
+    const nextSelectedElementId = nextScene.elements.at(-1)?.id ?? '';
+    setSelectedElementId(nextSelectedElementId);
     setNotice('Scene deleted');
     showDeletionUndo({
       message: `${activeScene.name} deleted`,
       sceneId: activeScene.id,
       elementId: selectedElementId,
     });
+    focusEditorTarget(nextScene.id, nextSelectedElementId);
   };
 
   const downloadProject = (candidate: MotusProject) => {
@@ -1832,6 +1860,10 @@ export function MotusStudio() {
             <div className="artboard-frame" style={{ width: `${artboardWidth}px` }}>
               <SceneView
                 interactive
+                onElementRef={(elementId, node) => {
+                  if (node) canvasElementRefs.current.set(elementId, node);
+                  else canvasElementRefs.current.delete(elementId);
+                }}
                 onKeyboardNudge={nudgeElement}
                 onKeyboardNudgeEnd={endHistoryTransaction}
                 onPointerAction={beginPointerAction}
