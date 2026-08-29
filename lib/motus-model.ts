@@ -14,12 +14,14 @@ export type SupportedImageMime = 'image/png' | 'image/webp';
 export const MAX_IMAGE_BYTES = 750_000;
 export const MAX_IMAGE_DIMENSION = 4_096;
 export const MAX_IMAGE_PIXELS = 12_000_000;
+export const MAX_ELEMENT_NAME_LENGTH = 160;
 export const MAX_PROJECT_FILE_BYTES = 12_000_000;
 export const MAX_PROJECT_TITLE_LENGTH = 160;
 export const MAX_PROJECT_TAGS = 8;
 export const MAX_PROJECT_TAG_LENGTH = 40;
 export const MAX_PROJECT_SCENES = 100;
 export const MAX_SCENE_ELEMENTS = 500;
+export const MAX_SCENE_NAME_LENGTH = 160;
 export const MAX_SCENE_THUMBNAIL_ELEMENTS = 12;
 export const MAX_ELEMENT_TEXT_LENGTH = 50_000;
 export const MAX_PROJECT_HISTORY_ENTRIES = 50;
@@ -595,6 +597,16 @@ export function createElement(
   });
 }
 
+export function createCopyName(name: string, maxLength: number): string {
+  const safeLength = Number.isFinite(maxLength)
+    ? Math.max(1, Math.floor(maxLength))
+    : 1;
+  const base = name.trim() || 'Untitled';
+  const suffix = ' copy';
+  if (safeLength <= suffix.length) return base.slice(0, safeLength);
+  return `${base.slice(0, safeLength - suffix.length)}${suffix}`;
+}
+
 export function createElementCopy(
   source: MotusElement,
   id: string,
@@ -604,7 +616,7 @@ export function createElementCopy(
   return constrainElementToCanvas({
     ...copy,
     id,
-    name: `${source.name} copy`,
+    name: createCopyName(source.name, MAX_ELEMENT_NAME_LENGTH),
     x: source.x + offset,
     y: source.y + offset,
   });
@@ -1094,6 +1106,9 @@ function validateScenes(value: unknown, context: string): string | null {
     }
     if (sceneIds.has(sceneValue.id)) return `${context} has duplicate scene IDs`;
     sceneIds.add(sceneValue.id);
+    if (sceneValue.name !== undefined && typeof sceneValue.name !== 'string') {
+      return `${context} contains an invalid scene name`;
+    }
     if (!Array.isArray(sceneValue.elements)) {
       return `${context} contains a scene with invalid layers`;
     }
@@ -1112,6 +1127,9 @@ function validateScenes(value: unknown, context: string): string | null {
       }
       if (elementIds.has(elementValue.id)) return `${context} has duplicate layer IDs`;
       elementIds.add(elementValue.id);
+      if (elementValue.name !== undefined && typeof elementValue.name !== 'string') {
+        return `${context} contains an invalid layer name`;
+      }
       if (!isElementType(elementValue.type)) {
         return `${context} contains an unsupported layer type`;
       }
@@ -1136,12 +1154,26 @@ function validateScenes(value: unknown, context: string): string | null {
   return null;
 }
 
+function normalizeEditableName(
+  value: unknown,
+  fallback: string,
+  maxLength: number,
+): string {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim();
+  return normalized ? normalized.slice(0, maxLength) : fallback;
+}
+
 function normalizeScenes(value: unknown[]): MotusScene[] {
   return value.map((sceneValue) => {
     const item = sceneValue as UnknownRecord;
     return {
       id: item.id as string,
-      name: typeof item.name === 'string' ? item.name : 'Untitled scene',
+      name: normalizeEditableName(
+        item.name,
+        'Untitled scene',
+        MAX_SCENE_NAME_LENGTH,
+      ),
       background: isSafeSceneBackground(item.background)
         ? item.background
         : defaultSceneBackground,
@@ -1154,10 +1186,11 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
         };
         return constrainElementToCanvas({
           id: elementValue.id as string,
-          name:
-            typeof elementValue.name === 'string'
-              ? elementValue.name
-              : `${type[0].toUpperCase()}${type.slice(1)}`,
+          name: normalizeEditableName(
+            elementValue.name,
+            `${type[0].toUpperCase()}${type.slice(1)}`,
+            MAX_ELEMENT_NAME_LENGTH,
+          ),
           type,
           x: finite(elementValue.x, 0),
           y: finite(elementValue.y, 0),

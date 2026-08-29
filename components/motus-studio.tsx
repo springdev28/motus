@@ -68,11 +68,13 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  MAX_ELEMENT_NAME_LENGTH,
   MAX_ELEMENT_TEXT_LENGTH,
   MAX_PROJECT_FILE_BYTES,
   MAX_PROJECT_SCENES,
   MAX_PROJECT_TITLE_LENGTH,
   MAX_SCENE_ELEMENTS,
+  MAX_SCENE_NAME_LENGTH,
   MAX_SCENE_THUMBNAIL_ELEMENTS,
   MIN_ELEMENT_HEIGHT,
   MIN_ELEMENT_WIDTH,
@@ -82,6 +84,7 @@ import {
   compileElementMotion,
   constrainElementToCanvas,
   createBlankProject,
+  createCopyName,
   createDefaultProject,
   createElement,
   createElementCopy,
@@ -1143,7 +1146,7 @@ export function MotusStudio() {
     }
     const copy = structuredClone(activeScene);
     copy.id = uniqueId('scene');
-    copy.name = `${activeScene.name} copy`;
+    copy.name = createCopyName(activeScene.name, MAX_SCENE_NAME_LENGTH);
     copy.elements = copy.elements.map((element, index) => ({
       ...element,
       id: `${copy.id}-${element.type}-${index}`,
@@ -1880,6 +1883,7 @@ export function MotusStudio() {
               <Input
                 {...textHistoryProps}
                 id="active-scene-name"
+                maxLength={MAX_SCENE_NAME_LENGTH}
                 onChange={(event) => commitProject((draft) => {
                   const scene = draft.scenes.find((item) => item.id === activeScene.id);
                   if (scene) scene.name = event.target.value;
@@ -2118,7 +2122,7 @@ export function MotusStudio() {
 
                 {inspectorTab === 'design' ? (
                   <div className="property-stack">
-                    <label htmlFor="selected-layer-name"><span>Layer name</span><Input {...textHistoryProps} id="selected-layer-name" onChange={(event) => updateElement(selectedElement.id, (item) => { item.name = event.target.value; }, `element:${selectedElement.id}:name`)} value={selectedElement.name} /></label>
+                    <label htmlFor="selected-layer-name"><span>Layer name</span><Input {...textHistoryProps} id="selected-layer-name" maxLength={MAX_ELEMENT_NAME_LENGTH} onChange={(event) => updateElement(selectedElement.id, (item) => { item.name = event.target.value; }, `element:${selectedElement.id}:name`)} value={selectedElement.name} /></label>
                     {(selectedElement.type === 'text' || selectedElement.type === 'speech') ? (
                       <label htmlFor="selected-layer-text"><span>Text</span><Textarea {...textHistoryProps} id="selected-layer-text" maxLength={MAX_ELEMENT_TEXT_LENGTH} onChange={(event) => updateElement(selectedElement.id, (item) => { item.text = event.target.value; }, `element:${selectedElement.id}:text`)} value={selectedElement.text ?? ''} /></label>
                     ) : null}

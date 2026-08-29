@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  MAX_ELEMENT_NAME_LENGTH,
+  MAX_SCENE_NAME_LENGTH,
   MIN_ELEMENT_HEIGHT,
   MIN_ELEMENT_WIDTH,
   MOTION_SCHEMA_VERSION,
@@ -13,6 +15,7 @@ import {
   compileElementMotion,
   createBlankProject,
   constrainElementToCanvas,
+  createCopyName,
   createDefaultProject,
   createElement,
   createElementCopy,
@@ -362,6 +365,10 @@ void test('element copies are independent and stay inside the canvas', () => {
   copy.motion.moveX = 999;
   assert.equal(source.text, 'Original');
   assert.notEqual(source.motion.moveX, 999);
+  assert.equal(
+    createCopyName('N'.repeat(MAX_ELEMENT_NAME_LENGTH), MAX_ELEMENT_NAME_LENGTH),
+    `${'N'.repeat(MAX_ELEMENT_NAME_LENGTH - 5)} copy`,
+  );
 });
 
 void test('canvas fit sizing respects both workspace axes and safe fallbacks', () => {
@@ -410,6 +417,36 @@ void test('restored drafts normalize invalid element geometry', () => {
       opacity: restored.scenes[0].elements[0].opacity,
     },
     { x: 0, y: 0, width: MIN_ELEMENT_WIDTH, height: CANVAS_HEIGHT, opacity: 0 },
+  );
+});
+
+void test('restored drafts bound editable names and reject invalid name types', () => {
+  const project = createDefaultProject();
+  project.scenes[0].name = `  ${'S'.repeat(MAX_SCENE_NAME_LENGTH + 20)}  `;
+  project.scenes[0].elements[0].name = '   ';
+  project.scenes[0].elements[1].name = 'L'.repeat(MAX_ELEMENT_NAME_LENGTH + 20);
+
+  const restored = restoreProject(JSON.stringify(project));
+
+  assert.ok(restored);
+  assert.equal(restored.scenes[0].name.length, MAX_SCENE_NAME_LENGTH);
+  assert.equal(restored.scenes[0].elements[0].name, 'Text');
+  assert.equal(
+    restored.scenes[0].elements[1].name.length,
+    MAX_ELEMENT_NAME_LENGTH,
+  );
+
+  const malformed = JSON.parse(JSON.stringify(project));
+  malformed.scenes[0].elements[0].name = 42;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(malformed)).error,
+    'Project contains an invalid layer name',
+  );
+  malformed.scenes[0].elements[0].name = 'Layer';
+  malformed.scenes[0].name = 42;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(malformed)).error,
+    'Project contains an invalid scene name',
   );
 });
 
