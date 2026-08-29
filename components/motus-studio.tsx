@@ -81,6 +81,7 @@ import {
   detectImageFormat,
   getPublicationReadiness,
   getDraftSaveStatus,
+  getKeyboardNudgeDelta,
   hasUnpublishedChanges,
   parseProjectTags,
   recordProjectHistory,
@@ -209,6 +210,12 @@ type SceneViewProps = {
   playingKey?: number;
   interactive?: boolean;
   onSelect?: (id: string) => void;
+  onKeyboardNudge?: (
+    elementId: string,
+    key: string,
+    accelerated: boolean,
+  ) => void;
+  onKeyboardNudgeEnd?: () => void;
   onPointerAction?: (
     event: ReactPointerEvent<HTMLElement>,
     elementId: string,
@@ -222,6 +229,8 @@ function SceneView({
   playingKey = 0,
   interactive = false,
   onSelect,
+  onKeyboardNudge,
+  onKeyboardNudgeEnd,
   onPointerAction,
 }: SceneViewProps) {
   return (
@@ -257,6 +266,7 @@ function SceneView({
           // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
           <div
             aria-label={describeElementForAccessibility(element)}
+            aria-pressed={interactive ? selected : undefined}
             className={`canvas-element element-${element.type} ${
               playingKey ? 'is-playing' : ''
             }`}
@@ -275,6 +285,14 @@ function SceneView({
             onKeyDown={
               interactive
                 ? (event) => {
+                    const nudge = getKeyboardNudgeDelta(event.key, event.shiftKey);
+                    if (nudge) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onSelect?.(element.id);
+                      onKeyboardNudge?.(element.id, event.key, event.shiftKey);
+                      return;
+                    }
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       onSelect?.(element.id);
@@ -282,6 +300,16 @@ function SceneView({
                   }
                 : undefined
             }
+            onKeyUp={
+              interactive
+                ? (event) => {
+                    if (getKeyboardNudgeDelta(event.key, event.shiftKey)) {
+                      onKeyboardNudgeEnd?.();
+                    }
+                  }
+                : undefined
+            }
+            onBlur={interactive ? onKeyboardNudgeEnd : undefined}
             onPointerDown={
               interactive
                 ? (event) => {
@@ -769,6 +797,27 @@ export function MotusStudio() {
       if (index < 0 || target < 0 || target >= elements.length) return;
       [elements[index], elements[target]] = [elements[target], elements[index]];
     });
+  };
+
+  const nudgeElement = (elementId: string, key: string, accelerated: boolean) => {
+    const delta = getKeyboardNudgeDelta(key, accelerated);
+    const element = findElement(project, activeScene.id, elementId);
+    if (!delta || !element) return;
+    if (element.locked) {
+      setNotice(`Unlock ${element.name} to move it`);
+      return;
+    }
+    updateElement(
+      elementId,
+      (item) => {
+        Object.assign(
+          item,
+          transformElementByPointer(item, 'move', delta.x, delta.y),
+        );
+      },
+      `element:${elementId}:keyboard-position`,
+    );
+    setNotice(`${element.name} moved${accelerated ? ' 10 px' : ' 1 px'}`);
   };
 
   const moveScene = (direction: -1 | 1) => {
@@ -1368,6 +1417,7 @@ export function MotusStudio() {
         <aside className="tool-rail" aria-label="Add and edit elements">
           {toolItems.map(({ id, label, icon: Icon }) => (
             <button
+              aria-pressed={activeTool === id}
               className="tool-button"
               data-active={activeTool === id || undefined}
               key={id}
@@ -1407,6 +1457,7 @@ export function MotusStudio() {
               {sceneBackgrounds.map((background) => (
                 <button
                   aria-label={`Use ${background.name} background`}
+                  aria-pressed={activeScene.background === background.value}
                   data-active={activeScene.background === background.value || undefined}
                   key={background.name}
                   onClick={() => commitProject((draft) => {
@@ -1426,21 +1477,25 @@ export function MotusStudio() {
               const originalIndex = activeScene.elements.findIndex((item) => item.id === element.id);
               return (
                 <div className="layer-row" data-selected={selectedElementId === element.id || undefined} key={element.id}>
-                  <button className="layer-select" onClick={() => setSelectedElementId(element.id)} type="button">
+                  <button aria-pressed={selectedElementId === element.id} className="layer-select" onClick={() => setSelectedElementId(element.id)} type="button">
                     <span className="layer-icon"><Icon /></span>
                     <span className="layer-copy"><strong>{element.name}</strong><small>{element.type}</small></span>
                   </button>
                   <div className="layer-actions">
                     <button
-                      aria-label={element.visible ? `Hide ${element.name}` : `Show ${element.name}`}
+                      aria-label={`${element.name} visibility`}
+                      aria-pressed={element.visible}
                       onClick={() => updateElement(element.id, (item) => { item.visible = !item.visible; })}
+                      title={element.visible ? `Hide ${element.name}` : `Show ${element.name}`}
                       type="button"
                     >
                       {element.visible ? <Eye /> : <EyeOff />}
                     </button>
                     <button
-                      aria-label={element.locked ? `Unlock ${element.name}` : `Lock ${element.name}`}
+                      aria-label={`${element.name} locked`}
+                      aria-pressed={element.locked}
                       onClick={() => updateElement(element.id, (item) => { item.locked = !item.locked; })}
+                      title={element.locked ? `Unlock ${element.name}` : `Lock ${element.name}`}
                       type="button"
                     >
                       {element.locked ? <Lock /> : <Unlock />}
@@ -1480,6 +1535,8 @@ export function MotusStudio() {
             <div className="artboard-frame" style={{ width: `${artboardWidth}px` }}>
               <SceneView
                 interactive
+                onKeyboardNudge={nudgeElement}
+                onKeyboardNudgeEnd={endHistoryTransaction}
                 onPointerAction={beginPointerAction}
                 onSelect={setSelectedElementId}
                 playingKey={previewKey}
@@ -1493,6 +1550,7 @@ export function MotusStudio() {
             <div className="scene-strip-copy"><span>Scenes</span><strong>{sceneIndex + 1} / {project.scenes.length}</strong></div>
             {project.scenes.map((scene, index) => (
               <button
+                aria-current={scene.id === activeScene.id ? 'true' : undefined}
                 aria-label={`Open ${scene.name}`}
                 className="scene-thumbnail"
                 data-active={scene.id === activeScene.id || undefined}

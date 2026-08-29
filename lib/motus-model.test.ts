@@ -23,6 +23,7 @@ import {
   hasUnpublishedChanges,
   getPublicationReadiness,
   getDraftSaveStatus,
+  getKeyboardNudgeDelta,
   parseProjectTags,
   recordProjectHistory,
   reorderScenes,
@@ -197,6 +198,21 @@ void test('pointer transforms use a fixed origin and stay inside the canvas', ()
   assert.equal(moved.y, CANVAS_HEIGHT - source.height);
   assert.equal(resized.width, CANVAS_WIDTH);
   assert.equal(resized.height, MIN_ELEMENT_HEIGHT);
+});
+
+void test('keyboard nudges use precise and accelerated canvas steps', () => {
+  assert.deepEqual(getKeyboardNudgeDelta('ArrowLeft'), { x: -1, y: 0 });
+  assert.deepEqual(getKeyboardNudgeDelta('ArrowDown', true), { x: 0, y: 10 });
+  assert.equal(getKeyboardNudgeDelta('Enter'), null);
+
+  const source = createDefaultProject().scenes[0].elements[0];
+  source.x = 0;
+  source.y = 0;
+  const delta = getKeyboardNudgeDelta('ArrowUp', true);
+  assert.ok(delta);
+  const moved = transformElementByPointer(source, 'move', delta.x, delta.y);
+  assert.equal(moved.x, 0);
+  assert.equal(moved.y, 0);
 });
 
 void test('restored drafts normalize invalid element geometry', () => {

@@ -363,6 +363,18 @@ export function transformElementByPointer(
   return constrainElementToCanvas(transformed);
 }
 
+export function getKeyboardNudgeDelta(
+  key: string,
+  accelerated = false,
+): { x: number; y: number } | null {
+  const distance = accelerated ? 10 : 1;
+  if (key === 'ArrowLeft') return { x: -distance, y: 0 };
+  if (key === 'ArrowRight') return { x: distance, y: 0 };
+  if (key === 'ArrowUp') return { x: 0, y: -distance };
+  if (key === 'ArrowDown') return { x: 0, y: distance };
+  return null;
+}
+
 export function compileElementMotion(element: MotusElement): CompiledElementMotion {
   const instruction = migrateMotion(element.motion);
   return {
