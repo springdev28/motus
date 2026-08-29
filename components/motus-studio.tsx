@@ -74,6 +74,7 @@ import {
   describeElementForAccessibility,
   detectImageFormat,
   getPublicationReadiness,
+  getDraftSaveStatus,
   hasUnpublishedChanges,
   parseProjectTags,
   recordProjectHistory,
@@ -386,6 +387,7 @@ export function MotusStudio() {
   const [hydrated, setHydrated] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [notice, setNotice] = useState('Ready');
+  const [saveFailed, setSaveFailed] = useState(false);
   const [deletionUndo, setDeletionUndo] = useState<DeletionUndo | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -426,7 +428,11 @@ export function MotusStudio() {
     [activeScene.elements, selectedElementId],
   );
 
-  function persistProject(candidate: MotusProject, announce = true) {
+  function persistProject(
+    candidate: MotusProject,
+    announce = true,
+    trackFailure = true,
+  ) {
     try {
       const activeSlot = window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
       const nextSlot = activeSlot === 'a' ? 'b' : 'a';
@@ -438,34 +444,42 @@ export function MotusStudio() {
         throw new Error('Draft verification failed');
       }
       window.localStorage.setItem(DRAFT_POINTER_KEY, nextSlot);
+      setSaveFailed(false);
       if (announce) setNotice('Saved with recovery');
       return true;
     } catch {
+      if (trackFailure) setSaveFailed(true);
       if (announce) setNotice('Save failed — export a backup');
       return false;
     }
   }
 
   function readSavedDraft() {
-    const activeSlot =
-      window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
-    return restoreNewestProject([
-      {
-        source: 'legacy',
-        value: window.localStorage.getItem(LEGACY_STORAGE_KEY),
-        priority: -1,
-      },
-      {
-        source: 'slot-a',
-        value: window.localStorage.getItem(DRAFT_SLOT_A_KEY),
-        priority: activeSlot === 'a' ? 1 : 0,
-      },
-      {
-        source: 'slot-b',
-        value: window.localStorage.getItem(DRAFT_SLOT_B_KEY),
-        priority: activeSlot === 'b' ? 1 : 0,
-      },
-    ]);
+    try {
+      const activeSlot =
+        window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
+      return restoreNewestProject([
+        {
+          source: 'legacy',
+          value: window.localStorage.getItem(LEGACY_STORAGE_KEY),
+          priority: -1,
+        },
+        {
+          source: 'slot-a',
+          value: window.localStorage.getItem(DRAFT_SLOT_A_KEY),
+          priority: activeSlot === 'a' ? 1 : 0,
+        },
+        {
+          source: 'slot-b',
+          value: window.localStorage.getItem(DRAFT_SLOT_B_KEY),
+          priority: activeSlot === 'b' ? 1 : 0,
+        },
+      ]);
+    } catch {
+      setSaveFailed(true);
+      setNotice('Browser storage unavailable — export a backup');
+      return null;
+    }
   }
 
   useEffect(() => {
@@ -534,6 +548,7 @@ export function MotusStudio() {
           clearDeletionUndo();
           setProject(saved.project);
           setIsDirty(false);
+          setSaveFailed(false);
           setExternalDraftChange(false);
           setConflictOpen(false);
           setNotice('Draft updated from another tab');
@@ -780,7 +795,7 @@ export function MotusStudio() {
       }
       const restored = result.project;
       restored.updatedAt = nowIso();
-      if (!persistProject(restored, false)) {
+      if (!persistProject(restored, false, false)) {
         setNotice('Imported project could not be saved — current draft kept');
         return;
       }
@@ -913,6 +928,7 @@ export function MotusStudio() {
     reconcileSelection(resolved);
     setProject(resolved);
     setIsDirty(false);
+    setSaveFailed(false);
     setExternalDraftChange(false);
     setConflictOpen(false);
     setNotice('Other tab’s draft loaded · this draft downloaded');
@@ -939,7 +955,7 @@ export function MotusStudio() {
   const startNewWork = () => {
     downloadProject(project);
     const blank = createBlankProject(uniqueId('work'), nowIso());
-    if (!persistProject(blank, false)) {
+    if (!persistProject(blank, false, false)) {
       setNotice('New work could not be saved — backup downloaded');
       return;
     }
@@ -1147,6 +1163,11 @@ export function MotusStudio() {
   const artboardWidth = Math.round(430 * (zoom / 64));
   const publicationHasChanges = hasUnpublishedChanges(project);
   const publicationReadiness = getPublicationReadiness(project);
+  const draftSaveStatus = getDraftSaveStatus({
+    dirty: isDirty,
+    externalChange: externalDraftChange,
+    saveFailed,
+  });
   const readerSource = resolveReaderSource(project, readerRevision);
   const readerDescription =
     readerSource.mode === 'revision'
@@ -1171,11 +1192,14 @@ export function MotusStudio() {
     setPublishTagsInput(project.tags.join(', '));
     setPublishOpen(true);
   };
-  const displayedNotice = externalDraftChange
-    ? 'Autosave paused · draft changed in another tab'
-    : isDirty
-      ? 'Saving changes…'
-      : notice;
+  const displayedNotice =
+    draftSaveStatus === 'conflict'
+      ? 'Autosave paused · draft changed in another tab'
+      : draftSaveStatus === 'failed'
+        ? 'Draft not saved · back up now'
+        : draftSaveStatus === 'saving'
+          ? 'Saving changes…'
+          : notice;
   const textHistoryProps = { onBlur: endHistoryTransaction };
   const continuousHistoryProps = {
     onBlur: endHistoryTransaction,
@@ -1457,6 +1481,24 @@ export function MotusStudio() {
         <div aria-atomic="true" aria-live="polite" className="deletion-undo">
           <span>{deletionUndo.message}</span>
           <Button onClick={undoDeletion} size="sm" variant="secondary"><Undo2 />Undo</Button>
+        </div>
+      ) : null}
+
+      {saveFailed ? (
+        <div aria-atomic="true" aria-live="assertive" className="save-recovery">
+          <CloudOff aria-hidden="true" />
+          <div>
+            <strong>Draft is not safely saved</strong>
+            <p>Browser storage may be full or unavailable. Download a portable backup before closing this tab.</p>
+          </div>
+          <Button
+            onClick={externalDraftChange ? () => setConflictOpen(true) : saveCurrentProject}
+            size="sm"
+            variant="outline"
+          >
+            {externalDraftChange ? 'Resolve conflict' : 'Retry save'}
+          </Button>
+          <Button onClick={exportProject} size="sm"><Download />Download backup</Button>
         </div>
       ) : null}
 

@@ -635,6 +635,18 @@ export function shouldAutosaveDraft(state: DraftAutosaveState): boolean {
   return state.hydrated && state.dirty && !state.externalChange;
 }
 
+export type DraftSaveStatus = 'conflict' | 'failed' | 'saving' | 'saved';
+
+export function getDraftSaveStatus(state: {
+  dirty: boolean;
+  externalChange: boolean;
+  saveFailed: boolean;
+}): DraftSaveStatus {
+  if (state.externalChange) return 'conflict';
+  if (state.saveFailed) return 'failed';
+  return state.dirty ? 'saving' : 'saved';
+}
+
 export function createPublicationRevision(
   project: MotusProject,
   createdAt = new Date().toISOString(),

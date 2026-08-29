@@ -20,6 +20,7 @@ import {
   detectImageFormat,
   hasUnpublishedChanges,
   getPublicationReadiness,
+  getDraftSaveStatus,
   parseProjectTags,
   recordProjectHistory,
   reorderScenes,
@@ -545,6 +546,25 @@ void test('autosave runs only for hydrated, dirty, conflict-free drafts', () => 
   assert.equal(
     shouldAutosaveDraft({ hydrated: true, dirty: true, externalChange: true }),
     false,
+  );
+});
+
+void test('draft save status prioritizes conflicts and failures', () => {
+  assert.equal(
+    getDraftSaveStatus({ dirty: true, externalChange: true, saveFailed: true }),
+    'conflict',
+  );
+  assert.equal(
+    getDraftSaveStatus({ dirty: true, externalChange: false, saveFailed: true }),
+    'failed',
+  );
+  assert.equal(
+    getDraftSaveStatus({ dirty: true, externalChange: false, saveFailed: false }),
+    'saving',
+  );
+  assert.equal(
+    getDraftSaveStatus({ dirty: false, externalChange: false, saveFailed: false }),
+    'saved',
   );
 });
 

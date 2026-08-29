@@ -429,6 +429,12 @@
 .conflict-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .deletion-undo { position: fixed; z-index: 45; bottom: 18px; left: 50%; display: flex; align-items: center; gap: 16px; transform: translateX(-50%); border: 1px solid #4d465b; border-radius: 10px; background: #211e2c; padding: 8px 9px 8px 13px; color: #f7f2ff; box-shadow: 0 16px 40px rgb(18 14 26 / 34%); font-size: 10px; font-weight: 700; }
 .deletion-undo button { flex: none; }
+.save-recovery { position: fixed; z-index: 44; top: 72px; right: 16px; display: grid; width: min(540px, calc(100vw - 32px)); grid-template-columns: 22px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; border: 1px solid #d09643; border-radius: 11px; background: #fff8e8; padding: 11px; color: #5f4b2c; box-shadow: 0 16px 42px rgb(42 31 18 / 22%); }
+.save-recovery > svg { width: 18px; color: #a86613; }
+.save-recovery > div { min-width: 0; }
+.save-recovery strong { display: block; font-size: 11px; }
+.save-recovery p { margin: 3px 0 0; font-size: 9px; line-height: 1.4; }
+.save-recovery button { flex: none; }
 
 @media (max-width: 1120px) {
   .studio-topbar { grid-template-columns: 180px 220px 1fr; }
@@ -455,6 +461,8 @@
   .canvas-stage { padding: 12px; }
   .artboard-frame { min-width: 270px; }
   .publish-field-row { grid-template-columns: 1fr; }
+  .save-recovery { grid-template-columns: 20px minmax(0, 1fr); }
+  .save-recovery button { grid-column: span 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
