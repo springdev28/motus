@@ -16,8 +16,10 @@ import {
   ArrowRight,
   ArrowUp,
   Circle,
+  Clock3,
   Cloud,
   CloudOff,
+  Code2,
   Copy,
   Download,
   Ellipsis,
@@ -26,6 +28,7 @@ import {
   FileImage,
   FilePlus2,
   ImagePlus,
+  LibraryBig,
   Layers3,
   Lock,
   Maximize2,
@@ -37,6 +40,7 @@ import {
   Plus,
   Redo2,
   RotateCcw,
+  Search,
   Send,
   Sparkles,
   Square,
@@ -68,6 +72,8 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  MAX_MOTION_BLOCKS,
+  MOTION_BLOCK_CATALOG,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_ELEMENT_TEXT_LENGTH,
   MAX_PROJECT_DESCRIPTION_LENGTH,
@@ -89,6 +95,7 @@ import {
   createDefaultProject,
   createElement,
   createElementCopy,
+  createMotionBlock,
   createProjectHistoryEntry,
   createProjectBackupFileName,
   createPublicationRevision,
@@ -131,6 +138,8 @@ import {
   type Easing,
   type ElementType,
   type MotusElement,
+  type MotionBlock,
+  type MotionBlockKind,
   type MotusProject,
   type MotusPublicationRevision,
   type MotusScene,
@@ -162,6 +171,121 @@ const sceneBackgrounds = [
   { name: 'Ember night', value: 'linear-gradient(155deg, #3d231e 0%, #1d1518 54%, #6b3d2d 100%)' },
   { name: 'Electric dusk', value: 'linear-gradient(155deg, #1f2850 0%, #121526 54%, #55438b 100%)' },
 ] as const;
+
+type CatalogTab = 'works' | 'templates' | 'motion';
+
+const workCatalog = [
+  {
+    title: 'The Last Signal',
+    creator: 'Mira Vale',
+    genre: 'Science fiction',
+    format: 'Vertical scroll',
+    status: 'Ongoing',
+    rating: 'Teen',
+    tags: ['mystery', 'space', 'slow burn'],
+    palette: 'linear-gradient(145deg, #3e2e67, #151624 62%, #4f7182)',
+  },
+  {
+    title: 'Tea at the Edge of Magic',
+    creator: 'Juniper Moss',
+    genre: 'Fantasy',
+    format: 'Hybrid',
+    status: 'Completed',
+    rating: 'All ages',
+    tags: ['cozy', 'found family', 'witches'],
+    palette: 'linear-gradient(145deg, #60432e, #263a35 58%, #ad8050)',
+  },
+  {
+    title: 'Neon Hearts Club',
+    creator: 'Aya North',
+    genre: 'Romance',
+    format: 'Motion comic',
+    status: 'Ongoing',
+    rating: 'Teen',
+    tags: ['music', 'rivals', 'city nights'],
+    palette: 'linear-gradient(145deg, #8a315c, #24162d 60%, #3f67a6)',
+  },
+  {
+    title: 'The House Below Rain',
+    creator: 'Tomas Grey',
+    genre: 'Horror',
+    format: 'Vertical scroll',
+    status: 'Hiatus',
+    rating: 'Mature',
+    tags: ['folk horror', 'rain', 'memory'],
+    palette: 'linear-gradient(145deg, #28383a, #111719 58%, #665c4c)',
+  },
+] as const;
+
+const sceneTemplates = [
+  {
+    id: 'reveal',
+    name: 'Dramatic reveal',
+    description: 'A title, focal glow, and dialogue beat staged for a reveal.',
+    background: sceneBackgrounds[4].value,
+    title: 'Everything changed here.',
+    speech: 'You knew this whole time?',
+    accent: '#e5ff73',
+  },
+  {
+    id: 'quiet',
+    name: 'Quiet conversation',
+    description: 'Balanced text and speech placement for a slower character beat.',
+    background: sceneBackgrounds[1].value,
+    title: 'For a while, neither of us spoke.',
+    speech: 'Can we start again?',
+    accent: '#ff9db3',
+  },
+  {
+    id: 'impact',
+    name: 'Impact beat',
+    description: 'A bold focal object and compact caption for action or surprise.',
+    background: sceneBackgrounds[3].value,
+    title: 'THOOM',
+    speech: 'Move!',
+    accent: '#ffb45e',
+  },
+] as const;
+
+const motionPresets: Array<{
+  id: string;
+  name: string;
+  description: string;
+  blocks: Array<{ kind: MotionBlockKind; durationMs?: number; x?: number; y?: number; value?: number }>;
+}> = [
+  {
+    id: 'soft-reveal',
+    name: 'Soft reveal',
+    description: 'Wait briefly, drift upward, and fade in.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'wait', durationMs: 180 },
+      { kind: 'move', durationMs: 700, y: 54 },
+      { kind: 'opacity', durationMs: 600, value: 0 },
+    ],
+  },
+  {
+    id: 'comic-pop',
+    name: 'Comic pop',
+    description: 'Scale and rotate into place for bubbles and impact text.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'scale', durationMs: 420, value: 0.55 },
+      { kind: 'rotate', durationMs: 320, value: -10 },
+    ],
+  },
+  {
+    id: 'cinematic-slide',
+    name: 'Cinematic slide',
+    description: 'A measured horizontal move with a delayed fade.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'move', durationMs: 1000, x: 150 },
+      { kind: 'wait', durationMs: 120 },
+      { kind: 'opacity', durationMs: 650, value: 0.12 },
+    ],
+  },
+];
 
 function uniqueId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -210,7 +334,8 @@ const toolItems = [
   { id: 'text', label: 'Text', icon: Type },
   { id: 'shape', label: 'Shape', icon: Square },
   { id: 'speech', label: 'Speech', icon: MessageSquareText },
-  { id: 'motion', label: 'Motion', icon: Sparkles },
+  { id: 'motion', label: 'Blocks', icon: Code2 },
+  { id: 'catalog', label: 'Catalogs', icon: LibraryBig },
 ] as const;
 
 function findElement(project: MotusProject, sceneId: string, elementId: string) {
@@ -271,9 +396,47 @@ function SceneView({
   onElementRef,
   onPointerAction,
 }: SceneViewProps) {
-  const renderedElements = elementLimit === undefined
-    ? scene.elements
-    : getSceneThumbnailElements(scene, elementLimit);
+  const elementNodes = useRef(new Map<string, HTMLDivElement>());
+  const runningAnimations = useRef<Animation[]>([]);
+  const renderedElements = useMemo(
+    () => elementLimit === undefined
+      ? scene.elements
+      : getSceneThumbnailElements(scene, elementLimit),
+    [elementLimit, scene],
+  );
+
+  useEffect(() => {
+    runningAnimations.current.forEach((animation) => animation.cancel());
+    runningAnimations.current = [];
+    if (!playingKey || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      return;
+    }
+
+    for (const element of renderedElements) {
+      const node = elementNodes.current.get(element.id);
+      if (!node?.animate || !element.visible) continue;
+      const compiled = compileElementMotion(element);
+      if (!compiled.steps.some((step) => step.kind !== 'wait')) continue;
+      const animation = node.animate(
+        compiled.keyframes.map((frame) => ({
+          offset: frame.offset,
+          easing: frame.easing,
+          opacity: frame.opacity,
+          transform: `translate(${frame.translateX}px, ${frame.translateY}px) rotate(${frame.rotation}deg) scale(${frame.scale})`,
+        })),
+        {
+          duration: Math.max(compiled.sequenceDurationMs, 1),
+          fill: 'both',
+        },
+      );
+      runningAnimations.current.push(animation);
+    }
+
+    return () => {
+      runningAnimations.current.forEach((animation) => animation.cancel());
+      runningAnimations.current = [];
+    };
+  }, [playingKey, renderedElements]);
 
   return (
     <div className="artboard" style={{ background: scene.background }}>
@@ -315,9 +478,7 @@ function SceneView({
             }
             aria-label={describeElementForAccessibility(element)}
             aria-pressed={interactive ? selected : undefined}
-            className={`canvas-element element-${element.type} ${
-              playingKey ? 'is-playing' : ''
-            }`}
+            className={`canvas-element element-${element.type}`}
             data-interactive={interactive || undefined}
             data-locked={element.locked || undefined}
             data-selected={selected || undefined}
@@ -368,11 +529,11 @@ function SceneView({
                 : undefined
             }
             role={interactive ? 'button' : 'img'}
-            ref={
-              interactive
-                ? (node) => onElementRef?.(element.id, node)
-                : undefined
-            }
+            ref={(node) => {
+              if (node) elementNodes.current.set(element.id, node);
+              else elementNodes.current.delete(element.id);
+              if (interactive) onElementRef?.(element.id, node);
+            }}
             style={elementStyle}
             tabIndex={interactive ? 0 : undefined}
           >
@@ -471,6 +632,9 @@ export function MotusStudio() {
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogTab, setCatalogTab] = useState<CatalogTab>('works');
+  const [catalogSearch, setCatalogSearch] = useState('');
   const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
   const [publishTagsInput, setPublishTagsInput] = useState(
     'science fiction, mystery',
@@ -1003,6 +1167,139 @@ export function MotusStudio() {
     setNotice(direction < 0 ? 'Scene moved earlier' : 'Scene moved later');
   };
 
+  const addMotionBlock = (kind: MotionBlockKind) => {
+    if (!selectedElement) {
+      setNotice('Select a layer before adding an animation block');
+      return;
+    }
+    if (kind === 'scene-enter') {
+      setNotice('Every layer program already starts when its scene enters view');
+      return;
+    }
+    if (selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS) {
+      setNotice(`A layer can contain up to ${MAX_MOTION_BLOCKS} animation blocks`);
+      return;
+    }
+    const block = createMotionBlock(kind, uniqueId(`block-${kind}`));
+    updateElement(selectedElement.id, (item) => {
+      item.motion.blocks.push(block);
+    });
+    setNotice(`${block.label} block added`);
+  };
+
+  const updateMotionBlock = (
+    blockId: string,
+    mutate: (block: MotionBlock) => void,
+    transactionKey: string | null = null,
+  ) => {
+    if (!selectedElement) return;
+    updateElement(
+      selectedElement.id,
+      (item) => {
+        const block = item.motion.blocks.find((candidate) => candidate.id === blockId);
+        if (block) mutate(block);
+      },
+      transactionKey,
+    );
+  };
+
+  const moveMotionBlock = (blockId: string, direction: -1 | 1) => {
+    if (!selectedElement) return;
+    updateElement(selectedElement.id, (item) => {
+      const index = item.motion.blocks.findIndex((block) => block.id === blockId);
+      const target = index + direction;
+      if (index <= 0 || target <= 0 || target >= item.motion.blocks.length) return;
+      [item.motion.blocks[index], item.motion.blocks[target]] = [
+        item.motion.blocks[target],
+        item.motion.blocks[index],
+      ];
+    });
+    setNotice('Animation sequence reordered');
+  };
+
+  const removeMotionBlock = (blockId: string) => {
+    if (!selectedElement) return;
+    updateElement(selectedElement.id, (item) => {
+      item.motion.blocks = item.motion.blocks.filter((block) => block.id !== blockId);
+    });
+    setNotice('Animation block removed');
+  };
+
+  const applyMotionPreset = (presetId: string) => {
+    if (!selectedElement) {
+      setCatalogOpen(false);
+      setInspectorTab('motion');
+      setNotice('Select a layer, then choose a motion preset');
+      return;
+    }
+    const preset = motionPresets.find((candidate) => candidate.id === presetId);
+    if (!preset) return;
+    updateElement(selectedElement.id, (item) => {
+      item.motion.blocks = preset.blocks.map((source, index) => ({
+        ...createMotionBlock(source.kind, uniqueId(`preset-${source.kind}-${index}`)),
+        ...(source.durationMs === undefined ? {} : { durationMs: source.durationMs }),
+        ...(source.x === undefined ? {} : { x: source.x }),
+        ...(source.y === undefined ? {} : { y: source.y }),
+        ...(source.value === undefined ? {} : { value: source.value }),
+      }));
+    });
+    setCatalogOpen(false);
+    setInspectorTab('motion');
+    setPreviewKey((key) => key + 1);
+    setNotice(`${preset.name} applied to ${selectedElement.name}`);
+  };
+
+  const addSceneFromTemplate = (templateId: string) => {
+    if (!canAddSceneToProject(project)) {
+      setNotice(`This work has reached the ${MAX_PROJECT_SCENES}-scene limit`);
+      return;
+    }
+    const template = sceneTemplates.find((candidate) => candidate.id === templateId);
+    if (!template) return;
+    const id = uniqueId('scene');
+    const nextScene: MotusScene = {
+      id,
+      name: template.name,
+      background: template.background,
+      elements: [
+        createElement('text', 1, {
+          id: `${id}-title`,
+          name: 'Scene title',
+          x: 92,
+          y: 138,
+          width: 670,
+          height: 210,
+          fill: '#ffffff',
+          text: template.title,
+        }),
+        createElement('shape', 2, {
+          id: `${id}-focus`,
+          name: 'Focal accent',
+          x: 660,
+          y: 565,
+          width: template.id === 'impact' ? 240 : 160,
+          height: template.id === 'impact' ? 240 : 160,
+          fill: template.accent,
+        }),
+        createElement('speech', 3, {
+          id: `${id}-speech`,
+          name: 'Speech bubble',
+          x: 510,
+          y: 1020,
+          width: 430,
+          height: 180,
+          text: template.speech,
+        }),
+      ],
+    };
+    commitProject((draft) => draft.scenes.push(nextScene));
+    setActiveSceneId(id);
+    setSelectedElementId(nextScene.elements[0].id);
+    setCatalogOpen(false);
+    setNotice(`${template.name} scene added`);
+    focusEditorTarget(id, nextScene.elements[0].id);
+  };
+
   const runTool = (toolId: string) => {
     if (toolId === 'select') {
       setInspectorTab('design');
@@ -1023,6 +1320,10 @@ export function MotusStudio() {
     if (toolId === 'shape') addElement('shape');
     if (toolId === 'speech') addElement('speech');
     if (toolId === 'motion') setInspectorTab('motion');
+    if (toolId === 'catalog') {
+      setCatalogTab('templates');
+      setCatalogOpen(true);
+    }
   };
 
   const uploadImage = async (file?: File) => {
@@ -1710,6 +2011,14 @@ export function MotusStudio() {
   }, []);
 
   const artboardWidth = Math.round(fitCanvasWidth * (zoom / 100));
+  const normalizedCatalogSearch = catalogSearch.trim().toLocaleLowerCase();
+  const filteredWorkCatalog = workCatalog.filter((work) =>
+    !normalizedCatalogSearch ||
+    [work.title, work.creator, work.genre, work.format, work.status, ...work.tags]
+      .join(' ')
+      .toLocaleLowerCase()
+      .includes(normalizedCatalogSearch),
+  );
   const publicationHasChanges = hasUnpublishedChanges(project);
   const publicationReadiness = getPublicationReadiness(project);
   const draftSaveStatus = getDraftSaveStatus({
@@ -1718,7 +2027,7 @@ export function MotusStudio() {
     saveFailed,
   });
   const readerSource = resolveReaderSource(project, readerRevision);
-  const readerDescription =
+  const readerPublicationState =
     readerSource.mode === 'revision'
       ? `Published revision ${readerSource.revision} · ${readerSource.visibility}`
       : project.publishedRevision === 0
@@ -1726,6 +2035,7 @@ export function MotusStudio() {
         : publicationHasChanges
           ? `Draft preview · changes since published revision ${project.publishedRevision}`
           : `Draft preview · matches published revision ${project.publishedRevision}`;
+  const readerDescription = `${readerSource.chapterTitle} · by ${readerSource.creatorName} · ${readerPublicationState}`;
   const replayPreview = () => {
     activePointerCleanup.current?.();
     endHistoryTransaction();
@@ -1838,6 +2148,7 @@ export function MotusStudio() {
           <Button className="topbar-mobile-hide" onClick={replayPreview} variant="secondary">
             <Play data-icon="inline-start" fill="currentColor" />Preview
           </Button>
+          <Button aria-label="Open Motus catalogs" className="topbar-mobile-hide" onClick={() => { setCatalogTab('works'); setCatalogOpen(true); }} variant="secondary"><LibraryBig data-icon="inline-start" />Catalogs</Button>
           <Button aria-label="Open draft reader" className="topbar-reader" onClick={() => openReader()} variant="secondary"><Layers3 data-icon="inline-start" /><span>Draft reader</span></Button>
           <Button aria-label="Publish work" className="topbar-publish" onClick={openPublish}><Send data-icon="inline-start" /><span>Publish</span></Button>
           <Button aria-label="Import Motus project" className="topbar-mobile-hide" onClick={requestProjectImport} size="icon" variant="outline"><Upload /></Button>
@@ -1858,6 +2169,9 @@ export function MotusStudio() {
               </DropdownMenuItem>
               <DropdownMenuItem className="min-h-10 px-2.5" onClick={replayPreview}>
                 <Play />Replay canvas preview
+              </DropdownMenuItem>
+              <DropdownMenuItem className="min-h-10 px-2.5" onClick={() => { setCatalogTab('works'); setCatalogOpen(true); }}>
+                <LibraryBig />Open catalogs
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="min-h-10 px-2.5" onClick={requestNewWork}>
@@ -2044,7 +2358,7 @@ export function MotusStudio() {
           </div>
 
           <footer className="scene-strip">
-            <div className="scene-strip-copy"><span>Scenes</span><strong>{sceneIndex + 1} / {project.scenes.length}</strong></div>
+            <div className="scene-strip-copy" title={project.chapterTitle}><span>Chapter 1</span><strong>Scene {sceneIndex + 1} / {project.scenes.length}</strong></div>
             <div aria-label="Scenes" className="scene-tabs" role="tablist">
               {project.scenes.map((scene, index) => (
                 <button
@@ -2163,17 +2477,71 @@ export function MotusStudio() {
                   </div>
                 ) : (
                   <div className="property-stack motion-properties">
-                    <div className="motion-summary"><span className="motion-number">01</span><div><small>WHEN</small><strong>Scene enters view</strong></div></div>
-                    <div className="motion-summary motion-action"><span className="motion-number">02</span><div><small>MOTION + LOOKS</small><strong>Move · rotate · scale · fade</strong></div></div>
-                    <label className="range-control"><span>Move X</span><output>{selectedElement.motion.moveX}px</output><input {...continuousHistoryProps} max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveX = Number(event.target.value); }, `element:${selectedElement.id}:motion:move-x`)} type="range" value={selectedElement.motion.moveX} /></label>
-                    <label className="range-control"><span>Move Y</span><output>{selectedElement.motion.moveY}px</output><input {...continuousHistoryProps} max="400" min="-400" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.moveY = Number(event.target.value); }, `element:${selectedElement.id}:motion:move-y`)} type="range" value={selectedElement.motion.moveY} /></label>
-                    <label className="range-control"><span>Rotate from</span><output>{selectedElement.motion.fromRotation}°</output><input {...continuousHistoryProps} max="180" min="-180" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromRotation = Number(event.target.value); }, `element:${selectedElement.id}:motion:rotation`)} type="range" value={selectedElement.motion.fromRotation} /></label>
-                    <label className="range-control"><span>Scale from</span><output>{selectedElement.motion.fromScale.toFixed(2)}×</output><input {...continuousHistoryProps} max="200" min="20" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromScale = Number(event.target.value) / 100; }, `element:${selectedElement.id}:motion:scale`)} type="range" value={Math.round(selectedElement.motion.fromScale * 100)} /></label>
-                    <label className="range-control"><span>Duration</span><output>{(selectedElement.motion.durationMs / 1000).toFixed(1)}s</output><input {...continuousHistoryProps} max="4000" min="200" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.durationMs = Number(event.target.value); }, `element:${selectedElement.id}:motion:duration`)} step="100" type="range" value={selectedElement.motion.durationMs} /></label>
-                    <label className="range-control"><span>Delay</span><output>{(selectedElement.motion.delayMs / 1000).toFixed(1)}s</output><input {...continuousHistoryProps} max="3000" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.delayMs = Number(event.target.value); }, `element:${selectedElement.id}:motion:delay`)} step="100" type="range" value={selectedElement.motion.delayMs} /></label>
-                    <label className="range-control"><span>Start opacity</span><output>{Math.round(selectedElement.motion.fromOpacity * 100)}%</output><input {...continuousHistoryProps} max="100" min="0" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.fromOpacity = Number(event.target.value) / 100; }, `element:${selectedElement.id}:motion:opacity`)} type="range" value={Math.round(selectedElement.motion.fromOpacity * 100)} /></label>
-                    <label htmlFor="selected-layer-easing"><span>Easing</span><NativeSelect className="w-full" id="selected-layer-easing" onChange={(event) => updateElement(selectedElement.id, (item) => { item.motion.easing = event.target.value as Easing; })} value={selectedElement.motion.easing}><NativeSelectOption value="linear">Linear</NativeSelectOption><NativeSelectOption value="ease-out">Ease out</NativeSelectOption><NativeSelectOption value="ease-in-out">Ease in/out</NativeSelectOption></NativeSelect></label>
-                    <Button className="run-motion-button" onClick={() => setPreviewKey((key) => key + 1)}><Play fill="currentColor" />Run animation</Button>
+                    <div className="block-program-heading">
+                      <div><span>ANIMATION PROGRAM</span><strong>{selectedElement.motion.blocks.length} editable blocks</strong></div>
+                      <Button aria-label="Run animation program" onClick={() => setPreviewKey((key) => key + 1)} size="icon-sm"><Play fill="currentColor" /></Button>
+                    </div>
+
+                    <ol className="block-program" aria-label={`${selectedElement.name} animation blocks`}>
+                      {selectedElement.motion.blocks.map((block, blockIndex) => {
+                        const isEvent = block.kind === 'scene-enter';
+                        const isAction = block.kind !== 'scene-enter' && block.kind !== 'wait';
+                        return (
+                          <li className={`motion-block block-${block.category}`} data-disabled={!block.enabled || undefined} key={block.id}>
+                            <div className="motion-block-head">
+                              <span className="motion-block-grip">{String(blockIndex + 1).padStart(2, '0')}</span>
+                              <div><small>{block.category.toUpperCase()}</small><strong>{block.label}</strong></div>
+                              {!isEvent ? (
+                                <div className="motion-block-actions">
+                                  <button aria-label={`Move ${block.label} earlier`} disabled={blockIndex <= 1} onClick={() => moveMotionBlock(block.id, -1)} type="button"><ArrowUp /></button>
+                                  <button aria-label={`Move ${block.label} later`} disabled={blockIndex === selectedElement.motion.blocks.length - 1} onClick={() => moveMotionBlock(block.id, 1)} type="button"><ArrowDown /></button>
+                                  <button aria-label={`Remove ${block.label}`} onClick={() => removeMotionBlock(block.id)} type="button"><Trash2 /></button>
+                                </div>
+                              ) : null}
+                            </div>
+
+                            {isEvent ? <p>Reader and preview use the same viewport trigger.</p> : null}
+                            {block.kind === 'move' ? (
+                              <div className="motion-block-grid">
+                                <label htmlFor={`motion-${block.id}-x`}><span>X offset</span><Input {...continuousHistoryProps} id={`motion-${block.id}-x`} max="800" min="-800" onChange={(event) => updateMotionBlock(block.id, (item) => { item.x = Number(event.target.value); }, `block:${block.id}:x`)} type="number" value={block.x} /></label>
+                                <label htmlFor={`motion-${block.id}-y`}><span>Y offset</span><Input {...continuousHistoryProps} id={`motion-${block.id}-y`} max="800" min="-800" onChange={(event) => updateMotionBlock(block.id, (item) => { item.y = Number(event.target.value); }, `block:${block.id}:y`)} type="number" value={block.y} /></label>
+                              </div>
+                            ) : null}
+                            {block.kind === 'scale' ? (
+                              <label className="range-control"><span>Start size</span><output>{Math.round(block.value * 100)}%</output><input {...continuousHistoryProps} max="200" min="10" onChange={(event) => updateMotionBlock(block.id, (item) => { item.value = Number(event.target.value) / 100; }, `block:${block.id}:value`)} type="range" value={Math.round(block.value * 100)} /></label>
+                            ) : null}
+                            {block.kind === 'rotate' ? (
+                              <label className="range-control"><span>Start angle</span><output>{block.value}°</output><input {...continuousHistoryProps} max="180" min="-180" onChange={(event) => updateMotionBlock(block.id, (item) => { item.value = Number(event.target.value); }, `block:${block.id}:value`)} type="range" value={block.value} /></label>
+                            ) : null}
+                            {block.kind === 'opacity' ? (
+                              <label className="range-control"><span>Start opacity</span><output>{Math.round(block.value * 100)}%</output><input {...continuousHistoryProps} max="100" min="0" onChange={(event) => updateMotionBlock(block.id, (item) => { item.value = Number(event.target.value) / 100; }, `block:${block.id}:value`)} type="range" value={Math.round(block.value * 100)} /></label>
+                            ) : null}
+                            {!isEvent ? (
+                              <div className="motion-block-grid">
+                                <label htmlFor={`motion-${block.id}-duration`}><span>{block.kind === 'wait' ? 'Wait' : 'Duration'}</span><Input {...continuousHistoryProps} id={`motion-${block.id}-duration`} max="10000" min={block.kind === 'wait' ? 0 : 100} onChange={(event) => updateMotionBlock(block.id, (item) => { item.durationMs = Number(event.target.value); }, `block:${block.id}:duration`)} step="50" type="number" value={block.durationMs} /></label>
+                                {isAction ? (
+                                  <label htmlFor={`motion-${block.id}-easing`}><span>Easing</span><NativeSelect className="w-full" id={`motion-${block.id}-easing`} onChange={(event) => updateMotionBlock(block.id, (item) => { item.easing = event.target.value as Easing; })} value={block.easing}><NativeSelectOption value="linear">Linear</NativeSelectOption><NativeSelectOption value="ease-out">Ease out</NativeSelectOption><NativeSelectOption value="ease-in-out">Ease in/out</NativeSelectOption></NativeSelect></label>
+                                ) : <span className="motion-unit">milliseconds</span>}
+                              </div>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ol>
+
+                    <section className="block-catalog" aria-labelledby="block-catalog-title">
+                      <div className="block-catalog-heading"><div><span>BLOCK CATALOG</span><strong id="block-catalog-title">Add to this sequence</strong></div><small>{MAX_MOTION_BLOCKS - selectedElement.motion.blocks.length} slots left</small></div>
+                      <div className="block-catalog-grid">
+                        {MOTION_BLOCK_CATALOG.filter((entry) => entry.kind !== 'scene-enter').map((entry) => (
+                          <button disabled={selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS} key={entry.kind} onClick={() => addMotionBlock(entry.kind)} type="button">
+                            {entry.kind === 'wait' ? <Clock3 /> : entry.category === 'looks' ? <Eye /> : <Sparkles />}
+                            <span><strong>{entry.label}</strong><small>{entry.category}</small></span>
+                            <Plus />
+                          </button>
+                        ))}
+                      </div>
+                      <Button onClick={() => { setCatalogTab('motion'); setCatalogOpen(true); }} variant="outline"><LibraryBig />Browse motion presets</Button>
+                    </section>
                   </div>
                 )}
               </>
@@ -2181,6 +2549,79 @@ export function MotusStudio() {
           </div>
         </aside>
       </div>
+
+      <Dialog onOpenChange={setCatalogOpen} open={catalogOpen}>
+        <DialogContent className="catalog-dialog">
+          <DialogHeader>
+            <DialogTitle>Motus catalogs</DialogTitle>
+            <DialogDescription>
+              Discover motion comics, start from a scene template, or apply an editable block preset.
+            </DialogDescription>
+          </DialogHeader>
+          <div aria-label="Catalog sections" className="catalog-tabs" role="tablist">
+            <button aria-selected={catalogTab === 'works'} onClick={() => setCatalogTab('works')} role="tab" type="button"><LibraryBig />Explore works</button>
+            <button aria-selected={catalogTab === 'templates'} onClick={() => setCatalogTab('templates')} role="tab" type="button"><Layers3 />Scene templates</button>
+            <button aria-selected={catalogTab === 'motion'} onClick={() => setCatalogTab('motion')} role="tab" type="button"><Code2 />Motion presets</button>
+          </div>
+
+          {catalogTab === 'works' ? (
+            <section className="catalog-panel" aria-label="Works catalog">
+              <div className="catalog-search">
+                <Search aria-hidden="true" />
+                <Input aria-label="Search works, creators, genres, formats, or tags" onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search works, creators, genres, formats, tags…" value={catalogSearch} />
+              </div>
+              <div className="catalog-section-heading"><div><span>YOUR LIBRARY</span><strong>Continue creating</strong></div><small>{project.scenes.length} scenes · {project.publishedRevision ? `revision ${project.publishedRevision}` : 'draft'}</small></div>
+              <article className="library-work-card">
+                <div className="library-work-cover" style={{ background: activeScene.background }}><span>M</span></div>
+                <div><small>{project.chapterTitle.toUpperCase()} · {project.visibility.toUpperCase()}</small><h3>{project.title}</h3><p>by {project.creatorName} · {project.description || 'Add a description before publishing.'}</p><div>{project.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div></div>
+                <Button onClick={() => { setCatalogOpen(false); openReader(); }} variant="secondary"><Play />Read draft</Button>
+              </article>
+
+              <div className="catalog-section-heading"><div><span>DISCOVER</span><strong>Motion comics and serials</strong></div><small>{filteredWorkCatalog.length} results</small></div>
+              {filteredWorkCatalog.length ? (
+                <div className="work-catalog-grid">
+                  {filteredWorkCatalog.map((work) => (
+                    <article className="work-catalog-card" key={work.title}>
+                      <div className="work-catalog-cover" style={{ background: work.palette }}><span>{work.title.slice(0, 1)}</span><small>{work.format}</small></div>
+                      <div className="work-catalog-copy"><span>{work.genre} · {work.status}</span><h3>{work.title}</h3><p>by {work.creator}</p><div>{work.tags.map((tag) => <small key={tag}>#{tag}</small>)}</div><strong>{work.rating}</strong></div>
+                    </article>
+                  ))}
+                </div>
+              ) : <div className="catalog-empty"><Search /><strong>No matching works</strong><p>Try a title, creator, genre, format, or tag.</p></div>}
+            </section>
+          ) : null}
+
+          {catalogTab === 'templates' ? (
+            <section className="catalog-panel" aria-label="Scene template catalog">
+              <div className="catalog-intro"><span>SCENE CATALOG</span><h2>Start with structure, then make it yours.</h2><p>Each template adds a fully editable scene with separate title, focal, and speech layers.</p></div>
+              <div className="template-catalog-grid">
+                {sceneTemplates.map((template) => (
+                  <article className="template-card" key={template.id}>
+                    <div className="template-preview" style={{ background: template.background }}><span style={{ color: template.accent }}>{template.title}</span><i style={{ background: template.accent }} /><small>{template.speech}</small></div>
+                    <div><h3>{template.name}</h3><p>{template.description}</p><Button onClick={() => addSceneFromTemplate(template.id)} size="sm"><Plus />Add scene</Button></div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {catalogTab === 'motion' ? (
+            <section className="catalog-panel" aria-label="Motion preset catalog">
+              <div className="catalog-intro"><span>MOTION CATALOG</span><h2>Presets remain editable block programs.</h2><p>Apply one to the selected layer, then reorder or tune every generated block in the inspector.</p></div>
+              <div className="motion-preset-grid">
+                {motionPresets.map((preset) => (
+                  <article className="motion-preset-card" key={preset.id}>
+                    <div className="preset-block-stack">
+                      {preset.blocks.map((block, index) => <span className={`block-${createMotionBlock(block.kind, `${preset.id}-${index}`).category}`} key={`${preset.id}-${block.kind}-${index}`}>{index + 1}. {createMotionBlock(block.kind, `${preset.id}-${index}`).label}</span>)}
+                    </div>
+                    <div><h3>{preset.name}</h3><p>{preset.description}</p><small>{preset.blocks.length} editable blocks</small><Button disabled={!selectedElement} onClick={() => applyMotionPreset(preset.id)} size="sm"><Sparkles />Apply to {selectedElement?.name ?? 'a selected layer'}</Button></div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {deletionUndo ? (
         <div aria-atomic="true" aria-live="polite" className="deletion-undo">
@@ -2331,6 +2772,10 @@ export function MotusStudio() {
                 value={project.title}
               />
             </label>
+            <div className="publish-field-row identity-field-row">
+              <label className="publish-field" htmlFor="project-details-creator"><span>Creator</span><Input {...textHistoryProps} id="project-details-creator" maxLength={MAX_PROJECT_TITLE_LENGTH} onChange={(event) => commitProject((draft) => { draft.creatorName = event.target.value; }, 'project:creator')} value={project.creatorName} /></label>
+              <label className="publish-field" htmlFor="project-details-chapter"><span>Chapter</span><Input {...textHistoryProps} id="project-details-chapter" maxLength={MAX_PROJECT_TITLE_LENGTH} onChange={(event) => commitProject((draft) => { draft.chapterTitle = event.target.value; }, 'project:chapter')} value={project.chapterTitle} /></label>
+            </div>
             <label className="publish-field" htmlFor="project-details-description">
               <span>Description</span>
               <Textarea
@@ -2447,6 +2892,10 @@ export function MotusStudio() {
                 value={project.title}
               />
             </label>
+            <div className="publish-field-row identity-field-row">
+              <label className="publish-field" htmlFor="publish-creator"><span>Creator</span><Input {...textHistoryProps} id="publish-creator" maxLength={MAX_PROJECT_TITLE_LENGTH} onChange={(event) => commitProject((draft) => { draft.creatorName = event.target.value; }, 'project:creator')} value={project.creatorName} /></label>
+              <label className="publish-field" htmlFor="publish-chapter"><span>Chapter</span><Input {...textHistoryProps} id="publish-chapter" maxLength={MAX_PROJECT_TITLE_LENGTH} onChange={(event) => commitProject((draft) => { draft.chapterTitle = event.target.value; }, 'project:chapter')} value={project.chapterTitle} /></label>
+            </div>
             <label className="publish-field" htmlFor="publish-description">
               <span>Description</span>
               <Textarea

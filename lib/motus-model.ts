@@ -1,4 +1,4 @@
-export const PROJECT_SCHEMA_VERSION = 4 as const;
+export const PROJECT_SCHEMA_VERSION = 5 as const;
 export const MOTION_SCHEMA_VERSION = 1 as const;
 export const CANVAS_WIDTH = 1_080;
 export const CANVAS_HEIGHT = 1_440;
@@ -7,6 +7,14 @@ export const MIN_ELEMENT_HEIGHT = 50;
 
 export type ElementType = 'shape' | 'text' | 'speech' | 'image';
 export type Easing = 'linear' | 'ease-out' | 'ease-in-out';
+export type MotionBlockCategory = 'event' | 'motion' | 'looks' | 'timing';
+export type MotionBlockKind =
+  | 'scene-enter'
+  | 'wait'
+  | 'move'
+  | 'scale'
+  | 'rotate'
+  | 'opacity';
 export type ContentRating = 'all-ages' | 'teen' | 'mature';
 export type PublicationVisibility = 'private' | 'public';
 export type SupportedImageMime = 'image/png' | 'image/webp';
@@ -27,6 +35,86 @@ export const MAX_SCENE_THUMBNAIL_ELEMENTS = 12;
 export const MAX_ELEMENT_TEXT_LENGTH = 50_000;
 export const MAX_PROJECT_HISTORY_ENTRIES = 50;
 export const MAX_PROJECT_HISTORY_BYTES = 24_000_000;
+export const MAX_MOTION_BLOCKS = 16;
+
+export type MotionBlock = {
+  id: string;
+  kind: MotionBlockKind;
+  category: MotionBlockCategory;
+  label: string;
+  enabled: boolean;
+  durationMs: number;
+  easing: Easing;
+  x: number;
+  y: number;
+  value: number;
+};
+
+export type MotionBlockCatalogEntry = {
+  kind: MotionBlockKind;
+  category: MotionBlockCategory;
+  label: string;
+  description: string;
+};
+
+export const MOTION_BLOCK_CATALOG: MotionBlockCatalogEntry[] = [
+  {
+    kind: 'scene-enter',
+    category: 'event',
+    label: 'When scene enters view',
+    description: 'Starts this element program in preview and the published reader.',
+  },
+  {
+    kind: 'wait',
+    category: 'timing',
+    label: 'Wait',
+    description: 'Pauses the sequence before the next action.',
+  },
+  {
+    kind: 'move',
+    category: 'motion',
+    label: 'Move in',
+    description: 'Moves the layer from an X/Y offset into its canvas position.',
+  },
+  {
+    kind: 'scale',
+    category: 'motion',
+    label: 'Scale in',
+    description: 'Scales the layer from a chosen size to 100%.',
+  },
+  {
+    kind: 'rotate',
+    category: 'motion',
+    label: 'Rotate in',
+    description: 'Rotates the layer from an offset angle to its canvas angle.',
+  },
+  {
+    kind: 'opacity',
+    category: 'looks',
+    label: 'Fade in',
+    description: 'Changes opacity from a chosen value to the layer opacity.',
+  },
+];
+
+export function createMotionBlock(
+  kind: MotionBlockKind,
+  id = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+): MotionBlock {
+  const catalogEntry = MOTION_BLOCK_CATALOG.find((entry) => entry.kind === kind)!;
+  return {
+    id,
+    kind,
+    category: catalogEntry.category,
+    label: catalogEntry.label,
+    enabled: true,
+    durationMs: kind === 'scene-enter' ? 0 : kind === 'wait' ? 300 : 700,
+    easing: 'ease-out',
+    x: kind === 'move' ? 80 : 0,
+    y: 0,
+    value:
+      kind === 'scale' ? 0.8 : kind === 'opacity' ? 0 : kind === 'rotate' ? -12 : 0,
+  };
+}
 
 export type ImageAssetMetadata = {
   mime: string;
@@ -107,6 +195,25 @@ export type ElementMotion = {
   fromScale: number;
   fromRotation: number;
   easing: Easing;
+  blocks: MotionBlock[];
+};
+
+export type CompiledMotionStep = {
+  blockId: string;
+  kind: Exclude<MotionBlockKind, 'scene-enter'>;
+  startsAtMs: number;
+  durationMs: number;
+  easing: Easing;
+};
+
+export type CompiledMotionKeyframe = {
+  offset: number;
+  translateX: number;
+  translateY: number;
+  opacity: number;
+  scale: number;
+  rotation: number;
+  easing: Easing | 'steps(1, end)';
 };
 
 export type CompiledElementMotion = {
@@ -115,6 +222,9 @@ export type CompiledElementMotion = {
   durationMs: number;
   delayMs: number;
   easing: Easing;
+  sequenceDurationMs: number;
+  steps: CompiledMotionStep[];
+  keyframes: CompiledMotionKeyframe[];
   from: {
     translateX: number;
     translateY: number;
@@ -187,6 +297,8 @@ export type MotusPublicationRevision = {
   revision: number;
   createdAt: string;
   title: string;
+  creatorName: string;
+  chapterTitle: string;
   description: string;
   tags: string[];
   language: string;
@@ -200,6 +312,8 @@ export type MotusProject = {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   id: string;
   title: string;
+  creatorName: string;
+  chapterTitle: string;
   description: string;
   tags: string[];
   language: string;
@@ -271,6 +385,8 @@ export type MotusReaderSource = {
   mode: 'draft' | 'revision';
   revision: number | null;
   title: string;
+  creatorName: string;
+  chapterTitle: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
   coverSceneId: string;
@@ -299,6 +415,8 @@ export function resolveReaderSource(
         mode: 'revision',
         revision: revision.revision,
         title: revision.title,
+        creatorName: revision.creatorName,
+        chapterTitle: revision.chapterTitle,
         contentRating: revision.contentRating,
         visibility: revision.visibility,
         coverSceneId: resolveCoverSceneId(revision.scenes, revision.coverSceneId),
@@ -308,6 +426,8 @@ export function resolveReaderSource(
         mode: 'draft',
         revision: null,
         title: project.title,
+        creatorName: project.creatorName,
+        chapterTitle: project.chapterTitle,
         contentRating: project.contentRating,
         visibility: project.visibility,
         coverSceneId: resolveCoverSceneId(project.scenes, project.coverSceneId),
@@ -336,6 +456,8 @@ export function getPublicationReadiness(
   else if (project.title.length > MAX_PROJECT_TITLE_LENGTH) {
     issues.push(`Shorten the title to ${MAX_PROJECT_TITLE_LENGTH} characters`);
   }
+  if (!project.creatorName.trim()) issues.push('Add the creator name');
+  if (!project.chapterTitle.trim()) issues.push('Name the chapter');
   if (visibleLayerCount === 0) issues.push('Add at least one visible layer');
   if (!project.scenes.some((scene) => scene.id === project.coverSceneId)) {
     issues.push('Choose a cover scene');
@@ -365,6 +487,22 @@ const motion = (
   fromScale: 1,
   fromRotation: 0,
   easing: 'ease-out',
+  blocks: [
+    createMotionBlock('scene-enter', 'event'),
+    {
+      ...createMotionBlock('move', 'move'),
+      x: moveX,
+      y: moveY,
+      durationMs,
+    },
+    ...(fromOpacity < 1 ? [
+      {
+        ...createMotionBlock('opacity', 'opacity'),
+        durationMs,
+        value: fromOpacity,
+      },
+    ] : []),
+  ],
 });
 
 const finite = (value: unknown, fallback: number) =>
@@ -394,21 +532,88 @@ export function parseProjectTags(value: string): string[] {
   return sanitizeProjectTags(value.split(','));
 }
 
+const isMotionBlockKind = (value: unknown): value is MotionBlockKind =>
+  value === 'scene-enter' ||
+  value === 'wait' ||
+  value === 'move' ||
+  value === 'scale' ||
+  value === 'rotate' ||
+  value === 'opacity';
+
+function normalizeMotionBlocks(value: unknown, legacy: Partial<ElementMotion>): MotionBlock[] {
+  if (Array.isArray(value)) {
+    const seen = new Set<string>();
+    const blocks = value.flatMap((candidate, index) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
+      const raw = candidate as Partial<MotionBlock>;
+      if (!isMotionBlockKind(raw.kind)) return [];
+      const block = createMotionBlock(raw.kind, typeof raw.id === 'string' && raw.id ? raw.id : `${raw.kind}-${index + 1}`);
+      block.enabled = raw.enabled !== false;
+      block.durationMs = finite(raw.durationMs, block.durationMs);
+      block.easing = raw.easing === 'linear' || raw.easing === 'ease-in-out' ? raw.easing : 'ease-out';
+      block.x = finite(raw.x, block.x);
+      block.y = finite(raw.y, block.y);
+      block.value = finite(raw.value, block.value);
+      if (seen.has(block.id)) block.id = `${block.id}-${index + 1}`;
+      seen.add(block.id);
+      return [block];
+    }).slice(0, MAX_MOTION_BLOCKS);
+    const eventIndex = blocks.findIndex((block) => block.kind === 'scene-enter');
+    if (eventIndex > 0) {
+      const [event] = blocks.splice(eventIndex, 1);
+      blocks.unshift(event);
+    } else if (eventIndex < 0) {
+      blocks.unshift(createMotionBlock('scene-enter', 'event'));
+    }
+    if (blocks.length > 1) return blocks;
+  }
+
+  const migrated = motion(
+    finite(legacy.moveX, 0),
+    finite(legacy.moveY, 0),
+    finite(legacy.durationMs, 900),
+    finite(legacy.fromOpacity, 1),
+  ).blocks;
+  if (finite(legacy.delayMs, 0) > 0) {
+    migrated.splice(1, 0, {
+      ...createMotionBlock('wait', 'wait'),
+      durationMs: finite(legacy.delayMs, 0),
+    });
+  }
+  if (finite(legacy.fromScale, 1) !== 1) {
+    migrated.push({
+      ...createMotionBlock('scale', 'scale'),
+      durationMs: finite(legacy.durationMs, 900),
+      value: finite(legacy.fromScale, 1),
+    });
+  }
+  if (finite(legacy.fromRotation, 0) !== 0) {
+    migrated.push({
+      ...createMotionBlock('rotate', 'rotate'),
+      durationMs: finite(legacy.durationMs, 900),
+      value: finite(legacy.fromRotation, 0),
+    });
+  }
+  return migrated.slice(0, MAX_MOTION_BLOCKS);
+}
+
 function migrateMotion(value: Partial<ElementMotion> | undefined): ElementMotion {
+  const legacy = value ?? {};
   return {
     schemaVersion: MOTION_SCHEMA_VERSION,
     event: 'scene-enter',
-    moveX: finite(value?.moveX, 0),
-    moveY: finite(value?.moveY, 0),
-    durationMs: finite(value?.durationMs, 900),
-    delayMs: finite(value?.delayMs, 0),
-    fromOpacity: finite(value?.fromOpacity, 1),
-    fromScale: finite(value?.fromScale, 1),
-    fromRotation: finite(value?.fromRotation, 0),
+    moveX: finite(legacy.moveX, 0),
+    moveY: finite(legacy.moveY, 0),
+    durationMs: finite(legacy.durationMs, 900),
+    delayMs: finite(legacy.delayMs, 0),
+    fromOpacity: finite(legacy.fromOpacity, 1),
+    fromScale: finite(legacy.fromScale, 1),
+    fromRotation: finite(legacy.fromRotation, 0),
     easing:
-      value?.easing === 'linear' || value?.easing === 'ease-in-out'
-        ? value.easing
+      legacy.easing === 'linear' || legacy.easing === 'ease-in-out'
+        ? legacy.easing
         : 'ease-out',
+    blocks: normalizeMotionBlocks(legacy.blocks, legacy),
   };
 }
 
@@ -539,26 +744,99 @@ export function shouldEndContinuousHistoryOnKey(key: string): boolean {
 
 export function compileElementMotion(element: MotusElement): CompiledElementMotion {
   const instruction = migrateMotion(element.motion);
+  const activeBlocks = instruction.blocks.filter(
+    (block) => block.enabled && block.kind !== 'scene-enter',
+  );
+  let cursorMs = 0;
+  let leadingDelayMs = 0;
+  let encounteredAction = false;
+  const steps: CompiledMotionStep[] = [];
+  for (const block of activeBlocks) {
+    if (block.kind === 'scene-enter') continue;
+    const durationMs = clamp(
+      Math.round(block.durationMs),
+      block.kind === 'wait' ? 0 : 100,
+      10_000,
+    );
+    if (block.kind === 'wait' && !encounteredAction) leadingDelayMs += durationMs;
+    if (block.kind !== 'wait') encounteredAction = true;
+    steps.push({
+      blockId: block.id,
+      kind: block.kind,
+      startsAtMs: cursorMs,
+      durationMs,
+      easing: block.easing,
+    });
+    cursorMs += durationMs;
+  }
+  const moveBlocks = activeBlocks.filter((block) => block.kind === 'move');
+  const rotateBlocks = activeBlocks.filter((block) => block.kind === 'rotate');
+  const scaleBlocks = activeBlocks.filter((block) => block.kind === 'scale');
+  const opacityBlocks = activeBlocks.filter((block) => block.kind === 'opacity');
+  const moveX = moveBlocks.reduce((total, block) => total + block.x, 0);
+  const moveY = moveBlocks.reduce((total, block) => total + block.y, 0);
+  const fromRotation = rotateBlocks.at(-1)?.value ?? instruction.fromRotation;
+  const fromScale = scaleBlocks.at(-1)?.value ?? instruction.fromScale;
+  const fromOpacity = opacityBlocks.at(-1)?.value ?? instruction.fromOpacity;
+  const actionDurationMs = steps
+    .filter((step) => step.kind !== 'wait')
+    .reduce((total, step) => total + step.durationMs, 0);
+  const from = {
+    translateX: clamp(-(moveBlocks.length ? moveX : instruction.moveX), -2_000, 2_000),
+    translateY: clamp(-(moveBlocks.length ? moveY : instruction.moveY), -2_000, 2_000),
+    opacity: clamp(fromOpacity, 0, 1),
+    scale: clamp(fromScale, 0.1, 3),
+    rotation: clamp(element.rotation + fromRotation, -720, 720),
+  };
+  const to = {
+    translateX: 0 as const,
+    translateY: 0 as const,
+    opacity: clamp(element.opacity, 0, 1),
+    scale: 1 as const,
+    rotation: clamp(element.rotation, -360, 360),
+  };
+  const sequenceDurationMs = clamp(
+    cursorMs || Math.round(instruction.durationMs),
+    0,
+    60_000,
+  );
+  const frameState = { ...from };
+  const keyframes: CompiledMotionKeyframe[] = [{
+    offset: 0,
+    ...frameState,
+    easing: steps[0]?.kind === 'wait' ? 'steps(1, end)' : (steps[0]?.easing ?? instruction.easing),
+  }];
+  for (const step of steps) {
+    if (step.durationMs <= 0 || sequenceDurationMs <= 0) continue;
+    keyframes[keyframes.length - 1].easing =
+      step.kind === 'wait' ? 'steps(1, end)' : step.easing;
+    if (step.kind === 'move') {
+      frameState.translateX = to.translateX;
+      frameState.translateY = to.translateY;
+    }
+    if (step.kind === 'rotate') frameState.rotation = to.rotation;
+    if (step.kind === 'scale') frameState.scale = to.scale;
+    if (step.kind === 'opacity') frameState.opacity = to.opacity;
+    keyframes.push({
+      offset: clamp((step.startsAtMs + step.durationMs) / sequenceDurationMs, 0, 1),
+      ...frameState,
+      easing: step.easing,
+    });
+  }
+  if (keyframes.at(-1)?.offset !== 1) {
+    keyframes.push({ offset: 1, ...to, easing: instruction.easing });
+  }
   return {
     schemaVersion: MOTION_SCHEMA_VERSION,
     event: 'scene-enter',
-    durationMs: clamp(Math.round(instruction.durationMs), 200, 10_000),
-    delayMs: clamp(Math.round(instruction.delayMs), 0, 5_000),
-    easing: instruction.easing,
-    from: {
-      translateX: clamp(-instruction.moveX, -2_000, 2_000),
-      translateY: clamp(-instruction.moveY, -2_000, 2_000),
-      opacity: clamp(instruction.fromOpacity, 0, 1),
-      scale: clamp(instruction.fromScale, 0.1, 3),
-      rotation: clamp(element.rotation + instruction.fromRotation, -720, 720),
-    },
-    to: {
-      translateX: 0,
-      translateY: 0,
-      opacity: clamp(element.opacity, 0, 1),
-      scale: 1,
-      rotation: clamp(element.rotation, -360, 360),
-    },
+    durationMs: clamp(actionDurationMs || Math.round(instruction.durationMs), 200, 30_000),
+    delayMs: clamp(leadingDelayMs || Math.round(instruction.delayMs), 0, 10_000),
+    easing: steps.find((step) => step.kind !== 'wait')?.easing ?? instruction.easing,
+    sequenceDurationMs,
+    steps,
+    keyframes,
+    from,
+    to,
   };
 }
 
@@ -676,6 +954,8 @@ export const createDefaultProject = (): MotusProject => ({
   schemaVersion: PROJECT_SCHEMA_VERSION,
   id: 'signal-in-the-fog',
   title: 'Signal in the Fog',
+  creatorName: 'Bahar Yüksel',
+  chapterTitle: 'Chapter 1 · The Answering Light',
   description: 'Three signals answer one another across a silent, shifting landscape.',
   tags: ['science fiction', 'mystery'],
   language: 'en',
@@ -723,6 +1003,8 @@ export function createBlankProject(
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: projectId,
     title: 'Untitled work',
+    creatorName: 'New creator',
+    chapterTitle: 'Chapter 1',
     description: '',
     tags: [],
     language: 'en',
@@ -986,6 +1268,8 @@ export function createPublicationRevision(
     revision,
     createdAt,
     title: project.title,
+    creatorName: project.creatorName,
+    chapterTitle: project.chapterTitle,
     description: project.description,
     tags: [...project.tags],
     language: project.language,
@@ -1005,6 +1289,8 @@ export function hasUnpublishedChanges(project: MotusProject): boolean {
 
   return (
     published.title !== project.title ||
+    published.creatorName !== project.creatorName ||
+    published.chapterTitle !== project.chapterTitle ||
     published.description !== project.description ||
     JSON.stringify(published.tags) !== JSON.stringify(project.tags) ||
     published.language !== project.language ||
@@ -1025,6 +1311,8 @@ export function restorePublicationToDraft(
 
   const restored = cloneProject(project);
   restored.title = revision.title;
+  restored.creatorName = revision.creatorName;
+  restored.chapterTitle = revision.chapterTitle;
   restored.description = revision.description;
   restored.tags = [...revision.tags];
   restored.language = revision.language;
@@ -1088,6 +1376,24 @@ function validateMotion(value: unknown): string | null {
   }
   if (value.event !== undefined && value.event !== 'scene-enter') {
     return 'Project uses an unsupported motion trigger';
+  }
+  if (value.blocks !== undefined) {
+    if (!Array.isArray(value.blocks) || value.blocks.length > MAX_MOTION_BLOCKS) {
+      return 'Project contains an invalid animation block program';
+    }
+    const ids = new Set<string>();
+    for (const block of value.blocks) {
+      if (
+        !isRecord(block) ||
+        typeof block.id !== 'string' ||
+        !block.id ||
+        !isMotionBlockKind(block.kind) ||
+        ids.has(block.id)
+      ) {
+        return 'Project contains an invalid animation block program';
+      }
+      ids.add(block.id);
+    }
   }
   return null;
 }
@@ -1248,6 +1554,7 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
   if (
     candidate.schemaVersion !== 2 &&
     candidate.schemaVersion !== 3 &&
+    candidate.schemaVersion !== 4 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return { project: null, error: 'Project uses an unsupported schema version' };
@@ -1302,6 +1609,16 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
         revision: revision.revision as number,
         createdAt: revision.createdAt as string,
         title: revision.title as string,
+        creatorName: normalizeEditableName(
+          revision.creatorName,
+          'Unknown creator',
+          MAX_PROJECT_TITLE_LENGTH,
+        ),
+        chapterTitle: normalizeEditableName(
+          revision.chapterTitle,
+          'Chapter 1',
+          MAX_PROJECT_TITLE_LENGTH,
+        ),
         description:
           typeof revision.description === 'string'
             ? revision.description.slice(0, MAX_PROJECT_DESCRIPTION_LENGTH)
@@ -1339,6 +1656,16 @@ export function restoreProjectWithError(value: string | null): ProjectRestoreRes
           ? candidate.id
           : fallbackId,
       title: candidate.title,
+      creatorName: normalizeEditableName(
+        candidate.creatorName,
+        'Unknown creator',
+        MAX_PROJECT_TITLE_LENGTH,
+      ),
+      chapterTitle: normalizeEditableName(
+        candidate.chapterTitle,
+        'Chapter 1',
+        MAX_PROJECT_TITLE_LENGTH,
+      ),
       description:
         typeof candidate.description === 'string'
           ? candidate.description.slice(0, MAX_PROJECT_DESCRIPTION_LENGTH)

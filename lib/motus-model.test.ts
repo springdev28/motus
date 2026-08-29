@@ -20,6 +20,7 @@ import {
   createDefaultProject,
   createElement,
   createElementCopy,
+  createMotionBlock,
   createProjectHistoryEntry,
   createProjectBackupFileName,
   createPublicationRevision,
@@ -65,6 +66,8 @@ void test('blank projects start private with one editable scene', () => {
 
   assert.equal(project.id, 'work-123');
   assert.equal(project.title, 'Untitled work');
+  assert.equal(project.creatorName, 'New creator');
+  assert.equal(project.chapterTitle, 'Chapter 1');
   assert.equal(project.visibility, 'private');
   assert.equal(project.updatedAt, '2026-08-29T02:00:00.000Z');
   assert.equal(project.scenes.length, 1);
@@ -455,12 +458,14 @@ void test('motion compilation is deterministic and produces a final element stat
   const element = createDefaultProject().scenes[0].elements[0];
   element.rotation = 12;
   element.opacity = 0.8;
-  element.motion.moveX = 120;
-  element.motion.moveY = -40;
-  element.motion.fromRotation = -35;
-  element.motion.fromScale = 0.6;
-  element.motion.fromOpacity = 0.2;
-  element.motion.delayMs = 300;
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'event'),
+    { ...createMotionBlock('wait', 'wait'), durationMs: 300 },
+    { ...createMotionBlock('move', 'move'), x: 120, y: -40, durationMs: 800 },
+    { ...createMotionBlock('rotate', 'rotate'), value: -35, durationMs: 400 },
+    { ...createMotionBlock('scale', 'scale'), value: 0.6, durationMs: 400 },
+    { ...createMotionBlock('opacity', 'opacity'), value: 0.2, durationMs: 500 },
+  ];
 
   const first = compileElementMotion(element);
   const second = compileElementMotion(element);
@@ -481,6 +486,30 @@ void test('motion compilation is deterministic and produces a final element stat
     rotation: 12,
   });
   assert.equal(first.delayMs, 300);
+  assert.equal(first.sequenceDurationMs, 2_400);
+  assert.deepEqual(
+    first.steps.map((step) => [step.kind, step.startsAtMs, step.durationMs]),
+    [
+      ['wait', 0, 300],
+      ['move', 300, 800],
+      ['rotate', 1_100, 400],
+      ['scale', 1_500, 400],
+      ['opacity', 1_900, 500],
+    ],
+  );
+  assert.equal(first.keyframes[0].offset, 0);
+  assert.equal(first.keyframes[1].offset, 0.125);
+  assert.equal(first.keyframes[0].easing, 'steps(1, end)');
+  assert.deepEqual(
+    {
+      translateX: first.keyframes.at(-1)?.translateX,
+      translateY: first.keyframes.at(-1)?.translateY,
+      opacity: first.keyframes.at(-1)?.opacity,
+      scale: first.keyframes.at(-1)?.scale,
+      rotation: first.keyframes.at(-1)?.rotation,
+    },
+    first.to,
+  );
 });
 
 void test('version 2 drafts migrate without losing scenes or element motion', () => {
@@ -512,6 +541,10 @@ void test('version 2 drafts migrate without losing scenes or element motion', ()
   assert.equal(restored.scenes[0].elements[0].motion.delayMs, 0);
   assert.equal(restored.scenes[0].elements[0].motion.fromScale, 1);
   assert.equal(restored.scenes[0].elements[0].motion.fromRotation, 0);
+  assert.equal(restored.scenes[0].elements[0].motion.blocks[0].kind, 'scene-enter');
+  assert.ok(
+    restored.scenes[0].elements[0].motion.blocks.some((block) => block.kind === 'move'),
+  );
 });
 
 void test('invalid project data is rejected', () => {
@@ -544,6 +577,15 @@ void test('project import reports schema, layer, motion, and asset failures prec
   assert.equal(
     restoreProjectWithError(JSON.stringify(unsupportedMotion)).error,
     'Project uses an unsupported motion version',
+  );
+
+  const invalidBlocks = createDefaultProject();
+  invalidBlocks.scenes[0].elements[0].motion.blocks.push({
+    ...createMotionBlock('move', 'event'),
+  });
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(invalidBlocks)).error,
+    'Project contains an invalid animation block program',
   );
 
   const unsafeImage = createDefaultProject();
