@@ -212,10 +212,37 @@ type StudioPanelLayout = {
 
 type StudioPanelLayouts = Record<'design' | 'motion', StudioPanelLayout>;
 
+type StudioPanelPreset = 'balanced' | 'focus-stage' | 'focus-secondary';
+
 const DEFAULT_STUDIO_PANEL_LAYOUTS: StudioPanelLayouts = {
   design: { left: 16, center: 52, right: 32 },
   motion: { left: 13, center: 57, right: 30 },
 };
+
+const STUDIO_PANEL_PRESETS: Record<
+  'design' | 'motion',
+  Record<StudioPanelPreset, StudioPanelLayout>
+> = {
+  design: {
+    balanced: DEFAULT_STUDIO_PANEL_LAYOUTS.design,
+    'focus-stage': { left: 12, center: 70, right: 18 },
+    'focus-secondary': { left: 12, center: 34, right: 54 },
+  },
+  motion: {
+    balanced: DEFAULT_STUDIO_PANEL_LAYOUTS.motion,
+    'focus-stage': { left: 12, center: 38, right: 50 },
+    'focus-secondary': { left: 12, center: 70, right: 18 },
+  },
+};
+
+function studioPanelLayoutsMatch(
+  left: StudioPanelLayout,
+  right: StudioPanelLayout,
+) {
+  return (['left', 'center', 'right'] as const).every(
+    (key) => Math.abs(left[key] - right[key]) < 0.75,
+  );
+}
 
 function isStudioPanelLayout(value: unknown): value is StudioPanelLayout {
   if (!value || typeof value !== 'object') return false;
@@ -884,6 +911,53 @@ function renderElementContent(element: MotusElement) {
   return <span className="orb-highlight" />;
 }
 
+type CanvasTextEditorProps = {
+  element: MotusElement;
+  onChange?: (elementId: string, value: string) => void;
+  onFinish?: (elementId: string, restoreFocus: boolean) => void;
+};
+
+function CanvasTextEditor({
+  element,
+  onChange,
+  onFinish,
+}: CanvasTextEditorProps) {
+  const editor = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const node = editor.current;
+    if (!node) return;
+    node.focus({ preventScroll: true });
+    const caret = node.value.length;
+    node.setSelectionRange(caret, caret);
+  }, [element.id]);
+
+  return (
+    <textarea
+      aria-label={`Edit ${element.name} text`}
+      className="canvas-text-editor"
+      maxLength={MAX_ELEMENT_TEXT_LENGTH}
+      onBlur={() => onFinish?.(element.id, false)}
+      onChange={(event) => onChange?.(element.id, event.target.value)}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (
+          event.key === 'Escape' ||
+          (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          onFinish?.(element.id, true);
+        }
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      ref={editor}
+      value={element.text ?? ''}
+    />
+  );
+}
+
 function BouncePathPreview({ jumps }: { jumps: BounceJump[] }) {
   const landingPoints = [0];
   for (const jump of jumps) {
@@ -935,6 +1009,10 @@ type SceneViewProps = {
   onPlaybackComplete?: () => void;
   interactive?: boolean;
   onSelect?: (id: string) => void;
+  editingTextId?: string | null;
+  onBeginTextEdit?: (elementId: string) => void;
+  onTextChange?: (elementId: string, value: string) => void;
+  onEndTextEdit?: (elementId: string, restoreFocus: boolean) => void;
   onKeyboardNudge?: (
     elementId: string,
     key: string,
@@ -958,6 +1036,10 @@ function SceneView({
   onPlaybackComplete,
   interactive = false,
   onSelect,
+  editingTextId,
+  onBeginTextEdit,
+  onTextChange,
+  onEndTextEdit,
   onKeyboardNudge,
   onKeyboardNudgeEnd,
   onElementRef,
@@ -1056,6 +1138,10 @@ function SceneView({
       {renderedElements.map((element) => {
         if (!element.visible) return null;
         const selected = selectedId === element.id;
+        const textEditable =
+          element.type === 'text' || element.type === 'speech';
+        const editingText =
+          interactive && textEditable && editingTextId === element.id;
         const compiledMotion = compileElementMotion(element);
         const elementStyle = {
           left: `${(element.x / CANVAS_WIDTH) * 100}%`,
@@ -1087,23 +1173,37 @@ function SceneView({
                 ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Meta+C Control+C Meta+X Control+X Meta+V Control+V'
                 : undefined
             }
-            aria-label={describeElementForAccessibility(element)}
-            aria-pressed={interactive ? selected : undefined}
+            aria-label={
+              interactive && textEditable && selected
+                ? `${describeElementForAccessibility(element)} Press Enter to edit text.`
+                : describeElementForAccessibility(element)
+            }
+            aria-pressed={interactive && !editingText ? selected : undefined}
             className={`canvas-element element-${element.type}`}
+            data-editing={editingText || undefined}
             data-interactive={interactive || undefined}
             data-locked={element.locked || undefined}
             data-selected={selected || undefined}
             key={`${element.id}-${playingKey}`}
             onClick={
-              interactive
+              interactive && !editingText
                 ? (event) => {
                     event.stopPropagation();
                     onSelect?.(element.id);
                   }
                 : undefined
             }
+            onDoubleClick={
+              interactive && textEditable && !element.locked
+                ? (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onBeginTextEdit?.(element.id);
+                  }
+                : undefined
+            }
             onKeyDown={
-              interactive
+              interactive && !editingText
                 ? (event) => {
                     const nudge = getKeyboardNudgeDelta(
                       event.key,
@@ -1118,6 +1218,16 @@ function SceneView({
                     }
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
+                      event.stopPropagation();
+                      if (
+                        event.key === 'Enter' &&
+                        selected &&
+                        textEditable &&
+                        !element.locked
+                      ) {
+                        onBeginTextEdit?.(element.id);
+                        return;
+                      }
                       onSelect?.(element.id);
                     }
                   }
@@ -1134,7 +1244,7 @@ function SceneView({
             }
             onBlur={interactive ? onKeyboardNudgeEnd : undefined}
             onPointerDown={
-              interactive
+              interactive && !editingText
                 ? (event) => {
                     if (!element.locked) {
                       onPointerAction?.(event, element.id, 'move');
@@ -1142,17 +1252,46 @@ function SceneView({
                   }
                 : undefined
             }
-            role={interactive ? 'button' : 'img'}
+            role={interactive ? (editingText ? 'group' : 'button') : 'img'}
             ref={(node) => {
               if (node) elementNodes.current.set(element.id, node);
               else elementNodes.current.delete(element.id);
               if (interactive) onElementRef?.(element.id, node);
             }}
             style={elementStyle}
-            tabIndex={interactive ? 0 : undefined}
+            tabIndex={interactive && !editingText ? 0 : undefined}
           >
-            {renderElementContent(element)}
-            {selected && interactive && !element.locked ? (
+            {editingText ? (
+              <CanvasTextEditor
+                element={element}
+                onChange={onTextChange}
+                onFinish={onEndTextEdit}
+              />
+            ) : (
+              renderElementContent(element)
+            )}
+            {selected &&
+            interactive &&
+            textEditable &&
+            !element.locked &&
+            !editingText ? (
+              // The selected layer itself is the keyboard control; this chip is a direct pointer affordance.
+              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+              <span
+                aria-hidden="true"
+                className="canvas-edit-text-control"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onBeginTextEdit?.(element.id);
+                }}
+                title={`Edit ${element.name} text`}
+              >
+                <Pencil />
+                Edit text
+              </span>
+            ) : null}
+            {selected && interactive && !element.locked && !editingText ? (
               // Pointer resize stays visual-only; keyboard users resize through the inspector fields.
               // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
               <span
@@ -1242,6 +1381,9 @@ export function MotusStudio() {
   const [project, setProject] = useState<MotusProject>(createDefaultProject);
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
   const [selectedElementId, setSelectedElementId] = useState('scene-1-orb');
+  const [editingTextElementId, setEditingTextElementId] = useState<
+    string | null
+  >(null);
   const [inspectorTab, setInspectorTab] = useState<'design' | 'motion'>(
     'design',
   );
@@ -1776,6 +1918,41 @@ export function MotusStudio() {
 
   const endHistoryTransaction = () => {
     historyTransaction.current = null;
+  };
+
+  const beginTextEditing = (elementId: string) => {
+    const element = findElement(project, activeScene.id, elementId);
+    if (
+      !element ||
+      element.locked ||
+      (element.type !== 'text' && element.type !== 'speech')
+    ) {
+      return;
+    }
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    setSelectedElementId(elementId);
+    setEditingTextElementId(elementId);
+    setNotice(`Editing ${element.name}`);
+  };
+
+  const changeTextOnCanvas = (elementId: string, value: string) => {
+    updateElement(
+      elementId,
+      (element) => {
+        element.text = value.slice(0, MAX_ELEMENT_TEXT_LENGTH);
+      },
+      `element:${elementId}:text`,
+    );
+  };
+
+  const finishTextEditing = (elementId: string, restoreFocus: boolean) => {
+    setEditingTextElementId((current) =>
+      current === elementId ? null : current,
+    );
+    endHistoryTransaction();
+    setNotice('Text updated');
+    if (restoreFocus) focusEditorTarget(activeScene.id, elementId);
   };
 
   const reconcileSelection = (candidate: MotusProject) => {
@@ -3393,6 +3570,14 @@ export function MotusStudio() {
     value: numericDrafts[key] ?? String(value),
   });
   const activePanelLayout = studioPanelLayouts[inspectorTab];
+  const activePanelPreset = (
+    Object.keys(STUDIO_PANEL_PRESETS[inspectorTab]) as StudioPanelPreset[]
+  ).find((preset) =>
+    studioPanelLayoutsMatch(
+      activePanelLayout,
+      STUDIO_PANEL_PRESETS[inspectorTab][preset],
+    ),
+  );
   const studioGridStyle = desktopPanelsEnabled
     ? ({
         gridTemplateColumns: getStudioGridTemplate(
@@ -3435,6 +3620,32 @@ export function MotusStudio() {
     } catch {
       // Panel sizing remains usable for this session without local storage.
     }
+  };
+  const applyStudioPanelPreset = (preset: StudioPanelPreset) => {
+    const nextLayout = {
+      ...STUDIO_PANEL_PRESETS[inspectorTab][preset],
+    };
+    const nextLayouts = {
+      ...studioPanelLayouts,
+      [inspectorTab]: nextLayout,
+    };
+    setStudioPanelLayouts(nextLayouts);
+    setPanelLayoutRevision((revision) => revision + 1);
+    try {
+      window.localStorage.setItem(
+        STUDIO_PANEL_LAYOUT_KEY,
+        JSON.stringify(nextLayouts),
+      );
+    } catch {
+      // Applying the live preset still succeeds without local storage.
+    }
+    setNotice(
+      preset === 'balanced'
+        ? `${inspectorTab === 'motion' ? 'Blocks' : 'Design'} layout balanced`
+        : preset === 'focus-stage'
+          ? 'Stage focused'
+          : `${inspectorTab === 'motion' ? 'Blocks' : 'Properties'} focused`,
+    );
   };
   const resetStudioPanelLayouts = () => {
     setStudioPanelLayouts({
@@ -3604,6 +3815,72 @@ export function MotusStudio() {
           >
             <Download />
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label="Panel layout"
+                  className="topbar-layout"
+                  variant="outline"
+                />
+              }
+            >
+              <Maximize2 />
+              <span>Layout</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="min-w-56"
+              sideOffset={8}
+            >
+              <DropdownMenuItem
+                aria-current={
+                  activePanelPreset === 'balanced' ? 'true' : undefined
+                }
+                className="layout-preset-item min-h-10 px-2.5"
+                data-active={activePanelPreset === 'balanced' || undefined}
+                onClick={() => applyStudioPanelPreset('balanced')}
+              >
+                <Maximize2 />
+                Balanced
+                <span>All panes</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                aria-current={
+                  activePanelPreset === 'focus-stage' ? 'true' : undefined
+                }
+                className="layout-preset-item min-h-10 px-2.5"
+                data-active={activePanelPreset === 'focus-stage' || undefined}
+                onClick={() => applyStudioPanelPreset('focus-stage')}
+              >
+                <Maximize2 />
+                Focus Stage
+                <span>Largest canvas</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                aria-current={
+                  activePanelPreset === 'focus-secondary' ? 'true' : undefined
+                }
+                className="layout-preset-item min-h-10 px-2.5"
+                data-active={
+                  activePanelPreset === 'focus-secondary' || undefined
+                }
+                onClick={() => applyStudioPanelPreset('focus-secondary')}
+              >
+                <Maximize2 />
+                Focus {inspectorTab === 'motion' ? 'Blocks' : 'Properties'}
+                <span>Largest editor</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="min-h-10 px-2.5"
+                onClick={resetStudioPanelLayouts}
+              >
+                <RotateCcw />
+                Reset both workspaces
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -3921,12 +4198,14 @@ export function MotusStudio() {
               <span>
                 {inspectorTab === 'motion'
                   ? 'Stage · select layers, then edit their blocks'
-                  : 'Stage · drag, paste, or use arrow keys · Shift moves 10 px'}
+                  : 'Stage · drag layers · double-click text to edit'}
               </span>
               <span className="canvas-sr-instructions" id="canvas-instructions">
                 Select a layer on the stage. Use arrow keys to move it one
                 pixel, or hold Shift to move it ten pixels. Use Control or
                 Command with C, X, and V to copy, cut, and paste the layer.
+                Double-click text, or press Enter on selected text, to edit it
+                directly on the stage.
               </span>
               {inspectorTab === 'design' ? (
                 <>
@@ -4019,7 +4298,10 @@ export function MotusStudio() {
               style={{ width: `${artboardWidth}px` }}
             >
               <SceneView
+                editingTextId={editingTextElementId}
                 interactive
+                onBeginTextEdit={beginTextEditing}
+                onEndTextEdit={finishTextEditing}
                 onElementRef={(elementId, node) => {
                   if (node) canvasElementRefs.current.set(elementId, node);
                   else canvasElementRefs.current.delete(elementId);
@@ -4029,6 +4311,7 @@ export function MotusStudio() {
                 onPlaybackComplete={finishCanvasPreview}
                 onPointerAction={beginPointerAction}
                 onSelect={setSelectedElementId}
+                onTextChange={changeTextOnCanvas}
                 playingElementId={
                   previewScope === 'selected'
                     ? (selectedElement?.id ?? '__no-selection__')
@@ -5471,6 +5754,11 @@ export function MotusStudio() {
                     : 'Resize Layers and Stage'
                 }
                 className="studio-resize-handle"
+                title={
+                  inspectorTab === 'motion'
+                    ? 'Drag to resize Layers and Blocks'
+                    : 'Drag to resize Layers and Stage'
+                }
                 withHandle
               />
               <ResizablePanel
@@ -5484,6 +5772,11 @@ export function MotusStudio() {
                     : 'Resize Stage and Properties'
                 }
                 className="studio-resize-handle"
+                title={
+                  inspectorTab === 'motion'
+                    ? 'Drag to resize Blocks and Stage'
+                    : 'Drag to resize Stage and Properties'
+                }
                 withHandle
               />
               <ResizablePanel id="right" minSize="260px" />
