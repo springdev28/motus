@@ -9,6 +9,9 @@ export const metadata: Metadata = {
   title: 'Motus Studio — Motion comics, made visual',
   description:
     'Build layered motion comics with a visual canvas and editable animation blocks.',
+  icons: {
+    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+  },
   openGraph: {
     title: 'Motus Studio — Motion comics, made visual',
     description:
