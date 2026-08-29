@@ -265,6 +265,8 @@ function SceneView({
           // The role and handlers are conditional because reader scenes are display-only.
           // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
           <div
+            aria-describedby={interactive ? 'canvas-instructions' : undefined}
+            aria-keyshortcuts={interactive ? 'ArrowLeft ArrowRight ArrowUp ArrowDown' : undefined}
             aria-label={describeElementForAccessibility(element)}
             aria-pressed={interactive ? selected : undefined}
             className={`canvas-element element-${element.type} ${
@@ -646,6 +648,7 @@ export function MotusStudio() {
     mutate: (draft: MotusProject) => void,
     transactionKey: string | null = null,
   ) => {
+    activePointerCleanup.current?.();
     clearDeletionUndo();
     setIsDirty(true);
     setCanUndo(true);
@@ -699,6 +702,7 @@ export function MotusStudio() {
   };
 
   const undo = () => {
+    activePointerCleanup.current?.();
     clearDeletionUndo();
     endHistoryTransaction();
     const previous = undoStack.current.pop();
@@ -719,6 +723,7 @@ export function MotusStudio() {
   };
 
   const redo = () => {
+    activePointerCleanup.current?.();
     clearDeletionUndo();
     endHistoryTransaction();
     const next = redoStack.current.pop();
@@ -1106,6 +1111,8 @@ export function MotusStudio() {
   };
 
   const openReader = (revision: MotusPublicationRevision | null = null) => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
     setReaderRevision(revision ? structuredClone(revision) : null);
     setReaderMatureConfirmed(false);
     setPreviewKey((key) => key + 1);
@@ -1143,6 +1150,7 @@ export function MotusStudio() {
   };
 
   const restoreRevision = (revision: MotusPublicationRevision) => {
+    activePointerCleanup.current?.();
     const restored = restorePublicationToDraft(project, revision.id, nowIso());
     if (!restored) {
       setNotice('Revision could not be restored');
@@ -1285,27 +1293,30 @@ export function MotusStudio() {
       }
       if (
         selectedElement &&
-        !selectedElement.locked &&
-        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
+        getKeyboardNudgeDelta(event.key, event.shiftKey)
       ) {
         event.preventDefault();
-        const distance = event.shiftKey ? 10 : 1;
-        updateElement(selectedElement.id, (element) => {
-          if (event.key === 'ArrowLeft') element.x = Math.max(0, element.x - distance);
-          if (event.key === 'ArrowRight') {
-            element.x = Math.min(CANVAS_WIDTH - element.width, element.x + distance);
-          }
-          if (event.key === 'ArrowUp') element.y = Math.max(0, element.y - distance);
-          if (event.key === 'ArrowDown') {
-            element.y = Math.min(CANVAS_HEIGHT - element.height, element.y + distance);
-          }
-        });
-        setNotice(`Nudged ${selectedElement.name}`);
+        nudgeElement(selectedElement.id, event.key, event.shiftKey);
+        return;
+      }
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const insideNativeControl = target?.closest(
+        'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
+      );
+      if (!insideNativeControl && getKeyboardNudgeDelta(event.key, event.shiftKey)) {
+        endHistoryTransaction();
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
   });
 
   const artboardWidth = Math.round(430 * (zoom / 64));
@@ -1333,6 +1344,8 @@ export function MotusStudio() {
     if (persistProject(project)) setIsDirty(false);
   };
   const openPublish = () => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
     if (externalDraftChange) {
       setConflictOpen(true);
       return;
@@ -1515,7 +1528,7 @@ export function MotusStudio() {
 
         <section className="workspace" aria-label="Comic scene editor">
           <div className="workspace-toolbar">
-            <div className="canvas-status"><Move /><span>Drag elements · resize from the corner</span><kbd>⌘D duplicate</kbd><kbd>⌫ delete</kbd></div>
+            <div className="canvas-status"><Move /><span id="canvas-instructions">Drag or use arrow keys · Shift moves 10 px</span><kbd>⌘D duplicate</kbd><kbd>⌫ delete</kbd></div>
             <output aria-live="polite" className="workspace-notice">{displayedNotice}</output>
             <div className="zoom-control" aria-label="Canvas zoom">
               <button aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(40, value - 8))} type="button">−</button>
