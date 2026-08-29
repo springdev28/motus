@@ -11,6 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
+  Activity,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -40,6 +41,7 @@ import {
   Plus,
   Redo2,
   RotateCcw,
+  Route,
   Search,
   Send,
   Sparkles,
@@ -49,6 +51,7 @@ import {
   Undo2,
   Unlock,
   Upload,
+  Zap,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -77,6 +80,7 @@ import {
   CANVAS_WIDTH,
   MAX_BOUNCE_JUMPS,
   MAX_MOTION_BLOCKS,
+  MOTION_BLOCK_CATEGORIES,
   MOTION_BLOCK_CATALOG,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_ELEMENT_TEXT_LENGTH,
@@ -145,6 +149,7 @@ import {
   type ElementType,
   type MotusElement,
   type MotionBlock,
+  type MotionBlockCategory,
   type MotionBlockKind,
   type MotusProject,
   type MotusPublicationRevision,
@@ -194,6 +199,30 @@ const sceneBackgrounds = [
 ] as const;
 
 type CatalogTab = 'works' | 'templates' | 'motion';
+
+type AddableMotionBlockCategory = Exclude<MotionBlockCategory, 'event'>;
+type BlockPaletteCategory = 'all' | AddableMotionBlockCategory;
+
+const ADDABLE_MOTION_BLOCK_CATALOG = MOTION_BLOCK_CATALOG.filter(
+  (entry) => entry.category !== 'event',
+);
+const ADDABLE_MOTION_BLOCK_CATEGORIES = MOTION_BLOCK_CATEGORIES.filter(
+  (category) => category.id !== 'event',
+);
+
+function BlockCategoryIcon({ category }: { category: BlockPaletteCategory }) {
+  if (category === 'all') return <LibraryBig aria-hidden="true" />;
+  if (category === 'motion') return <Move aria-hidden="true" />;
+  if (category === 'paths') return <Route aria-hidden="true" />;
+  if (category === 'physics') return <Zap aria-hidden="true" />;
+  if (category === 'looks') return <Eye aria-hidden="true" />;
+  if (category === 'emphasis') return <Activity aria-hidden="true" />;
+  if (category === 'effects') return <Sparkles aria-hidden="true" />;
+  if (category === 'transitions') return <ArrowRight aria-hidden="true" />;
+  if (category === 'text') return <Type aria-hidden="true" />;
+  if (category === 'control') return <RotateCcw aria-hidden="true" />;
+  return <Clock3 aria-hidden="true" />;
+}
 
 const workCatalog = [
   {
@@ -575,10 +604,19 @@ function SceneView({
         compiled.keyframes.map((frame) => ({
           offset: frame.offset,
           easing: frame.easing,
-          filter: `blur(${frame.blurPx}px)`,
+          filter: [
+            `blur(${frame.blurPx}px)`,
+            `brightness(${frame.brightness})`,
+            `contrast(${frame.contrast})`,
+            `saturate(${frame.saturation})`,
+            `grayscale(${frame.grayscale})`,
+            `sepia(${frame.sepia})`,
+            `hue-rotate(${frame.hueRotate}deg)`,
+            `drop-shadow(0 0 ${frame.glowPx}px rgb(229 255 115 / 85%))`,
+          ].join(' '),
           opacity: frame.opacity,
           clipPath: `inset(${frame.clipTop}% ${frame.clipRight}% ${frame.clipBottom}% ${frame.clipLeft}%)`,
-          transform: `translate(${frame.translateX}px, ${frame.translateY}px) rotate(${frame.rotation}deg) scale(${frame.scale})`,
+          transform: `translate(${frame.translateX}px, ${frame.translateY}px) rotate(${frame.rotation}deg) scale(${frame.scale * frame.scaleX}, ${frame.scale * frame.scaleY})`,
         })),
         {
           duration: Math.max(compiled.sequenceDurationMs, 1),
@@ -800,6 +838,9 @@ export function MotusStudio() {
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('works');
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [blockPaletteCategory, setBlockPaletteCategory] =
+    useState<BlockPaletteCategory>('motion');
+  const [blockPaletteSearch, setBlockPaletteSearch] = useState('');
   const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
   const [publishTagsInput, setPublishTagsInput] = useState(
     'science fiction, mystery',
@@ -902,6 +943,53 @@ export function MotusStudio() {
     () =>
       activeScene.elements.find((element) => element.id === selectedElementId),
     [activeScene.elements, selectedElementId],
+  );
+  const normalizedBlockPaletteSearch = blockPaletteSearch
+    .trim()
+    .toLocaleLowerCase();
+  const blockPaletteCategoryCounts = useMemo(
+    () =>
+      new Map(
+        ADDABLE_MOTION_BLOCK_CATEGORIES.map((category) => [
+          category.id,
+          ADDABLE_MOTION_BLOCK_CATALOG.filter(
+            (entry) => entry.category === category.id,
+          ).length,
+        ]),
+      ),
+    [],
+  );
+  const visibleBlockPaletteEntries = useMemo(() => {
+    if (normalizedBlockPaletteSearch) {
+      return ADDABLE_MOTION_BLOCK_CATALOG.filter((entry) => {
+        const searchableText = [
+          entry.label,
+          entry.description,
+          entry.category,
+          ...entry.parameters.flatMap((parameter) => [
+            parameter.label,
+            parameter.unit ?? '',
+          ]),
+        ]
+          .join(' ')
+          .toLocaleLowerCase();
+        return searchableText.includes(normalizedBlockPaletteSearch);
+      });
+    }
+    if (blockPaletteCategory === 'all') return ADDABLE_MOTION_BLOCK_CATALOG;
+    return ADDABLE_MOTION_BLOCK_CATALOG.filter(
+      (entry) => entry.category === blockPaletteCategory,
+    );
+  }, [blockPaletteCategory, normalizedBlockPaletteSearch]);
+  const visibleBlockPaletteGroups = useMemo(
+    () =>
+      ADDABLE_MOTION_BLOCK_CATEGORIES.map((category) => ({
+        ...category,
+        entries: visibleBlockPaletteEntries.filter(
+          (entry) => entry.category === category.id,
+        ),
+      })).filter((group) => group.entries.length > 0),
+    [visibleBlockPaletteEntries],
   );
   const activeTool = inspectorTab === 'motion' ? 'motion' : 'select';
 
@@ -3382,70 +3470,241 @@ export function MotusStudio() {
                     </section>
 
                     <section
-                      className="block-catalog block-palette"
-                      aria-labelledby="block-catalog-title"
+                      className="block-palette"
+                      aria-labelledby="block-palette-title"
                     >
-                      <div className="block-catalog-heading">
+                      <header className="block-palette-header">
                         <div>
-                          <span>ADD A BLOCK</span>
-                          <strong id="block-catalog-title">
-                            Motion, looks, and timing
-                          </strong>
+                          <span>BLOCK LIBRARY</span>
+                          <h2 id="block-palette-title">
+                            {ADDABLE_MOTION_BLOCK_CATALOG.length} editable
+                            blocks
+                          </h2>
                         </div>
                         <small>
                           {MAX_MOTION_BLOCKS -
                             selectedElement.motion.blocks.length}{' '}
                           slots left
                         </small>
-                      </div>
-                      <div className="block-catalog-grid">
-                        {MOTION_BLOCK_CATALOG.filter(
-                          (entry) => entry.kind !== 'scene-enter',
-                        ).map((entry) => (
-                          <button
-                            className={`block-palette-card block-${entry.category}`}
-                            disabled={
-                              selectedElement.motion.blocks.length >=
-                              MAX_MOTION_BLOCKS
+                      </header>
+
+                      <div className="block-palette-search">
+                        <Search aria-hidden="true" />
+                        <Input
+                          aria-controls="block-palette-results"
+                          aria-describedby="block-palette-status"
+                          aria-label={`Search ${ADDABLE_MOTION_BLOCK_CATALOG.length} editable blocks`}
+                          onChange={(event) =>
+                            setBlockPaletteSearch(event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape' && blockPaletteSearch) {
+                              event.preventDefault();
+                              setBlockPaletteSearch('');
                             }
-                            key={entry.kind}
-                            onClick={() => addMotionBlock(entry.kind)}
-                            title={entry.description}
+                          }}
+                          placeholder={`Search ${ADDABLE_MOTION_BLOCK_CATALOG.length} blocks…`}
+                          type="search"
+                          value={blockPaletteSearch}
+                        />
+                        {blockPaletteSearch ? (
+                          <button
+                            aria-label="Clear block search"
+                            className="block-palette-search-clear"
+                            onClick={() => setBlockPaletteSearch('')}
                             type="button"
                           >
-                            {entry.kind === 'wait' ? (
-                              <Clock3 />
-                            ) : entry.category === 'looks' ? (
-                              <Eye />
-                            ) : (
-                              <Sparkles />
-                            )}
-                            <span>
-                              <strong>{entry.label}</strong>
-                              <small>{entry.description}</small>
-                            </span>
-                            <Plus />
+                            ×
                           </button>
-                        ))}
+                        ) : null}
                       </div>
-                      <Button
-                        onClick={() => {
-                          setCatalogTab('motion');
-                          setCatalogOpen(true);
-                        }}
-                        variant="outline"
-                      >
-                        <LibraryBig />
-                        Browse editable presets
-                      </Button>
+
+                      <div className="block-palette-meta">
+                        <output
+                          aria-atomic="true"
+                          aria-live="polite"
+                          id="block-palette-status"
+                        >
+                          {visibleBlockPaletteEntries.length} of{' '}
+                          {ADDABLE_MOTION_BLOCK_CATALOG.length} blocks
+                          {normalizedBlockPaletteSearch
+                            ? ' match your search'
+                            : ''}
+                        </output>
+                        <span>
+                          {ADDABLE_MOTION_BLOCK_CATEGORIES.length} categories
+                        </span>
+                      </div>
+
+                      <div className="block-palette-layout">
+                        <nav
+                          aria-label="Block categories"
+                          className="block-category-rail"
+                        >
+                          <ul className="block-category-list">
+                            <li>
+                              <button
+                                aria-pressed={
+                                  Boolean(normalizedBlockPaletteSearch) ||
+                                  blockPaletteCategory === 'all'
+                                }
+                                className="block-category-chip"
+                                data-active={
+                                  Boolean(normalizedBlockPaletteSearch) ||
+                                  blockPaletteCategory === 'all' ||
+                                  undefined
+                                }
+                                data-category="all"
+                                onClick={() => {
+                                  setBlockPaletteCategory('all');
+                                  setBlockPaletteSearch('');
+                                }}
+                                type="button"
+                              >
+                                <BlockCategoryIcon category="all" />
+                                <span>All</span>
+                                <small>
+                                  {ADDABLE_MOTION_BLOCK_CATALOG.length}
+                                </small>
+                              </button>
+                            </li>
+                            {ADDABLE_MOTION_BLOCK_CATEGORIES.map((category) => {
+                              const categoryId =
+                                category.id as AddableMotionBlockCategory;
+                              const active =
+                                !normalizedBlockPaletteSearch &&
+                                blockPaletteCategory === categoryId;
+                              return (
+                                <li key={category.id}>
+                                  <button
+                                    aria-label={`${category.label}, ${blockPaletteCategoryCounts.get(category.id) ?? 0} blocks`}
+                                    aria-pressed={active}
+                                    className="block-category-chip"
+                                    data-active={active || undefined}
+                                    data-category={category.id}
+                                    onClick={() => {
+                                      setBlockPaletteCategory(categoryId);
+                                      setBlockPaletteSearch('');
+                                    }}
+                                    type="button"
+                                  >
+                                    <BlockCategoryIcon category={categoryId} />
+                                    <span>{category.label}</span>
+                                    <small>
+                                      {blockPaletteCategoryCounts.get(
+                                        category.id,
+                                      ) ?? 0}
+                                    </small>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </nav>
+
+                        <div
+                          className="block-palette-results"
+                          id="block-palette-results"
+                        >
+                          {visibleBlockPaletteGroups.length ? (
+                            visibleBlockPaletteGroups.map((group) => (
+                              <section
+                                aria-labelledby={`block-group-${group.id}`}
+                                className="block-palette-group"
+                                data-category={group.id}
+                                key={group.id}
+                              >
+                                <header className="block-palette-group-heading">
+                                  <span aria-hidden="true" />
+                                  <div>
+                                    <h3 id={`block-group-${group.id}`}>
+                                      {group.label}
+                                    </h3>
+                                    <p>{group.description}</p>
+                                  </div>
+                                  <small>{group.entries.length}</small>
+                                </header>
+                                <ul className="block-palette-list">
+                                  {group.entries.map((entry) => (
+                                    <li key={entry.kind}>
+                                      <button
+                                        aria-label={`Add ${entry.label} block. ${entry.description}`}
+                                        className="block-palette-card"
+                                        data-category={entry.category}
+                                        disabled={
+                                          selectedElement.motion.blocks
+                                            .length >= MAX_MOTION_BLOCKS
+                                        }
+                                        onClick={() =>
+                                          addMotionBlock(entry.kind)
+                                        }
+                                        type="button"
+                                      >
+                                        <span className="block-palette-card-icon">
+                                          <BlockCategoryIcon
+                                            category={
+                                              entry.category as AddableMotionBlockCategory
+                                            }
+                                          />
+                                        </span>
+                                        <span className="block-palette-card-copy">
+                                          <strong>{entry.label}</strong>
+                                          <small>{entry.description}</small>
+                                          <span className="block-palette-card-fields">
+                                            {entry.parameters.length
+                                              ? entry.parameters
+                                                  .map(
+                                                    (parameter) =>
+                                                      parameter.label,
+                                                  )
+                                                  .join(' · ')
+                                              : entry.kind === 'wait'
+                                                ? 'Editable wait time'
+                                                : 'Editable duration and easing'}
+                                          </span>
+                                        </span>
+                                        <Plus aria-hidden="true" />
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </section>
+                            ))
+                          ) : (
+                            <output className="block-palette-empty">
+                              <Search aria-hidden="true" />
+                              <strong>No matching blocks</strong>
+                              <span>Try a motion, effect, field, or unit.</span>
+                              <button
+                                onClick={() => setBlockPaletteSearch('')}
+                                type="button"
+                              >
+                                Clear search
+                              </button>
+                            </output>
+                          )}
+                        </div>
+                      </div>
+
+                      <footer className="block-palette-footer">
+                        <Button
+                          onClick={() => {
+                            setCatalogTab('motion');
+                            setCatalogOpen(true);
+                          }}
+                          variant="outline"
+                        >
+                          <LibraryBig />
+                          Browse editable presets
+                        </Button>
+                      </footer>
                     </section>
 
                     <div className="block-program-heading">
                       <div>
                         <span>PROGRAM STACK</span>
                         <strong>
-                          {selectedElement.motion.blocks.length} editable blocks
-                          ·{' '}
+                          {selectedElement.motion.blocks.length} blocks ·{' '}
                           {
                             compileElementMotion(selectedElement)
                               .sequenceDurationMs
@@ -3467,6 +3726,9 @@ export function MotusStudio() {
                             block.kind !== 'scene-enter' &&
                             block.kind !== 'wait';
                           const isBounce = block.kind === 'bounce';
+                          const catalogEntry = MOTION_BLOCK_CATALOG.find(
+                            (entry) => entry.kind === block.kind,
+                          );
                           return (
                             <li
                               className={`motion-block block-${block.category}`}
@@ -3812,429 +4074,76 @@ export function MotusStudio() {
                                   </div>
                                 </>
                               ) : null}
-                              {block.kind === 'move' ||
-                              block.kind === 'drift' ? (
-                                <div className="motion-block-grid">
-                                  <label htmlFor={`motion-${block.id}-x`}>
-                                    <span>
-                                      {block.kind === 'drift'
-                                        ? 'Drift X'
-                                        : 'Move X'}
-                                    </span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-x`}
-                                      max="800"
-                                      min="-800"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.x = Number(event.target.value);
-                                          },
-                                          `block:${block.id}:x`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.x}
-                                    />
-                                  </label>
-                                  <label htmlFor={`motion-${block.id}-y`}>
-                                    <span>
-                                      {block.kind === 'drift'
-                                        ? 'Drift Y'
-                                        : 'Move Y'}
-                                    </span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-y`}
-                                      max="800"
-                                      min="-800"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.y = Number(event.target.value);
-                                          },
-                                          `block:${block.id}:y`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.y}
-                                    />
-                                  </label>
-                                </div>
-                              ) : null}
-                              {block.kind === 'shake' ? (
-                                <div className="motion-block-grid">
-                                  <label htmlFor={`motion-${block.id}-x`}>
-                                    <span>Horizontal</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-x`}
-                                      max="800"
-                                      min="0"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.x = Number(event.target.value);
-                                          },
-                                          `block:${block.id}:x`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.x}
-                                    />
-                                  </label>
-                                  <label htmlFor={`motion-${block.id}-y`}>
-                                    <span>Vertical</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-y`}
-                                      max="800"
-                                      min="0"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.secondaryValue = Number(
-                                              event.target.value,
-                                            );
-                                          },
-                                          `block:${block.id}:secondary`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.secondaryValue}
-                                    />
-                                  </label>
-                                  <label
-                                    htmlFor={`motion-${block.id}-repetitions`}
-                                  >
-                                    <span>Beats</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-repetitions`}
-                                      max="20"
-                                      min="1"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.repetitions = Number(
-                                              event.target.value,
-                                            );
-                                          },
-                                          `block:${block.id}:repetitions`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.repetitions}
-                                    />
-                                  </label>
-                                </div>
-                              ) : null}
-                              {block.kind === 'float' ? (
-                                <div className="motion-block-grid">
-                                  <label htmlFor={`motion-${block.id}-height`}>
-                                    <span>Float height</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-height`}
-                                      max="800"
-                                      min="0"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.y = Number(event.target.value);
-                                          },
-                                          `block:${block.id}:height`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.y}
-                                    />
-                                  </label>
-                                  <label
-                                    htmlFor={`motion-${block.id}-repetitions`}
-                                  >
-                                    <span>Cycles</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-repetitions`}
-                                      max="20"
-                                      min="1"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.repetitions = Number(
-                                              event.target.value,
-                                            );
-                                          },
-                                          `block:${block.id}:repetitions`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.repetitions}
-                                    />
-                                  </label>
-                                </div>
-                              ) : null}
-                              {block.kind === 'scale' ? (
-                                <label className="range-control">
-                                  <span>Start size</span>
-                                  <output>
-                                    {Math.round(block.value * 100)}%
-                                  </output>
-                                  <input
-                                    {...continuousHistoryProps}
-                                    max="200"
-                                    min="10"
-                                    onChange={(event) =>
-                                      updateMotionBlock(
-                                        block.id,
-                                        (item) => {
-                                          item.value =
-                                            Number(event.target.value) / 100;
-                                        },
-                                        `block:${block.id}:value`,
-                                      )
-                                    }
-                                    type="range"
-                                    value={Math.round(block.value * 100)}
-                                  />
-                                </label>
-                              ) : null}
-                              {block.kind === 'rotate' ? (
-                                <label className="range-control">
-                                  <span>Start angle</span>
-                                  <output>{block.value}°</output>
-                                  <input
-                                    {...continuousHistoryProps}
-                                    max="180"
-                                    min="-180"
-                                    onChange={(event) =>
-                                      updateMotionBlock(
-                                        block.id,
-                                        (item) => {
-                                          item.value = Number(
-                                            event.target.value,
-                                          );
-                                        },
-                                        `block:${block.id}:value`,
-                                      )
-                                    }
-                                    type="range"
-                                    value={block.value}
-                                  />
-                                </label>
-                              ) : null}
-                              {block.kind === 'opacity' ? (
-                                <label className="range-control">
-                                  <span>Start opacity</span>
-                                  <output>
-                                    {Math.round(block.value * 100)}%
-                                  </output>
-                                  <input
-                                    {...continuousHistoryProps}
-                                    max="100"
-                                    min="0"
-                                    onChange={(event) =>
-                                      updateMotionBlock(
-                                        block.id,
-                                        (item) => {
-                                          item.value =
-                                            Number(event.target.value) / 100;
-                                        },
-                                        `block:${block.id}:value`,
-                                      )
-                                    }
-                                    type="range"
-                                    value={Math.round(block.value * 100)}
-                                  />
-                                </label>
-                              ) : null}
-                              {block.kind === 'pulse' ? (
-                                <div className="motion-block-grid">
-                                  <label htmlFor={`motion-${block.id}-scale`}>
-                                    <span>Peak scale</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-scale`}
-                                      max="4"
-                                      min="0.05"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.value = Number(
-                                              event.target.value,
-                                            );
-                                          },
-                                          `block:${block.id}:value`,
-                                        )
-                                      }
-                                      step="0.05"
-                                      type="number"
-                                      value={block.value}
-                                    />
-                                  </label>
-                                  <label
-                                    htmlFor={`motion-${block.id}-repetitions`}
-                                  >
-                                    <span>Pulses</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-repetitions`}
-                                      max="20"
-                                      min="1"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.repetitions = Number(
-                                              event.target.value,
-                                            );
-                                          },
-                                          `block:${block.id}:repetitions`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.repetitions}
-                                    />
-                                  </label>
-                                </div>
-                              ) : null}
-                              {block.kind === 'blur' ? (
-                                <label className="range-control">
-                                  <span>Start blur</span>
-                                  <output>{block.value}px</output>
-                                  <input
-                                    {...continuousHistoryProps}
-                                    max="60"
-                                    min="0"
-                                    onChange={(event) =>
-                                      updateMotionBlock(
-                                        block.id,
-                                        (item) => {
-                                          item.value = Number(
-                                            event.target.value,
-                                          );
-                                        },
-                                        `block:${block.id}:value`,
-                                      )
-                                    }
-                                    type="range"
-                                    value={block.value}
-                                  />
-                                </label>
-                              ) : null}
-                              {block.kind === 'reveal' ? (
-                                <div className="motion-block-grid">
-                                  <label
-                                    htmlFor={`motion-${block.id}-direction`}
-                                  >
-                                    <span>Reveal from</span>
-                                    <NativeSelect
-                                      id={`motion-${block.id}-direction`}
-                                      onChange={(event) =>
-                                        updateMotionBlock(block.id, (item) => {
-                                          item.direction = event.target
-                                            .value as MotionBlock['direction'];
-                                        })
-                                      }
-                                      value={block.direction}
+                              {!isEvent && !isBounce && catalogEntry ? (
+                                <div className="motion-block-grid motion-block-parameters">
+                                  {catalogEntry.usesDirection ? (
+                                    <label
+                                      htmlFor={`motion-${block.id}-direction`}
                                     >
-                                      <NativeSelectOption value="left">
-                                        Left
-                                      </NativeSelectOption>
-                                      <NativeSelectOption value="right">
-                                        Right
-                                      </NativeSelectOption>
-                                      <NativeSelectOption value="up">
-                                        Top
-                                      </NativeSelectOption>
-                                      <NativeSelectOption value="down">
-                                        Bottom
-                                      </NativeSelectOption>
-                                    </NativeSelect>
-                                  </label>
-                                  <label htmlFor={`motion-${block.id}-amount`}>
-                                    <span>Hidden amount %</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-amount`}
-                                      max="100"
-                                      min="0"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.value = Number(
-                                              event.target.value,
-                                            );
-                                          },
-                                          `block:${block.id}:value`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.value || 100}
-                                    />
-                                  </label>
-                                </div>
-                              ) : null}
-                              {block.kind === 'flash' ? (
-                                <div className="motion-block-grid">
-                                  <label htmlFor={`motion-${block.id}-opacity`}>
-                                    <span>Low opacity</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-opacity`}
-                                      max="1"
-                                      min="0"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.value = Number(
-                                              event.target.value,
-                                            );
-                                          },
-                                          `block:${block.id}:value`,
-                                        )
-                                      }
-                                      step="0.05"
-                                      type="number"
-                                      value={block.value}
-                                    />
-                                  </label>
-                                  <label
-                                    htmlFor={`motion-${block.id}-repetitions`}
-                                  >
-                                    <span>Flashes</span>
-                                    <Input
-                                      {...continuousHistoryProps}
-                                      id={`motion-${block.id}-repetitions`}
-                                      max="20"
-                                      min="1"
-                                      onChange={(event) =>
-                                        updateMotionBlock(
-                                          block.id,
-                                          (item) => {
-                                            item.repetitions = Number(
-                                              event.target.value,
-                                            );
-                                          },
-                                          `block:${block.id}:repetitions`,
-                                        )
-                                      }
-                                      type="number"
-                                      value={block.repetitions}
-                                    />
-                                  </label>
+                                      <span>Direction</span>
+                                      <NativeSelect
+                                        id={`motion-${block.id}-direction`}
+                                        onChange={(event) =>
+                                          updateMotionBlock(
+                                            block.id,
+                                            (item) => {
+                                              item.direction = event.target
+                                                .value as MotionBlock['direction'];
+                                            },
+                                          )
+                                        }
+                                        value={block.direction}
+                                      >
+                                        <NativeSelectOption value="left">
+                                          Left
+                                        </NativeSelectOption>
+                                        <NativeSelectOption value="right">
+                                          Right
+                                        </NativeSelectOption>
+                                        <NativeSelectOption value="up">
+                                          Top
+                                        </NativeSelectOption>
+                                        <NativeSelectOption value="down">
+                                          Bottom
+                                        </NativeSelectOption>
+                                      </NativeSelect>
+                                    </label>
+                                  ) : null}
+                                  {catalogEntry.parameters.map((parameter) => (
+                                    <label
+                                      htmlFor={`motion-${block.id}-${parameter.field}`}
+                                      key={parameter.field}
+                                    >
+                                      <span>{parameter.label}</span>
+                                      <div className="motion-parameter-input">
+                                        <Input
+                                          {...continuousHistoryProps}
+                                          id={`motion-${block.id}-${parameter.field}`}
+                                          max={parameter.max}
+                                          min={parameter.min}
+                                          onChange={(event) =>
+                                            updateMotionBlock(
+                                              block.id,
+                                              (item) => {
+                                                item[parameter.field] = Number(
+                                                  event.target.value,
+                                                );
+                                              },
+                                              `block:${block.id}:${parameter.field}`,
+                                            )
+                                          }
+                                          step={parameter.step}
+                                          type="number"
+                                          value={block[parameter.field]}
+                                        />
+                                        {parameter.unit ? (
+                                          <small aria-hidden="true">
+                                            {parameter.unit}
+                                          </small>
+                                        ) : null}
+                                      </div>
+                                    </label>
+                                  ))}
                                 </div>
                               ) : null}
                               {!isEvent && !isBounce ? (

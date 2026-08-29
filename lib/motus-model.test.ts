@@ -6,10 +6,15 @@ import {
   CANVAS_WIDTH,
   MAX_BOUNCE_JUMPS,
   MAX_ELEMENT_NAME_LENGTH,
+  MAX_MOTION_BLOCKS,
   MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_SCENE_NAME_LENGTH,
   MIN_ELEMENT_HEIGHT,
   MIN_ELEMENT_WIDTH,
+  MOTION_BLOCK_CATALOG,
+  MOTION_BLOCK_CATEGORIES,
+  MOTION_BLOCK_CATEGORY_IDS,
+  MOTION_BLOCK_KINDS,
   MOTION_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
   canAddElementToScene,
@@ -57,10 +62,39 @@ import {
   shouldEndContinuousHistoryOnKey,
   trimProjectHistory,
   transformElementByPointer,
+  type CompiledMotionKeyframe,
   type ProjectHistoryState,
   validateImageAsset,
   writeDraftJournal,
 } from './motus-model.ts';
+
+const COMPILED_MOTION_CHANNELS = [
+  'translateX',
+  'translateY',
+  'opacity',
+  'scale',
+  'scaleX',
+  'scaleY',
+  'rotation',
+  'blurPx',
+  'brightness',
+  'contrast',
+  'saturation',
+  'grayscale',
+  'sepia',
+  'hueRotate',
+  'glowPx',
+  'clipTop',
+  'clipRight',
+  'clipBottom',
+  'clipLeft',
+] as const;
+
+function compiledMotionChannels(frame: CompiledMotionKeyframe) {
+  return Object.fromEntries(
+    COMPILED_MOTION_CHANNELS.map((channel) => [channel, frame[channel]]),
+  );
+}
 
 void test('blank projects start private with one editable scene', () => {
   const project = createBlankProject('work-123', '2026-08-29T02:00:00.000Z');
@@ -478,6 +512,413 @@ void test('restored drafts bound editable names and reject invalid name types', 
   assert.equal(
     restoreProjectWithError(JSON.stringify(malformed)).error,
     'Project contains an invalid scene name',
+  );
+});
+
+void test('motion registry is exhaustive, categorized, and has bounded finite defaults', () => {
+  const catalogKinds = MOTION_BLOCK_CATALOG.map((entry) => entry.kind);
+  const addableEntries = MOTION_BLOCK_CATALOG.filter(
+    (entry) => entry.kind !== 'scene-enter',
+  );
+  const representedCategories = new Set(
+    MOTION_BLOCK_CATALOG.map((entry) => entry.category),
+  );
+
+  assert.equal(MOTION_BLOCK_CATALOG.length, 163);
+  assert.equal(new Set(catalogKinds).size, 163);
+  assert.equal(addableEntries.length, 162);
+  assert.equal(MOTION_BLOCK_KINDS.length, 163);
+  assert.equal(new Set(MOTION_BLOCK_KINDS).size, 163);
+  assert.deepEqual(
+    [...catalogKinds].sort(),
+    [...MOTION_BLOCK_KINDS].sort(),
+    'the kind tuple and catalog must contain exactly the same kinds',
+  );
+
+  assert.equal(MOTION_BLOCK_CATEGORY_IDS.length, 11);
+  assert.equal(new Set(MOTION_BLOCK_CATEGORY_IDS).size, 11);
+  assert.equal(MOTION_BLOCK_CATEGORIES.length, 11);
+  assert.equal(
+    new Set(MOTION_BLOCK_CATEGORIES.map((category) => category.id)).size,
+    11,
+  );
+  assert.deepEqual(
+    [...representedCategories].sort(),
+    [...MOTION_BLOCK_CATEGORY_IDS].sort(),
+    'all eleven declared categories must contain at least one block',
+  );
+
+  for (const entry of MOTION_BLOCK_CATALOG) {
+    const block = createMotionBlock(entry.kind, `default-${entry.kind}`);
+    const parameterFields = new Set<string>();
+
+    assert.equal(block.kind, entry.kind);
+    assert.equal(block.category, entry.category);
+    assert.equal(block.label, entry.label);
+    assert.equal(block.enabled, true);
+    assert.ok(entry.label.trim(), `${entry.kind} needs a label`);
+    assert.ok(entry.description.trim(), `${entry.kind} needs a description`);
+    assert.ok(
+      Number.isFinite(entry.durationMs),
+      `${entry.kind} duration must be finite`,
+    );
+    assert.ok(
+      entry.durationMs >= 0,
+      `${entry.kind} duration cannot be negative`,
+    );
+
+    for (const [field, value] of Object.entries({
+      durationMs: block.durationMs,
+      x: block.x,
+      y: block.y,
+      value: block.value,
+      secondaryValue: block.secondaryValue,
+      repetitions: block.repetitions,
+    })) {
+      assert.ok(
+        Number.isFinite(value),
+        `${entry.kind} default ${field} must be finite`,
+      );
+    }
+
+    for (const parameter of entry.parameters) {
+      assert.equal(
+        parameterFields.has(parameter.field),
+        false,
+        `${entry.kind} declares ${parameter.field} more than once`,
+      );
+      parameterFields.add(parameter.field);
+      assert.ok(
+        Number.isFinite(parameter.defaultValue),
+        `${entry.kind}.${parameter.field} default must be finite`,
+      );
+      assert.ok(
+        Number.isFinite(parameter.min),
+        `${entry.kind}.${parameter.field} minimum must be finite`,
+      );
+      assert.ok(
+        Number.isFinite(parameter.max),
+        `${entry.kind}.${parameter.field} maximum must be finite`,
+      );
+      assert.ok(
+        Number.isFinite(parameter.step) && parameter.step > 0,
+        `${entry.kind}.${parameter.field} step must be positive and finite`,
+      );
+      assert.ok(
+        parameter.min <= parameter.defaultValue &&
+          parameter.defaultValue <= parameter.max,
+        `${entry.kind}.${parameter.field} default must be within its bounds`,
+      );
+      assert.equal(
+        block[parameter.field],
+        parameter.defaultValue,
+        `${entry.kind}.${parameter.field} must use the catalog default`,
+      );
+    }
+  }
+});
+
+void test('motion restore keeps one event hat and respects the total block limit', () => {
+  const eventOnlyProject = createDefaultProject();
+  eventOnlyProject.scenes[0].elements[0].motion.blocks = [
+    createMotionBlock('scene-enter', 'event-only'),
+  ];
+
+  const restoredEventOnly = restoreProject(JSON.stringify(eventOnlyProject));
+
+  assert.ok(restoredEventOnly);
+  assert.deepEqual(
+    restoredEventOnly.scenes[0].elements[0].motion.blocks.map((block) => [
+      block.id,
+      block.kind,
+    ]),
+    [['event-only', 'scene-enter']],
+  );
+
+  const duplicateEventProject = createDefaultProject();
+  duplicateEventProject.scenes[0].elements[0].motion.blocks = [
+    createMotionBlock('scene-enter', 'event-first'),
+    createMotionBlock('wait', 'wait-between-events'),
+    createMotionBlock('scene-enter', 'event-duplicate'),
+  ];
+
+  const restoredDuplicateEvents = restoreProject(
+    JSON.stringify(duplicateEventProject),
+  );
+
+  assert.ok(restoredDuplicateEvents);
+  const normalizedDuplicateBlocks =
+    restoredDuplicateEvents.scenes[0].elements[0].motion.blocks;
+  assert.deepEqual(
+    normalizedDuplicateBlocks.map((block) => block.kind),
+    ['scene-enter', 'wait'],
+  );
+  assert.equal(normalizedDuplicateBlocks[0].id, 'event-first');
+  assert.equal(
+    normalizedDuplicateBlocks.filter((block) => block.kind === 'scene-enter')
+      .length,
+    1,
+  );
+
+  const maximumProgramProject = createDefaultProject();
+  maximumProgramProject.scenes[0].elements[0].motion.blocks = Array.from(
+    { length: MAX_MOTION_BLOCKS },
+    (_, index) => createMotionBlock('wait', `maximum-wait-${index + 1}`),
+  );
+
+  const restoredMaximumProgram = restoreProject(
+    JSON.stringify(maximumProgramProject),
+  );
+
+  assert.ok(restoredMaximumProgram);
+  const maximumBlocks =
+    restoredMaximumProgram.scenes[0].elements[0].motion.blocks;
+  assert.equal(maximumBlocks.length, MAX_MOTION_BLOCKS);
+  assert.equal(maximumBlocks[0].kind, 'scene-enter');
+  assert.equal(
+    maximumBlocks.filter((block) => block.kind === 'scene-enter').length,
+    1,
+  );
+  assert.equal(
+    maximumBlocks.filter((block) => block.kind !== 'scene-enter').length,
+    MAX_MOTION_BLOCKS - 1,
+  );
+});
+
+void test('every exposed block control changes its compiled animation', () => {
+  const compileCatalogBlock = (
+    kind: (typeof MOTION_BLOCK_KINDS)[number],
+    mutate?: (block: ReturnType<typeof createMotionBlock>) => void,
+  ) => {
+    const element = createDefaultProject().scenes[0].elements[0];
+    const block = createMotionBlock(kind, `controls-${kind}`);
+    block.jumps = block.jumps.map((jump, index) => ({
+      ...jump,
+      id: `controls-jump-${index + 1}`,
+    }));
+    mutate?.(block);
+    element.motion.blocks = [
+      createMotionBlock('scene-enter', 'controls-event'),
+      block,
+    ];
+    const compiled = compileElementMotion(element);
+    return JSON.stringify({
+      sequenceDurationMs: compiled.sequenceDurationMs,
+      steps: compiled.steps,
+      keyframes: compiled.keyframes,
+    });
+  };
+
+  for (const entry of MOTION_BLOCK_CATALOG) {
+    if (entry.kind === 'scene-enter') continue;
+    const baseline = compileCatalogBlock(entry.kind);
+
+    for (const parameter of entry.parameters) {
+      const changedValue =
+        parameter.defaultValue === parameter.max
+          ? parameter.min
+          : parameter.max;
+      assert.notEqual(
+        compileCatalogBlock(entry.kind, (block) => {
+          block[parameter.field] = changedValue;
+        }),
+        baseline,
+        `${entry.kind}.${parameter.field} must affect compiled playback`,
+      );
+    }
+
+    if (entry.usesDirection) {
+      const directionSignatures = ['left', 'right', 'up', 'down'].map(
+        (direction) =>
+          compileCatalogBlock(entry.kind, (block) => {
+            block.direction = direction as typeof block.direction;
+          }),
+      );
+      assert.equal(
+        new Set(directionSignatures).size,
+        4,
+        `${entry.kind} must compile all four directions differently`,
+      );
+    }
+
+    if (entry.kind !== 'bounce') {
+      assert.notEqual(
+        compileCatalogBlock(entry.kind, (block) => {
+          block.durationMs = Math.min(10_000, entry.durationMs + 150);
+        }),
+        baseline,
+        `${entry.kind} duration must affect compiled playback`,
+      );
+      if (entry.kind !== 'wait') {
+        assert.notEqual(
+          compileCatalogBlock(entry.kind, (block) => {
+            block.easing = 'linear';
+          }),
+          baseline,
+          `${entry.kind} easing must affect compiled playback`,
+        );
+      }
+    }
+  }
+});
+
+void test('every addable default block compiles to a finite visible one-step program', () => {
+  const expectedFinalChannels = {
+    translateX: 0,
+    translateY: 0,
+    opacity: 0.73,
+    scale: 1,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 17,
+    blurPx: 0,
+    brightness: 1,
+    contrast: 1,
+    saturation: 1,
+    grayscale: 0,
+    sepia: 0,
+    hueRotate: 0,
+    glowPx: 0,
+    clipTop: 0,
+    clipRight: 0,
+    clipBottom: 0,
+    clipLeft: 0,
+  };
+
+  for (const entry of MOTION_BLOCK_CATALOG) {
+    if (entry.kind === 'scene-enter') continue;
+
+    const element = createDefaultProject().scenes[0].elements[0];
+    element.opacity = expectedFinalChannels.opacity;
+    element.rotation = expectedFinalChannels.rotation;
+    const block = createMotionBlock(entry.kind, `compile-${entry.kind}`);
+    element.motion.blocks = [
+      createMotionBlock('scene-enter', 'compile-event'),
+      block,
+    ];
+
+    const compiled = compileElementMotion(element);
+    const finalFrame = compiled.keyframes.at(-1);
+
+    assert.equal(block.enabled, true, `${entry.kind} must default to enabled`);
+    assert.equal(
+      compiled.steps.length,
+      1,
+      `${entry.kind} must compile as exactly one step`,
+    );
+    assert.equal(compiled.steps[0].blockId, block.id);
+    assert.equal(compiled.steps[0].kind, entry.kind);
+    assert.ok(
+      compiled.steps[0].durationMs > 0,
+      `${entry.kind} must compile with a positive duration`,
+    );
+    assert.ok(finalFrame, `${entry.kind} must emit a final keyframe`);
+    assert.equal(compiled.keyframes[0].offset, 0);
+    assert.equal(finalFrame.offset, 1);
+    assert.deepEqual(
+      compiledMotionChannels(finalFrame),
+      expectedFinalChannels,
+      `${entry.kind} must finish at the exact authored neutral state`,
+    );
+
+    for (let index = 0; index < compiled.keyframes.length; index += 1) {
+      const frame = compiled.keyframes[index];
+      assert.ok(
+        frame.offset >= 0 && frame.offset <= 1,
+        `${entry.kind} frame ${index} offset must be bounded`,
+      );
+      if (index > 0) {
+        assert.ok(
+          frame.offset >= compiled.keyframes[index - 1].offset,
+          `${entry.kind} frame offsets must be monotonic`,
+        );
+      }
+      for (const channel of COMPILED_MOTION_CHANNELS) {
+        assert.ok(
+          Number.isFinite(frame[channel]),
+          `${entry.kind} frame ${index} ${channel} must be finite`,
+        );
+      }
+    }
+
+    const changesACompiledChannel = compiled.keyframes.some((frame) =>
+      COMPILED_MOTION_CHANNELS.some(
+        (channel) => frame[channel] !== finalFrame[channel],
+      ),
+    );
+    assert.equal(
+      changesACompiledChannel,
+      entry.kind !== 'wait',
+      entry.kind === 'wait'
+        ? 'wait may advance time without changing a visual channel'
+        : `${entry.kind} must visibly change at least one compiled channel`,
+    );
+  }
+});
+
+void test('path, filter, flip, and transition blocks retain representative semantics', () => {
+  const compileDefault = (kind: (typeof MOTION_BLOCK_KINDS)[number]) => {
+    const element = createDefaultProject().scenes[0].elements[0];
+    element.motion.blocks = [
+      createMotionBlock('scene-enter', `representative-${kind}-event`),
+      createMotionBlock(kind, `representative-${kind}`),
+    ];
+    return compileElementMotion(element);
+  };
+
+  const squarePath = compileDefault('square-path');
+  assert.deepEqual(
+    squarePath.keyframes.map((frame) => [
+      frame.offset,
+      frame.translateX,
+      frame.translateY,
+    ]),
+    [
+      [0, 0, 0],
+      [0.125, 120, 0],
+      [0.25, 120, 90],
+      [0.375, 0, 90],
+      [0.5, 0, 0],
+      [0.625, 120, 0],
+      [0.75, 120, 90],
+      [0.875, 0, 90],
+      [1, 0, 0],
+    ],
+  );
+
+  const brightness = compileDefault('brightness');
+  assert.equal(brightness.keyframes[0].brightness, 1.8);
+  assert.equal(brightness.keyframes.at(-1)?.brightness, 1);
+  assert.ok(
+    brightness.keyframes.every(
+      (frame) =>
+        frame.contrast === 1 &&
+        frame.saturation === 1 &&
+        frame.grayscale === 0 &&
+        frame.sepia === 0 &&
+        frame.hueRotate === 0,
+    ),
+  );
+
+  const horizontalFlip = compileDefault('flip-horizontal');
+  assert.ok(horizontalFlip.keyframes.some((frame) => frame.scaleX === -1));
+  assert.ok(horizontalFlip.keyframes.every((frame) => frame.scaleY === 1));
+  assert.equal(horizontalFlip.keyframes.at(-1)?.scaleX, 1);
+
+  const slideFade = compileDefault('slide-fade-left');
+  assert.deepEqual(
+    {
+      opacity: slideFade.keyframes[0].opacity,
+      translateX: slideFade.keyframes[0].translateX,
+    },
+    { opacity: 0, translateX: 180 },
+  );
+  assert.deepEqual(
+    {
+      opacity: slideFade.keyframes.at(-1)?.opacity,
+      translateX: slideFade.keyframes.at(-1)?.translateX,
+    },
+    { opacity: 1, translateX: 0 },
   );
 });
 

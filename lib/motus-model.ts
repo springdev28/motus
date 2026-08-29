@@ -7,22 +7,187 @@ export const MIN_ELEMENT_HEIGHT = 50;
 
 export type ElementType = 'shape' | 'text' | 'speech' | 'image';
 export type Easing = 'linear' | 'ease-out' | 'ease-in-out';
-export type MotionBlockCategory = 'event' | 'motion' | 'looks' | 'timing';
-export type MotionBlockKind =
-  | 'scene-enter'
-  | 'wait'
-  | 'move'
-  | 'scale'
-  | 'rotate'
-  | 'opacity'
-  | 'bounce'
-  | 'shake'
-  | 'drift'
-  | 'float'
-  | 'pulse'
-  | 'blur'
-  | 'reveal'
-  | 'flash';
+export const MOTION_BLOCK_CATEGORY_IDS = [
+  'event',
+  'motion',
+  'paths',
+  'physics',
+  'looks',
+  'emphasis',
+  'effects',
+  'transitions',
+  'text',
+  'control',
+  'timing',
+] as const;
+export type MotionBlockCategory = (typeof MOTION_BLOCK_CATEGORY_IDS)[number];
+
+export const MOTION_BLOCK_KINDS = [
+  'scene-enter',
+  'wait',
+  'move',
+  'scale',
+  'rotate',
+  'opacity',
+  'bounce',
+  'shake',
+  'drift',
+  'float',
+  'pulse',
+  'blur',
+  'reveal',
+  'flash',
+  'slide-left',
+  'slide-right',
+  'slide-up',
+  'slide-down',
+  'arc-in',
+  'orbit',
+  'zigzag',
+  'wave',
+  'spring',
+  'roll',
+  'jump',
+  'sway',
+  'swing',
+  'spiral',
+  'overshoot',
+  'bob',
+  'tremble',
+  'corkscrew',
+  'recoil',
+  'grow',
+  'shrink',
+  'spin',
+  'breathe',
+  'squash',
+  'stretch',
+  'flip-horizontal',
+  'flip-vertical',
+  'flicker',
+  'blur-pulse',
+  'glow',
+  'brightness',
+  'contrast',
+  'saturate',
+  'desaturate',
+  'grayscale',
+  'sepia',
+  'hue-rotate',
+  'pop-in',
+  'zoom-in',
+  'zoom-out',
+  'rise-in',
+  'drop-in',
+  'wipe',
+  'curtain',
+  'dissolve',
+  'type-on',
+  'caption-rise',
+  'dialogue-pop',
+  'word-pulse',
+  'text-jitter',
+  'text-reveal',
+  'yoyo',
+  'loop-move',
+  'loop-rotate',
+  'loop-scale',
+  'loop-opacity',
+  'settle',
+  'dash-in',
+  'glide-in',
+  'skid-in',
+  'snap-in',
+  'swoop-left',
+  'swoop-right',
+  'hop-left',
+  'hop-right',
+  'ladder-up',
+  'ladder-down',
+  'figure-eight',
+  'infinity-loop',
+  'circle-clockwise',
+  'circle-counterclockwise',
+  'ellipse-loop',
+  'snake',
+  'stair-step',
+  'sawtooth',
+  'triangle-path',
+  'square-path',
+  'diamond-path',
+  'boomerang',
+  'ricochet',
+  'pinball',
+  'pendulum',
+  'drop-bounce',
+  'rubber-band',
+  'elastic-slide',
+  'slingshot',
+  'magnetic-snap',
+  'gravity-fall',
+  'parachute',
+  'rocket-rise',
+  'toss',
+  'fling',
+  'drift-left',
+  'drift-right',
+  'drift-up',
+  'drift-down',
+  'backtrack',
+  'wobble',
+  'jello',
+  'heartbeat',
+  'throb',
+  'blink',
+  'shimmer',
+  'sparkle',
+  'spotlight',
+  'neon',
+  'shadow-pulse',
+  'tilt-left',
+  'tilt-right',
+  'compress',
+  'inflate',
+  'deflate',
+  'rubber-stamp',
+  'hinge',
+  'card-flip',
+  'coin-flip',
+  'spin-pulse',
+  'color-pop',
+  'color-drain',
+  'exposure-flash',
+  'focus-pull',
+  'ghost',
+  'silhouette',
+  'warm-up',
+  'cool-down',
+  'prism',
+  'chromatic-pulse',
+  'soft-focus',
+  'hard-focus',
+  'fade-up',
+  'fade-down',
+  'fade-left',
+  'fade-right',
+  'zoom-bounce',
+  'rotate-pop',
+  'flip-in-horizontal',
+  'flip-in-vertical',
+  'blur-in-left',
+  'blur-in-right',
+  'slide-fade-left',
+  'slide-fade-right',
+  'letter-hop',
+  'letter-wave',
+  'caption-slide',
+  'subtitle-fade',
+  'speech-bounce',
+  'thought-float',
+  'headline-drop',
+  'text-blink',
+] as const;
+export type MotionBlockKind = (typeof MOTION_BLOCK_KINDS)[number];
 export type ContentRating = 'all-ages' | 'teen' | 'mature';
 export type PublicationVisibility = 'private' | 'public';
 export type SupportedImageMime = 'image/png' | 'image/webp';
@@ -43,7 +208,7 @@ export const MAX_SCENE_THUMBNAIL_ELEMENTS = 12;
 export const MAX_ELEMENT_TEXT_LENGTH = 50_000;
 export const MAX_PROJECT_HISTORY_ENTRIES = 50;
 export const MAX_PROJECT_HISTORY_BYTES = 24_000_000;
-export const MAX_MOTION_BLOCKS = 32;
+export const MAX_MOTION_BLOCKS = 64;
 export const MAX_BOUNCE_JUMPS = 12;
 
 export type BounceDirection = 'left' | 'right';
@@ -75,100 +240,1632 @@ export type MotionBlock = {
   jumps: BounceJump[];
 };
 
+export type MotionBlockNumericField =
+  | 'x'
+  | 'y'
+  | 'value'
+  | 'secondaryValue'
+  | 'repetitions';
+
+export type MotionBlockParameterSpec = {
+  field: MotionBlockNumericField;
+  label: string;
+  defaultValue: number;
+  min: number;
+  max: number;
+  step: number;
+  unit?: string;
+};
+
 export type MotionBlockCatalogEntry = {
   kind: MotionBlockKind;
   category: MotionBlockCategory;
   label: string;
   description: string;
+  parameters: MotionBlockParameterSpec[];
+  durationMs: number;
+  usesDirection?: boolean;
 };
 
+export const MOTION_BLOCK_CATEGORIES: Array<{
+  id: MotionBlockCategory;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: 'event',
+    label: 'Events',
+    description: 'Choose when a program starts.',
+  },
+  {
+    id: 'motion',
+    label: 'Motion',
+    description: 'Move, slide, rotate, and travel.',
+  },
+  {
+    id: 'paths',
+    label: 'Paths',
+    description: 'Trace geometric and free-flowing routes.',
+  },
+  {
+    id: 'physics',
+    label: 'Physics',
+    description: 'Bounce, spring, fall, and recoil.',
+  },
+  {
+    id: 'looks',
+    label: 'Looks',
+    description: 'Transform scale, rotation, and visibility.',
+  },
+  {
+    id: 'emphasis',
+    label: 'Emphasis',
+    description: 'Pulse, shake, blink, and draw attention.',
+  },
+  {
+    id: 'effects',
+    label: 'Effects',
+    description: 'Animate focus, color, and light.',
+  },
+  {
+    id: 'transitions',
+    label: 'Transitions',
+    description: 'Bring layers on and off the stage.',
+  },
+  { id: 'text', label: 'Text', description: 'Animate captions and dialogue.' },
+  {
+    id: 'control',
+    label: 'Control',
+    description: 'Loop and oscillate editable motion.',
+  },
+  { id: 'timing', label: 'Timing', description: 'Pause and pace a sequence.' },
+];
+
+const parameter = (
+  field: MotionBlockNumericField,
+  label: string,
+  defaultValue: number,
+  min: number,
+  max: number,
+  step = 1,
+  unit?: string,
+): MotionBlockParameterSpec => ({
+  field,
+  label,
+  defaultValue,
+  min,
+  max,
+  step,
+  unit,
+});
+
+const catalogBlock = (
+  kind: MotionBlockKind,
+  category: MotionBlockCategory,
+  label: string,
+  description: string,
+  parameters: MotionBlockParameterSpec[] = [],
+  durationMs = 700,
+  usesDirection = false,
+): MotionBlockCatalogEntry => ({
+  kind,
+  category,
+  label,
+  description,
+  parameters,
+  durationMs,
+  usesDirection,
+});
+
+const horizontal = (label = 'Horizontal', value = 80) =>
+  parameter('x', label, value, -2_000, 2_000, 5, 'px');
+const positiveHorizontal = (label = 'Distance', value = 180) =>
+  parameter('x', label, value, 0, 2_000, 5, 'px');
+const vertical = (label = 'Vertical', value = 60) =>
+  parameter('y', label, value, -2_000, 2_000, 5, 'px');
+const positiveVertical = (label = 'Height', value = 60) =>
+  parameter('y', label, value, 0, 2_000, 5, 'px');
+const repeats = (value = 3, label = 'Repeats') =>
+  parameter('repetitions', label, value, 1, 20, 1, '×');
+const amount = (
+  label: string,
+  value: number,
+  min: number,
+  max: number,
+  step = 1,
+  unit?: string,
+) => parameter('value', label, value, min, max, step, unit);
+const secondary = (
+  label: string,
+  value: number,
+  min: number,
+  max: number,
+  step = 1,
+  unit?: string,
+) => parameter('secondaryValue', label, value, min, max, step, unit);
+
 export const MOTION_BLOCK_CATALOG: MotionBlockCatalogEntry[] = [
-  {
-    kind: 'scene-enter',
-    category: 'event',
-    label: 'When scene enters view',
-    description:
-      'Starts this element program in preview and the published reader.',
-  },
-  {
-    kind: 'wait',
-    category: 'timing',
-    label: 'Wait',
-    description: 'Pauses the sequence before the next action.',
-  },
-  {
-    kind: 'move',
-    category: 'motion',
-    label: 'Move in',
-    description: 'Moves the layer from an X/Y offset into its canvas position.',
-  },
-  {
-    kind: 'scale',
-    category: 'motion',
-    label: 'Scale in',
-    description: 'Scales the layer from a chosen size to 100%.',
-  },
-  {
-    kind: 'rotate',
-    category: 'motion',
-    label: 'Rotate in',
-    description: 'Rotates the layer from an offset angle to its canvas angle.',
-  },
-  {
-    kind: 'opacity',
-    category: 'looks',
-    label: 'Fade in',
-    description: 'Changes opacity from a chosen value to the layer opacity.',
-  },
-  {
-    kind: 'bounce',
-    category: 'motion',
-    label: 'Custom bounce',
-    description: 'Builds a landing path from individually editable jumps.',
-  },
-  {
-    kind: 'shake',
-    category: 'motion',
-    label: 'Shake',
-    description:
-      'Shakes horizontally and vertically for a chosen number of beats.',
-  },
-  {
-    kind: 'drift',
-    category: 'motion',
-    label: 'Drift in',
-    description: 'Glides slowly from an editable X/Y offset.',
-  },
-  {
-    kind: 'float',
-    category: 'motion',
-    label: 'Float',
-    description: 'Rises and falls by an editable height and repeat count.',
-  },
-  {
-    kind: 'pulse',
-    category: 'looks',
-    label: 'Pulse',
-    description: 'Pulses to an editable scale for a chosen number of beats.',
-  },
-  {
-    kind: 'blur',
-    category: 'looks',
-    label: 'Focus from blur',
-    description: 'Animates from an editable blur radius into focus.',
-  },
-  {
-    kind: 'reveal',
-    category: 'looks',
-    label: 'Directional reveal',
-    description: 'Reveals the layer from the left, right, top, or bottom.',
-  },
-  {
-    kind: 'flash',
-    category: 'looks',
-    label: 'Flash',
-    description: 'Flashes between two opacity levels for an editable count.',
-  },
+  catalogBlock(
+    'scene-enter',
+    'event',
+    'When scene enters view',
+    'Starts this layer program in preview and the published reader.',
+    [],
+    0,
+  ),
+  catalogBlock(
+    'wait',
+    'timing',
+    'Wait',
+    'Pauses before the next block runs.',
+    [],
+    300,
+  ),
+
+  catalogBlock(
+    'move',
+    'motion',
+    'Move in',
+    'Moves from an editable X/Y offset into place.',
+    [horizontal('Move X', 80), vertical('Move Y', 0)],
+  ),
+  catalogBlock(
+    'rotate',
+    'motion',
+    'Rotate in',
+    'Rotates from an editable angle into place.',
+    [amount('Start angle', -12, -1_440, 1_440, 1, '°')],
+  ),
+  catalogBlock(
+    'bounce',
+    'physics',
+    'Custom bounce',
+    'Builds a path from independently editable jumps.',
+    [],
+    1_480,
+  ),
+  catalogBlock(
+    'shake',
+    'emphasis',
+    'Shake',
+    'Shakes horizontally and vertically for editable beats.',
+    [
+      positiveHorizontal('Horizontal', 24),
+      secondary('Vertical', 10, 0, 800, 1, 'px'),
+      repeats(6, 'Beats'),
+    ],
+  ),
+  catalogBlock(
+    'drift',
+    'motion',
+    'Drift in',
+    'Glides slowly from an editable X/Y offset.',
+    [horizontal('Drift X', 110), vertical('Drift Y', 38)],
+    1_100,
+  ),
+  catalogBlock(
+    'float',
+    'emphasis',
+    'Float',
+    'Rises and falls by an editable height and cycle count.',
+    [positiveVertical('Float height', 52), repeats(2, 'Cycles')],
+    1_400,
+  ),
+  catalogBlock(
+    'slide-left',
+    'motion',
+    'Slide from left',
+    'Slides in from the left by an exact distance.',
+    [positiveHorizontal('Distance', 220)],
+  ),
+  catalogBlock(
+    'slide-right',
+    'motion',
+    'Slide from right',
+    'Slides in from the right by an exact distance.',
+    [positiveHorizontal('Distance', 220)],
+  ),
+  catalogBlock(
+    'slide-up',
+    'motion',
+    'Slide from top',
+    'Slides in from above by an exact distance.',
+    [positiveVertical('Distance', 220)],
+  ),
+  catalogBlock(
+    'slide-down',
+    'motion',
+    'Slide from bottom',
+    'Slides in from below by an exact distance.',
+    [positiveVertical('Distance', 220)],
+  ),
+  catalogBlock(
+    'arc-in',
+    'motion',
+    'Arc in',
+    'Curves into place using editable width and arc height.',
+    [horizontal('Travel X', 260), positiveVertical('Arc height', 140)],
+    900,
+  ),
+  catalogBlock(
+    'orbit',
+    'paths',
+    'Orbit',
+    'Orbits around the final position on an editable ellipse.',
+    [
+      positiveHorizontal('Radius X', 120),
+      positiveVertical('Radius Y', 80),
+      repeats(2, 'Orbits'),
+    ],
+    1_400,
+  ),
+  catalogBlock(
+    'zigzag',
+    'paths',
+    'Zigzag',
+    'Alternates horizontal direction while moving vertically.',
+    [
+      positiveHorizontal('Width', 100),
+      positiveVertical('Height', 60),
+      repeats(4, 'Turns'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'wave',
+    'paths',
+    'Wave path',
+    'Follows an editable horizontal and vertical wave.',
+    [
+      positiveHorizontal('Width', 120),
+      positiveVertical('Height', 60),
+      repeats(3, 'Waves'),
+    ],
+    1_200,
+  ),
+  catalogBlock(
+    'spring',
+    'physics',
+    'Spring in',
+    'Springs from an editable size and overshoots before settling.',
+    [
+      amount('Start scale', 0.4, 0.05, 4, 0.05, '×'),
+      secondary('Overshoot', 1.18, 1, 2, 0.01, '×'),
+    ],
+    850,
+  ),
+  catalogBlock(
+    'roll',
+    'motion',
+    'Roll in',
+    'Rolls across an editable distance and angle.',
+    [
+      horizontal('Travel X', 300),
+      amount('Rotation', -360, -1_440, 1_440, 5, '°'),
+    ],
+    1_000,
+  ),
+  catalogBlock(
+    'jump',
+    'physics',
+    'Jump in',
+    'Drops through an editable jump height and lands in place.',
+    [positiveVertical('Jump height', 180)],
+    760,
+  ),
+  catalogBlock(
+    'sway',
+    'emphasis',
+    'Sway',
+    'Sways gently around the final angle.',
+    [amount('Angle', 12, 0, 180, 1, '°'), repeats(4, 'Swings')],
+    1_200,
+  ),
+  catalogBlock(
+    'swing',
+    'emphasis',
+    'Swing',
+    'Swings widely around the final angle.',
+    [amount('Angle', 28, 0, 360, 1, '°'), repeats(4, 'Swings')],
+    1_200,
+  ),
+  catalogBlock(
+    'spiral',
+    'paths',
+    'Spiral',
+    'Travels an editable ellipse while spiraling inward.',
+    [
+      positiveHorizontal('Radius X', 130),
+      positiveVertical('Radius Y', 90),
+      repeats(2, 'Turns'),
+    ],
+    1_500,
+  ),
+  catalogBlock(
+    'overshoot',
+    'physics',
+    'Overshoot',
+    'Moves past the destination, then settles back.',
+    [
+      horizontal('Travel X', 220),
+      secondary('Overshoot', 32, -400, 400, 1, 'px'),
+    ],
+    850,
+  ),
+  catalogBlock(
+    'bob',
+    'emphasis',
+    'Bob',
+    'Bobs vertically for an editable number of cycles.',
+    [positiveVertical('Height', 50), repeats(3, 'Cycles')],
+    1_100,
+  ),
+  catalogBlock(
+    'tremble',
+    'emphasis',
+    'Tremble',
+    'Adds a tight, fast two-axis tremble.',
+    [
+      positiveHorizontal('Horizontal', 14),
+      secondary('Vertical', 10, 0, 800, 1, 'px'),
+      repeats(8, 'Beats'),
+    ],
+    700,
+  ),
+  catalogBlock(
+    'corkscrew',
+    'paths',
+    'Corkscrew',
+    'Combines an editable orbit with rotation.',
+    [
+      positiveHorizontal('Radius X', 150),
+      positiveVertical('Radius Y', 100),
+      amount('Rotation', 360, -1_440, 1_440, 5, '°'),
+      repeats(2, 'Turns'),
+    ],
+    1_600,
+  ),
+  catalogBlock(
+    'recoil',
+    'physics',
+    'Recoil',
+    'Kicks backward and returns with editable force.',
+    [positiveHorizontal('Force', 80), repeats(3, 'Kicks')],
+    750,
+  ),
+
+  catalogBlock(
+    'scale',
+    'looks',
+    'Scale in',
+    'Scales from a chosen size to 100%.',
+    [amount('Start scale', 0.8, 0.05, 4, 0.05, '×')],
+  ),
+  catalogBlock(
+    'opacity',
+    'looks',
+    'Fade in',
+    'Changes opacity from a chosen value to the layer opacity.',
+    [amount('Start opacity', 0, 0, 1, 0.05)],
+  ),
+  catalogBlock(
+    'pulse',
+    'emphasis',
+    'Pulse',
+    'Pulses to an editable scale for a chosen count.',
+    [amount('Peak scale', 1.18, 0.05, 4, 0.05, '×'), repeats(2, 'Pulses')],
+  ),
+  catalogBlock(
+    'flash',
+    'emphasis',
+    'Flash',
+    'Flashes between the layer opacity and an editable low level.',
+    [amount('Low opacity', 0, 0, 1, 0.05), repeats(3, 'Flashes')],
+  ),
+  catalogBlock(
+    'grow',
+    'looks',
+    'Grow in',
+    'Grows from an editable starting scale.',
+    [amount('Start scale', 0.4, 0.05, 4, 0.05, '×')],
+  ),
+  catalogBlock(
+    'shrink',
+    'looks',
+    'Shrink in',
+    'Shrinks from an editable larger scale.',
+    [amount('Start scale', 1.6, 0.05, 4, 0.05, '×')],
+  ),
+  catalogBlock(
+    'spin',
+    'looks',
+    'Spin in',
+    'Spins from an editable rotation into place.',
+    [amount('Rotation', -360, -1_440, 1_440, 5, '°')],
+    900,
+  ),
+  catalogBlock(
+    'breathe',
+    'emphasis',
+    'Breathe',
+    'Breathes between normal and an editable scale.',
+    [amount('Peak scale', 1.08, 0.05, 4, 0.01, '×'), repeats(4, 'Breaths')],
+    1_600,
+  ),
+  catalogBlock(
+    'squash',
+    'looks',
+    'Squash',
+    'Squashes width and height by an editable amount.',
+    [amount('Amount', 0.25, 0, 0.9, 0.05), repeats(3, 'Squashes')],
+    900,
+  ),
+  catalogBlock(
+    'stretch',
+    'looks',
+    'Stretch',
+    'Stretches height and narrows width by an editable amount.',
+    [amount('Amount', 0.25, 0, 0.9, 0.05), repeats(3, 'Stretches')],
+    900,
+  ),
+  catalogBlock(
+    'flip-horizontal',
+    'looks',
+    'Flip horizontal',
+    'Flips across the vertical axis and returns.',
+    [repeats(1, 'Flips')],
+    700,
+  ),
+  catalogBlock(
+    'flip-vertical',
+    'looks',
+    'Flip vertical',
+    'Flips across the horizontal axis and returns.',
+    [repeats(1, 'Flips')],
+    700,
+  ),
+  catalogBlock(
+    'flicker',
+    'emphasis',
+    'Flicker',
+    'Flickers to an editable opacity for a chosen count.',
+    [amount('Low opacity', 0.25, 0, 1, 0.05), repeats(6, 'Flickers')],
+    800,
+  ),
+  catalogBlock(
+    'blur-pulse',
+    'emphasis',
+    'Blur pulse',
+    'Pulses focus by an editable blur radius.',
+    [amount('Blur radius', 20, 0, 60, 1, 'px'), repeats(3, 'Pulses')],
+    1_000,
+  ),
+
+  catalogBlock(
+    'blur',
+    'effects',
+    'Focus from blur',
+    'Animates from an editable blur radius into focus.',
+    [amount('Start blur', 18, 0, 60, 1, 'px')],
+  ),
+  catalogBlock(
+    'glow',
+    'effects',
+    'Glow pulse',
+    'Pulses an editable halo around the layer.',
+    [amount('Glow radius', 26, 0, 80, 1, 'px'), repeats(2, 'Pulses')],
+    1_100,
+  ),
+  catalogBlock(
+    'brightness',
+    'effects',
+    'Brightness in',
+    'Animates from an editable brightness into the original.',
+    [amount('Start brightness', 1.8, 0, 4, 0.05, '×')],
+  ),
+  catalogBlock(
+    'contrast',
+    'effects',
+    'Contrast in',
+    'Animates from editable contrast into the original.',
+    [amount('Start contrast', 1.8, 0, 4, 0.05, '×')],
+  ),
+  catalogBlock(
+    'saturate',
+    'effects',
+    'Saturate in',
+    'Animates from intense editable saturation.',
+    [amount('Start saturation', 2, 0, 4, 0.05, '×')],
+  ),
+  catalogBlock(
+    'desaturate',
+    'effects',
+    'Colorize in',
+    'Animates from low saturation into full color.',
+    [amount('Start saturation', 0, 0, 4, 0.05, '×')],
+  ),
+  catalogBlock(
+    'grayscale',
+    'effects',
+    'Grayscale to color',
+    'Animates from grayscale into the original colors.',
+    [amount('Gray amount', 1, 0, 1, 0.05)],
+  ),
+  catalogBlock(
+    'sepia',
+    'effects',
+    'Sepia to color',
+    'Animates from sepia into the original colors.',
+    [amount('Sepia amount', 1, 0, 1, 0.05)],
+  ),
+  catalogBlock(
+    'hue-rotate',
+    'effects',
+    'Hue rotate in',
+    'Rotates color hue by an editable starting angle.',
+    [amount('Hue angle', 180, -720, 720, 5, '°')],
+  ),
+
+  catalogBlock(
+    'reveal',
+    'transitions',
+    'Directional reveal',
+    'Reveals from any side by an editable amount.',
+    [amount('Hidden amount', 100, 0, 100, 1, '%')],
+    700,
+    true,
+  ),
+  catalogBlock(
+    'pop-in',
+    'transitions',
+    'Pop in',
+    'Pops from an editable size and opacity into place.',
+    [amount('Start scale', 0.45, 0.05, 4, 0.05, '×')],
+    520,
+  ),
+  catalogBlock(
+    'zoom-in',
+    'transitions',
+    'Zoom in',
+    'Zooms from an editable small scale.',
+    [amount('Start scale', 0.2, 0.05, 4, 0.05, '×')],
+    760,
+  ),
+  catalogBlock(
+    'zoom-out',
+    'transitions',
+    'Zoom out',
+    'Zooms down from an editable large scale.',
+    [amount('Start scale', 2, 0.05, 4, 0.05, '×')],
+    760,
+  ),
+  catalogBlock(
+    'rise-in',
+    'transitions',
+    'Rise and fade',
+    'Rises from below while fading into view.',
+    [positiveVertical('Distance', 120)],
+    720,
+  ),
+  catalogBlock(
+    'drop-in',
+    'transitions',
+    'Drop and fade',
+    'Drops from above while fading into view.',
+    [positiveVertical('Distance', 120)],
+    720,
+  ),
+  catalogBlock(
+    'wipe',
+    'transitions',
+    'Wipe',
+    'Wipes on from any side by an editable amount.',
+    [amount('Hidden amount', 100, 0, 100, 1, '%')],
+    700,
+    true,
+  ),
+  catalogBlock(
+    'curtain',
+    'transitions',
+    'Curtain open',
+    'Opens from the center with an editable hidden amount.',
+    [amount('Hidden amount', 100, 0, 100, 1, '%')],
+    850,
+  ),
+  catalogBlock(
+    'dissolve',
+    'transitions',
+    'Blur dissolve',
+    'Dissolves from editable blur and transparency.',
+    [amount('Blur radius', 24, 0, 60, 1, 'px')],
+    850,
+  ),
+
+  catalogBlock(
+    'type-on',
+    'text',
+    'Type on',
+    'Reveals text progressively from left to right.',
+    [amount('Reveal amount', 100, 0, 100, 1, '%')],
+    1_200,
+  ),
+  catalogBlock(
+    'caption-rise',
+    'text',
+    'Caption rise',
+    'Raises a caption from below while fading it in.',
+    [positiveVertical('Distance', 70)],
+    700,
+  ),
+  catalogBlock(
+    'dialogue-pop',
+    'text',
+    'Dialogue pop',
+    'Pops a dialogue layer from an editable scale.',
+    [amount('Start scale', 0.5, 0.05, 4, 0.05, '×')],
+    520,
+  ),
+  catalogBlock(
+    'word-pulse',
+    'text',
+    'Word pulse',
+    'Pulses text to an editable scale and count.',
+    [amount('Peak scale', 1.2, 0.05, 4, 0.05, '×'), repeats(3, 'Pulses')],
+    900,
+  ),
+  catalogBlock(
+    'text-jitter',
+    'text',
+    'Text jitter',
+    'Jitters text by editable horizontal and vertical amounts.',
+    [
+      positiveHorizontal('Horizontal', 10),
+      secondary('Vertical', 8, 0, 800, 1, 'px'),
+      repeats(8, 'Beats'),
+    ],
+    700,
+  ),
+  catalogBlock(
+    'text-reveal',
+    'text',
+    'Text reveal',
+    'Reveals text from an editable side and amount.',
+    [amount('Hidden amount', 100, 0, 100, 1, '%')],
+    900,
+    true,
+  ),
+
+  catalogBlock(
+    'yoyo',
+    'control',
+    'Yoyo',
+    'Moves out and back by editable X/Y values.',
+    [
+      horizontal('Travel X', 120),
+      vertical('Travel Y', 0),
+      repeats(3, 'Cycles'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'loop-move',
+    'control',
+    'Loop move',
+    'Loops an editable X/Y movement and returns each time.',
+    [horizontal('Travel X', 80), vertical('Travel Y', 0), repeats(4, 'Loops')],
+    1_200,
+  ),
+  catalogBlock(
+    'loop-rotate',
+    'control',
+    'Loop rotation',
+    'Loops an editable rotation and returns each time.',
+    [amount('Angle', 45, -1_440, 1_440, 1, '°'), repeats(4, 'Loops')],
+    1_200,
+  ),
+  catalogBlock(
+    'loop-scale',
+    'control',
+    'Loop scale',
+    'Loops to an editable scale and returns each time.',
+    [amount('Scale', 1.2, 0.05, 4, 0.05, '×'), repeats(4, 'Loops')],
+    1_200,
+  ),
+  catalogBlock(
+    'loop-opacity',
+    'control',
+    'Loop opacity',
+    'Loops to an editable opacity and returns each time.',
+    [amount('Opacity', 0.25, 0, 1, 0.05), repeats(4, 'Loops')],
+    1_200,
+  ),
+  catalogBlock(
+    'settle',
+    'control',
+    'Settle',
+    'Oscillates scale with editable overshoot before resting.',
+    [amount('Overshoot', 1.18, 1, 2, 0.01, '×'), repeats(4, 'Oscillations')],
+    900,
+  ),
+
+  catalogBlock(
+    'dash-in',
+    'motion',
+    'Dash in',
+    'Dashes into place with editable travel and recoil.',
+    [
+      positiveHorizontal('Distance', 320),
+      secondary('Recoil', 26, 0, 400, 1, 'px'),
+    ],
+    520,
+  ),
+  catalogBlock(
+    'glide-in',
+    'motion',
+    'Glide in',
+    'Glides gently from an editable two-axis offset.',
+    [horizontal('Travel X', 240), vertical('Travel Y', 60)],
+    1_400,
+  ),
+  catalogBlock(
+    'skid-in',
+    'motion',
+    'Skid in',
+    'Skids past the destination, then slides back.',
+    [horizontal('Travel X', 300), secondary('Skid', 54, -400, 400, 1, 'px')],
+    900,
+  ),
+  catalogBlock(
+    'snap-in',
+    'motion',
+    'Snap in',
+    'Snaps from an editable offset with a sharp settle.',
+    [
+      horizontal('Travel X', 150),
+      vertical('Travel Y', 0),
+      secondary('Snap', 18, 0, 200, 1, 'px'),
+    ],
+    420,
+  ),
+  catalogBlock(
+    'swoop-left',
+    'motion',
+    'Swoop from left',
+    'Swoops in from the left on an editable arc.',
+    [positiveHorizontal('Distance', 280), positiveVertical('Arc height', 130)],
+    900,
+  ),
+  catalogBlock(
+    'swoop-right',
+    'motion',
+    'Swoop from right',
+    'Swoops in from the right on an editable arc.',
+    [positiveHorizontal('Distance', 280), positiveVertical('Arc height', 130)],
+    900,
+  ),
+  catalogBlock(
+    'hop-left',
+    'physics',
+    'Hop left',
+    'Hops left and back with editable distance and height.',
+    [
+      positiveHorizontal('Distance', 90),
+      positiveVertical('Height', 70),
+      repeats(2, 'Hops'),
+    ],
+    900,
+  ),
+  catalogBlock(
+    'hop-right',
+    'physics',
+    'Hop right',
+    'Hops right and back with editable distance and height.',
+    [
+      positiveHorizontal('Distance', 90),
+      positiveVertical('Height', 70),
+      repeats(2, 'Hops'),
+    ],
+    900,
+  ),
+  catalogBlock(
+    'ladder-up',
+    'paths',
+    'Ladder up',
+    'Climbs an editable stair-step path and returns.',
+    [
+      positiveHorizontal('Step width', 54),
+      positiveVertical('Step height', 42),
+      repeats(4, 'Steps'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'ladder-down',
+    'paths',
+    'Ladder down',
+    'Descends an editable stair-step path and returns.',
+    [
+      positiveHorizontal('Step width', 54),
+      positiveVertical('Step height', 42),
+      repeats(4, 'Steps'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'figure-eight',
+    'paths',
+    'Figure eight',
+    'Traces an editable figure-eight path.',
+    [
+      positiveHorizontal('Radius X', 120),
+      positiveVertical('Radius Y', 70),
+      repeats(2, 'Loops'),
+    ],
+    1_500,
+  ),
+  catalogBlock(
+    'infinity-loop',
+    'paths',
+    'Infinity loop',
+    'Loops continuously through an editable infinity path.',
+    [
+      positiveHorizontal('Width', 140),
+      positiveVertical('Height', 70),
+      repeats(3, 'Loops'),
+    ],
+    1_700,
+  ),
+  catalogBlock(
+    'circle-clockwise',
+    'paths',
+    'Circle clockwise',
+    'Circles clockwise with editable radius and laps.',
+    [positiveHorizontal('Radius', 100), repeats(2, 'Laps')],
+    1_400,
+  ),
+  catalogBlock(
+    'circle-counterclockwise',
+    'paths',
+    'Circle counterclockwise',
+    'Circles counterclockwise with editable radius and laps.',
+    [positiveHorizontal('Radius', 100), repeats(2, 'Laps')],
+    1_400,
+  ),
+  catalogBlock(
+    'ellipse-loop',
+    'paths',
+    'Ellipse loop',
+    'Loops around an editable horizontal ellipse.',
+    [
+      positiveHorizontal('Radius X', 150),
+      positiveVertical('Radius Y', 70),
+      repeats(2, 'Laps'),
+    ],
+    1_400,
+  ),
+  catalogBlock(
+    'snake',
+    'paths',
+    'Snake path',
+    'Slithers through editable side-to-side turns.',
+    [
+      positiveHorizontal('Width', 100),
+      positiveVertical('Height', 55),
+      repeats(5, 'Turns'),
+    ],
+    1_400,
+  ),
+  catalogBlock(
+    'stair-step',
+    'paths',
+    'Stair step',
+    'Steps diagonally with editable rise, run, and count.',
+    [
+      positiveHorizontal('Step width', 48),
+      positiveVertical('Step height', 38),
+      repeats(4, 'Steps'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'sawtooth',
+    'paths',
+    'Sawtooth path',
+    'Repeats editable sharp rises and drops.',
+    [
+      positiveHorizontal('Width', 85),
+      positiveVertical('Height', 70),
+      repeats(4, 'Teeth'),
+    ],
+    1_200,
+  ),
+  catalogBlock(
+    'triangle-path',
+    'paths',
+    'Triangle path',
+    'Traces an editable triangular route.',
+    [
+      positiveHorizontal('Width', 130),
+      positiveVertical('Height', 100),
+      repeats(2, 'Laps'),
+    ],
+    1_300,
+  ),
+  catalogBlock(
+    'square-path',
+    'paths',
+    'Square path',
+    'Traces an editable rectangular route.',
+    [
+      positiveHorizontal('Width', 120),
+      positiveVertical('Height', 90),
+      repeats(2, 'Laps'),
+    ],
+    1_400,
+  ),
+  catalogBlock(
+    'diamond-path',
+    'paths',
+    'Diamond path',
+    'Traces an editable diamond route.',
+    [
+      positiveHorizontal('Width', 130),
+      positiveVertical('Height', 100),
+      repeats(2, 'Laps'),
+    ],
+    1_400,
+  ),
+  catalogBlock(
+    'boomerang',
+    'paths',
+    'Boomerang',
+    'Flies through an editable offset and comes back.',
+    [
+      horizontal('Travel X', 220),
+      vertical('Travel Y', -80),
+      repeats(2, 'Trips'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'ricochet',
+    'paths',
+    'Ricochet',
+    'Ricochets between editable horizontal and vertical bounds.',
+    [
+      positiveHorizontal('Width', 120),
+      positiveVertical('Height', 90),
+      repeats(4, 'Hits'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'pinball',
+    'paths',
+    'Pinball',
+    'Pings around an editable box for a chosen hit count.',
+    [
+      positiveHorizontal('Width', 110),
+      positiveVertical('Height', 80),
+      repeats(6, 'Hits'),
+    ],
+    1_300,
+  ),
+  catalogBlock(
+    'pendulum',
+    'physics',
+    'Pendulum',
+    'Swings around the final point at an editable angle.',
+    [amount('Angle', 34, 0, 180, 1, '°'), repeats(5, 'Swings')],
+    1_400,
+  ),
+  catalogBlock(
+    'drop-bounce',
+    'physics',
+    'Drop bounce',
+    'Drops from an editable height and rebounds before settling.',
+    [
+      positiveVertical('Drop height', 220),
+      secondary('Rebound', 80, 0, 800, 1, 'px'),
+      repeats(2, 'Bounces'),
+    ],
+    1_000,
+  ),
+  catalogBlock(
+    'rubber-band',
+    'physics',
+    'Rubber band',
+    'Stretches scale past normal and rebounds repeatedly.',
+    [amount('Stretch', 1.3, 1, 3, 0.05, '×'), repeats(4, 'Rebounds')],
+    1_000,
+  ),
+  catalogBlock(
+    'elastic-slide',
+    'physics',
+    'Elastic slide',
+    'Slides from an editable distance with elastic overshoot.',
+    [
+      horizontal('Travel X', 260),
+      secondary('Overshoot', 48, -400, 400, 1, 'px'),
+      repeats(3, 'Settles'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'slingshot',
+    'physics',
+    'Slingshot',
+    'Pulls backward, then launches through an editable offset.',
+    [
+      horizontal('Launch X', 260),
+      vertical('Launch Y', -90),
+      secondary('Pullback', 70, 0, 400, 1, 'px'),
+    ],
+    850,
+  ),
+  catalogBlock(
+    'magnetic-snap',
+    'physics',
+    'Magnetic snap',
+    'Accelerates from an editable offset and snaps into place.',
+    [
+      horizontal('Travel X', 180),
+      vertical('Travel Y', 40),
+      secondary('Snap', 22, 0, 200, 1, 'px'),
+    ],
+    620,
+  ),
+  catalogBlock(
+    'gravity-fall',
+    'physics',
+    'Gravity fall',
+    'Falls from an editable height and settles into place.',
+    [
+      positiveVertical('Height', 260),
+      secondary('Rebound', 45, 0, 400, 1, 'px'),
+    ],
+    900,
+  ),
+  catalogBlock(
+    'parachute',
+    'physics',
+    'Parachute',
+    'Descends while drifting side to side.',
+    [
+      positiveVertical('Height', 240),
+      positiveHorizontal('Drift', 65),
+      repeats(4, 'Swerves'),
+    ],
+    1_700,
+  ),
+  catalogBlock(
+    'rocket-rise',
+    'physics',
+    'Rocket rise',
+    'Rockets upward from an editable distance with a recoil.',
+    [
+      positiveVertical('Distance', 300),
+      secondary('Recoil', 30, 0, 300, 1, 'px'),
+    ],
+    700,
+  ),
+  catalogBlock(
+    'toss',
+    'physics',
+    'Toss',
+    'Tosses through an editable two-axis arc and returns.',
+    [
+      horizontal('Travel X', 160),
+      positiveVertical('Height', 120),
+      repeats(2, 'Tosses'),
+    ],
+    1_000,
+  ),
+  catalogBlock(
+    'fling',
+    'physics',
+    'Fling',
+    'Flings through an editable offset and snaps back.',
+    [
+      horizontal('Travel X', 220),
+      vertical('Travel Y', -70),
+      repeats(2, 'Flings'),
+    ],
+    850,
+  ),
+  catalogBlock(
+    'drift-left',
+    'motion',
+    'Drift left',
+    'Drifts left by an editable distance and returns.',
+    [positiveHorizontal('Distance', 100), repeats(2, 'Cycles')],
+    1_300,
+  ),
+  catalogBlock(
+    'drift-right',
+    'motion',
+    'Drift right',
+    'Drifts right by an editable distance and returns.',
+    [positiveHorizontal('Distance', 100), repeats(2, 'Cycles')],
+    1_300,
+  ),
+  catalogBlock(
+    'drift-up',
+    'motion',
+    'Drift up',
+    'Drifts upward by an editable distance and returns.',
+    [positiveVertical('Distance', 80), repeats(2, 'Cycles')],
+    1_300,
+  ),
+  catalogBlock(
+    'drift-down',
+    'motion',
+    'Drift down',
+    'Drifts downward by an editable distance and returns.',
+    [positiveVertical('Distance', 80), repeats(2, 'Cycles')],
+    1_300,
+  ),
+  catalogBlock(
+    'backtrack',
+    'motion',
+    'Backtrack',
+    'Moves through an editable offset, reverses, and settles.',
+    [
+      horizontal('Travel X', 140),
+      vertical('Travel Y', 40),
+      repeats(2, 'Trips'),
+    ],
+    1_100,
+  ),
+
+  catalogBlock(
+    'wobble',
+    'emphasis',
+    'Wobble',
+    'Wobbles rotation with editable angle and count.',
+    [amount('Angle', 16, 0, 180, 1, '°'), repeats(5, 'Wobbles')],
+    1_000,
+  ),
+  catalogBlock(
+    'jello',
+    'emphasis',
+    'Jello',
+    'Alternates editable width and height deformation.',
+    [amount('Amount', 0.22, 0, 0.9, 0.05), repeats(5, 'Wobbles')],
+    1_000,
+  ),
+  catalogBlock(
+    'heartbeat',
+    'emphasis',
+    'Heartbeat',
+    'Plays a two-step editable scale beat.',
+    [amount('Peak scale', 1.24, 1, 4, 0.05, '×'), repeats(3, 'Beats')],
+    1_000,
+  ),
+  catalogBlock(
+    'throb',
+    'emphasis',
+    'Throb',
+    'Pulses steadily to an editable scale.',
+    [amount('Peak scale', 1.14, 0.05, 4, 0.05, '×'), repeats(5, 'Pulses')],
+    1_300,
+  ),
+  catalogBlock(
+    'blink',
+    'emphasis',
+    'Blink',
+    'Blinks to an editable opacity for a chosen count.',
+    [amount('Low opacity', 0, 0, 1, 0.05), repeats(4, 'Blinks')],
+    800,
+  ),
+  catalogBlock(
+    'shimmer',
+    'emphasis',
+    'Shimmer',
+    'Shimmers with editable brightness and repetition.',
+    [amount('Brightness', 1.6, 1, 4, 0.05, '×'), repeats(5, 'Shimmers')],
+    1_200,
+  ),
+  catalogBlock(
+    'sparkle',
+    'emphasis',
+    'Sparkle',
+    'Pulses editable brightness and glow.',
+    [
+      amount('Brightness', 2, 1, 4, 0.05, '×'),
+      secondary('Glow', 24, 0, 80, 1, 'px'),
+      repeats(4, 'Sparkles'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'spotlight',
+    'emphasis',
+    'Spotlight',
+    'Raises editable brightness and contrast, then returns.',
+    [
+      amount('Brightness', 1.7, 1, 4, 0.05, '×'),
+      secondary('Contrast', 1.4, 1, 4, 0.05, '×'),
+      repeats(2, 'Pulses'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'neon',
+    'emphasis',
+    'Neon',
+    'Pulses an editable neon glow around the layer.',
+    [amount('Glow radius', 34, 0, 80, 1, 'px'), repeats(4, 'Pulses')],
+    1_200,
+  ),
+  catalogBlock(
+    'shadow-pulse',
+    'emphasis',
+    'Shadow pulse',
+    'Pulses an editable soft shadow radius.',
+    [amount('Shadow radius', 18, 0, 80, 1, 'px'), repeats(3, 'Pulses')],
+    1_000,
+  ),
+  catalogBlock(
+    'tilt-left',
+    'looks',
+    'Tilt left',
+    'Tilts left by an editable angle and returns.',
+    [amount('Angle', 18, 0, 180, 1, '°'), repeats(2, 'Tilts')],
+    800,
+  ),
+  catalogBlock(
+    'tilt-right',
+    'looks',
+    'Tilt right',
+    'Tilts right by an editable angle and returns.',
+    [amount('Angle', 18, 0, 180, 1, '°'), repeats(2, 'Tilts')],
+    800,
+  ),
+  catalogBlock(
+    'compress',
+    'looks',
+    'Compress',
+    'Compresses height by an editable amount and rebounds.',
+    [amount('Amount', 0.3, 0, 0.9, 0.05), repeats(3, 'Presses')],
+    900,
+  ),
+  catalogBlock(
+    'inflate',
+    'looks',
+    'Inflate',
+    'Inflates to an editable scale and returns.',
+    [amount('Scale', 1.35, 1, 4, 0.05, '×'), repeats(3, 'Inflations')],
+    1_000,
+  ),
+  catalogBlock(
+    'deflate',
+    'looks',
+    'Deflate',
+    'Deflates to an editable scale and returns.',
+    [amount('Scale', 0.65, 0.05, 1, 0.05, '×'), repeats(3, 'Deflations')],
+    1_000,
+  ),
+  catalogBlock(
+    'rubber-stamp',
+    'emphasis',
+    'Rubber stamp',
+    'Drops, squashes, and rebounds like an editable stamp.',
+    [
+      positiveVertical('Drop', 70),
+      amount('Squash', 0.28, 0, 0.9, 0.05),
+      repeats(2, 'Stamps'),
+    ],
+    900,
+  ),
+  catalogBlock(
+    'hinge',
+    'looks',
+    'Hinge',
+    'Swings down from an editable hinge angle and returns.',
+    [amount('Angle', 70, 0, 180, 1, '°'), repeats(2, 'Swings')],
+    1_000,
+  ),
+  catalogBlock(
+    'card-flip',
+    'looks',
+    'Card flip',
+    'Flips horizontally with editable repetitions.',
+    [repeats(2, 'Flips')],
+    900,
+  ),
+  catalogBlock(
+    'coin-flip',
+    'looks',
+    'Coin flip',
+    'Flips vertically with editable repetitions.',
+    [repeats(3, 'Flips')],
+    900,
+  ),
+  catalogBlock(
+    'spin-pulse',
+    'emphasis',
+    'Spin pulse',
+    'Combines editable rotation and scale pulses.',
+    [
+      amount('Angle', 180, -720, 720, 5, '°'),
+      secondary('Scale', 1.2, 0.05, 4, 0.05, '×'),
+      repeats(3, 'Pulses'),
+    ],
+    1_200,
+  ),
+
+  catalogBlock(
+    'color-pop',
+    'effects',
+    'Color pop',
+    'Pulses editable saturation and returns to the original.',
+    [amount('Saturation', 2.4, 0, 4, 0.05, '×'), repeats(3, 'Pulses')],
+    1_000,
+  ),
+  catalogBlock(
+    'color-drain',
+    'effects',
+    'Color drain in',
+    'Animates from an editable low saturation into full color.',
+    [amount('Start saturation', 0.1, 0, 4, 0.05, '×')],
+  ),
+  catalogBlock(
+    'exposure-flash',
+    'effects',
+    'Exposure flash',
+    'Flashes editable brightness for a chosen count.',
+    [amount('Brightness', 2.5, 1, 4, 0.05, '×'), repeats(3, 'Flashes')],
+    900,
+  ),
+  catalogBlock(
+    'focus-pull',
+    'effects',
+    'Focus pull',
+    'Pulls focus through an editable blur radius.',
+    [amount('Blur radius', 22, 0, 60, 1, 'px'), repeats(2, 'Pulls')],
+    1_200,
+  ),
+  catalogBlock(
+    'ghost',
+    'effects',
+    'Ghost',
+    'Fades to an editable ghost opacity and returns.',
+    [amount('Opacity', 0.2, 0, 1, 0.05), repeats(3, 'Fades')],
+    1_200,
+  ),
+  catalogBlock(
+    'silhouette',
+    'effects',
+    'Silhouette',
+    'Pulses to an editable dark brightness level.',
+    [amount('Brightness', 0, 0, 1, 0.05, '×'), repeats(2, 'Pulses')],
+    1_000,
+  ),
+  catalogBlock(
+    'warm-up',
+    'effects',
+    'Warm up',
+    'Animates from an editable warm sepia tone.',
+    [amount('Warmth', 0.75, 0, 1, 0.05)],
+  ),
+  catalogBlock(
+    'cool-down',
+    'effects',
+    'Cool down',
+    'Animates from an editable cool hue shift.',
+    [amount('Hue shift', -45, -720, 720, 5, '°')],
+  ),
+  catalogBlock(
+    'prism',
+    'effects',
+    'Prism',
+    'Cycles through an editable hue range.',
+    [amount('Hue range', 300, -720, 720, 5, '°'), repeats(3, 'Cycles')],
+    1_400,
+  ),
+  catalogBlock(
+    'chromatic-pulse',
+    'effects',
+    'Chromatic pulse',
+    'Pulses editable hue and saturation together.',
+    [
+      amount('Hue angle', 120, -720, 720, 5, '°'),
+      secondary('Saturation', 2, 0, 4, 0.05, '×'),
+      repeats(3, 'Pulses'),
+    ],
+    1_200,
+  ),
+  catalogBlock(
+    'soft-focus',
+    'effects',
+    'Soft focus in',
+    'Animates from an editable soft blur into focus.',
+    [amount('Start blur', 12, 0, 60, 1, 'px')],
+  ),
+  catalogBlock(
+    'hard-focus',
+    'effects',
+    'Hard focus in',
+    'Animates from editable high contrast into normal.',
+    [amount('Start contrast', 2.2, 0, 4, 0.05, '×')],
+  ),
+
+  catalogBlock(
+    'fade-up',
+    'transitions',
+    'Fade up',
+    'Fades in while rising an editable distance.',
+    [positiveVertical('Distance', 90)],
+  ),
+  catalogBlock(
+    'fade-down',
+    'transitions',
+    'Fade down',
+    'Fades in while dropping an editable distance.',
+    [positiveVertical('Distance', 90)],
+  ),
+  catalogBlock(
+    'fade-left',
+    'transitions',
+    'Fade left',
+    'Fades in while moving left by an editable distance.',
+    [positiveHorizontal('Distance', 110)],
+  ),
+  catalogBlock(
+    'fade-right',
+    'transitions',
+    'Fade right',
+    'Fades in while moving right by an editable distance.',
+    [positiveHorizontal('Distance', 110)],
+  ),
+  catalogBlock(
+    'zoom-bounce',
+    'transitions',
+    'Zoom bounce',
+    'Zooms from an editable scale, overshoots, and settles.',
+    [
+      amount('Start scale', 0.3, 0.05, 4, 0.05, '×'),
+      secondary('Overshoot', 1.2, 1, 2, 0.01, '×'),
+    ],
+    800,
+  ),
+  catalogBlock(
+    'rotate-pop',
+    'transitions',
+    'Rotate pop',
+    'Rotates and scales in from editable starting values.',
+    [
+      amount('Start angle', -90, -720, 720, 5, '°'),
+      secondary('Start scale', 0.45, 0.05, 4, 0.05, '×'),
+    ],
+    700,
+  ),
+  catalogBlock(
+    'flip-in-horizontal',
+    'transitions',
+    'Flip in horizontal',
+    'Flips in across the vertical axis with editable turns.',
+    [repeats(1, 'Turns')],
+    700,
+  ),
+  catalogBlock(
+    'flip-in-vertical',
+    'transitions',
+    'Flip in vertical',
+    'Flips in across the horizontal axis with editable turns.',
+    [repeats(1, 'Turns')],
+    700,
+  ),
+  catalogBlock(
+    'blur-in-left',
+    'transitions',
+    'Blur in from left',
+    'Slides from the left through editable blur into focus.',
+    [
+      positiveHorizontal('Distance', 160),
+      amount('Blur radius', 18, 0, 60, 1, 'px'),
+    ],
+    800,
+  ),
+  catalogBlock(
+    'blur-in-right',
+    'transitions',
+    'Blur in from right',
+    'Slides from the right through editable blur into focus.',
+    [
+      positiveHorizontal('Distance', 160),
+      amount('Blur radius', 18, 0, 60, 1, 'px'),
+    ],
+    800,
+  ),
+  catalogBlock(
+    'slide-fade-left',
+    'transitions',
+    'Slide fade left',
+    'Slides left and fades in over an editable distance.',
+    [positiveHorizontal('Distance', 180)],
+  ),
+  catalogBlock(
+    'slide-fade-right',
+    'transitions',
+    'Slide fade right',
+    'Slides right and fades in over an editable distance.',
+    [positiveHorizontal('Distance', 180)],
+  ),
+
+  catalogBlock(
+    'letter-hop',
+    'text',
+    'Letter hop',
+    'Hops text by an editable height and count.',
+    [positiveVertical('Height', 42), repeats(4, 'Hops')],
+    900,
+  ),
+  catalogBlock(
+    'letter-wave',
+    'text',
+    'Letter wave',
+    'Moves text through an editable wave path.',
+    [
+      positiveHorizontal('Width', 55),
+      positiveVertical('Height', 28),
+      repeats(4, 'Waves'),
+    ],
+    1_100,
+  ),
+  catalogBlock(
+    'caption-slide',
+    'text',
+    'Caption slide',
+    'Slides a caption from an editable side and distance.',
+    [positiveHorizontal('Distance', 140)],
+    800,
+    true,
+  ),
+  catalogBlock(
+    'subtitle-fade',
+    'text',
+    'Subtitle fade',
+    'Fades a subtitle in from an editable opacity.',
+    [amount('Start opacity', 0, 0, 1, 0.05)],
+    700,
+  ),
+  catalogBlock(
+    'speech-bounce',
+    'text',
+    'Speech bounce',
+    'Bounces dialogue with editable height and repetitions.',
+    [positiveVertical('Height', 46), repeats(3, 'Bounces')],
+    900,
+  ),
+  catalogBlock(
+    'thought-float',
+    'text',
+    'Thought float',
+    'Floats a thought by editable distance and cycles.',
+    [positiveVertical('Height', 38), repeats(4, 'Cycles')],
+    1_300,
+  ),
+  catalogBlock(
+    'headline-drop',
+    'text',
+    'Headline drop',
+    'Drops a headline from an editable height and rebounds.',
+    [
+      positiveVertical('Height', 160),
+      secondary('Rebound', 36, 0, 400, 1, 'px'),
+    ],
+    850,
+  ),
+  catalogBlock(
+    'text-blink',
+    'text',
+    'Text blink',
+    'Blinks text to an editable opacity for a chosen count.',
+    [amount('Low opacity', 0, 0, 1, 0.05), repeats(4, 'Blinks')],
+    800,
+  ),
 ];
 
 export function createBounceJump(
@@ -196,55 +1893,29 @@ export function createMotionBlock(
   const catalogEntry = MOTION_BLOCK_CATALOG.find(
     (entry) => entry.kind === kind,
   )!;
-  return {
+  const block: MotionBlock = {
     id,
     kind,
     category: catalogEntry.category,
     label: catalogEntry.label,
     enabled: true,
-    durationMs:
-      kind === 'scene-enter'
-        ? 0
-        : kind === 'wait'
-          ? 300
-          : kind === 'float'
-            ? 1_400
-            : kind === 'drift'
-              ? 1_100
-              : 700,
+    durationMs: catalogEntry.durationMs,
     easing: 'ease-out',
-    x:
-      kind === 'move' ? 80 : kind === 'drift' ? 110 : kind === 'shake' ? 24 : 0,
-    y: kind === 'drift' ? 38 : kind === 'float' ? 52 : 0,
-    value:
-      kind === 'scale'
-        ? 0.8
-        : kind === 'opacity' || kind === 'flash'
-          ? 0
-          : kind === 'rotate'
-            ? -12
-            : kind === 'pulse'
-              ? 1.18
-              : kind === 'blur'
-                ? 18
-                : kind === 'reveal'
-                  ? 100
-                  : 0,
-    secondaryValue: kind === 'shake' ? 10 : 0,
-    repetitions:
-      kind === 'shake'
-        ? 6
-        : kind === 'float' || kind === 'pulse'
-          ? 2
-          : kind === 'flash'
-            ? 3
-            : 1,
+    x: 0,
+    y: 0,
+    value: 0,
+    secondaryValue: 0,
+    repetitions: 1,
     direction: 'left',
     jumps:
       kind === 'bounce'
         ? Array.from({ length: 4 }, (_, index) => createBounceJump(index))
         : [],
   };
+  for (const parameterSpec of catalogEntry.parameters) {
+    block[parameterSpec.field] = parameterSpec.defaultValue;
+  }
+  return block;
 }
 
 export type ImageAssetMetadata = {
@@ -348,8 +2019,17 @@ export type CompiledMotionKeyframe = {
   translateY: number;
   opacity: number;
   scale: number;
+  scaleX: number;
+  scaleY: number;
   rotation: number;
   blurPx: number;
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  grayscale: number;
+  sepia: number;
+  hueRotate: number;
+  glowPx: number;
   clipTop: number;
   clipRight: number;
   clipBottom: number;
@@ -681,21 +2361,10 @@ export function parseProjectTags(value: string): string[] {
   return sanitizeProjectTags(value.split(','));
 }
 
+const MOTION_BLOCK_KIND_SET = new Set<string>(MOTION_BLOCK_KINDS);
+
 const isMotionBlockKind = (value: unknown): value is MotionBlockKind =>
-  value === 'scene-enter' ||
-  value === 'wait' ||
-  value === 'move' ||
-  value === 'scale' ||
-  value === 'rotate' ||
-  value === 'opacity' ||
-  value === 'bounce' ||
-  value === 'shake' ||
-  value === 'drift' ||
-  value === 'float' ||
-  value === 'pulse' ||
-  value === 'blur' ||
-  value === 'reveal' ||
-  value === 'flash';
+  typeof value === 'string' && MOTION_BLOCK_KIND_SET.has(value);
 
 const normalizeEasing = (value: unknown): Easing =>
   value === 'linear' || value === 'ease-in-out' ? value : 'ease-out';
@@ -733,57 +2402,67 @@ function normalizeMotionBlocks(
 ): MotionBlock[] {
   if (Array.isArray(value)) {
     const seen = new Set<string>();
-    const blocks = value
-      .flatMap((candidate, index) => {
-        if (
-          !candidate ||
-          typeof candidate !== 'object' ||
-          Array.isArray(candidate)
-        )
-          return [];
-        const raw = candidate as Partial<MotionBlock>;
-        if (!isMotionBlockKind(raw.kind)) return [];
-        const block = createMotionBlock(
-          raw.kind,
-          typeof raw.id === 'string' && raw.id
-            ? raw.id
-            : `${raw.kind}-${index + 1}`,
+    let eventBlock: MotionBlock | null = null;
+    const actionBlocks: MotionBlock[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const candidate = value[index];
+      if (actionBlocks.length >= MAX_MOTION_BLOCKS - 1) break;
+      if (
+        !candidate ||
+        typeof candidate !== 'object' ||
+        Array.isArray(candidate)
+      )
+        continue;
+      const raw = candidate as Partial<MotionBlock>;
+      if (!isMotionBlockKind(raw.kind)) continue;
+      const block = createMotionBlock(
+        raw.kind,
+        typeof raw.id === 'string' && raw.id
+          ? raw.id
+          : `${raw.kind}-${index + 1}`,
+      );
+      block.enabled = raw.enabled !== false;
+      block.durationMs = finite(raw.durationMs, block.durationMs);
+      block.easing = normalizeEasing(raw.easing);
+      block.x = finite(raw.x, block.x);
+      block.y = finite(raw.y, block.y);
+      block.value = finite(raw.value, block.value);
+      block.secondaryValue = finite(raw.secondaryValue, block.secondaryValue);
+      block.repetitions = clamp(
+        Math.round(finite(raw.repetitions, block.repetitions)),
+        1,
+        20,
+      );
+      block.direction =
+        raw.direction === 'right' ||
+        raw.direction === 'up' ||
+        raw.direction === 'down'
+          ? raw.direction
+          : 'left';
+      const definition = MOTION_BLOCK_CATALOG.find(
+        (entry) => entry.kind === block.kind,
+      );
+      for (const parameterSpec of definition?.parameters ?? []) {
+        block[parameterSpec.field] = clamp(
+          finite(raw[parameterSpec.field], block[parameterSpec.field]),
+          parameterSpec.min,
+          parameterSpec.max,
         );
-        block.enabled = raw.enabled !== false;
-        block.durationMs = finite(raw.durationMs, block.durationMs);
-        block.easing = normalizeEasing(raw.easing);
-        block.x = finite(raw.x, block.x);
-        block.y = finite(raw.y, block.y);
-        block.value = finite(raw.value, block.value);
-        block.secondaryValue = finite(raw.secondaryValue, block.secondaryValue);
-        block.repetitions = clamp(
-          Math.round(finite(raw.repetitions, block.repetitions)),
-          1,
-          20,
-        );
-        block.direction =
-          raw.direction === 'right' ||
-          raw.direction === 'up' ||
-          raw.direction === 'down'
-            ? raw.direction
-            : 'left';
-        const jumps = normalizeBounceJumps(raw.jumps);
-        if (block.kind === 'bounce' && jumps.length > 0) block.jumps = jumps;
-        if (seen.has(block.id)) block.id = `${block.id}-${index + 1}`;
-        seen.add(block.id);
-        return [block];
-      })
-      .slice(0, MAX_MOTION_BLOCKS);
-    const eventIndex = blocks.findIndex(
-      (block) => block.kind === 'scene-enter',
-    );
-    if (eventIndex > 0) {
-      const [event] = blocks.splice(eventIndex, 1);
-      blocks.unshift(event);
-    } else if (eventIndex < 0) {
-      blocks.unshift(createMotionBlock('scene-enter', 'event'));
+      }
+      const jumps = normalizeBounceJumps(raw.jumps);
+      if (block.kind === 'bounce' && jumps.length > 0) block.jumps = jumps;
+      if (seen.has(block.id)) block.id = `${block.id}-${index + 1}`;
+      seen.add(block.id);
+      if (block.kind === 'scene-enter') {
+        if (!eventBlock) eventBlock = block;
+      } else {
+        actionBlocks.push(block);
+      }
     }
-    if (blocks.length > 1) return blocks;
+    return [
+      eventBlock ?? createMotionBlock('scene-enter', 'event'),
+      ...actionBlocks,
+    ];
   }
 
   const migrated = motion(
@@ -1004,30 +2683,252 @@ function getBlockInputState(
   output: MotionFrameState,
 ): MotionFrameState {
   const input = copyMotionState(output);
-  if (block.kind === 'move' || block.kind === 'drift') {
-    input.translateX = clamp(output.translateX - block.x, -8_000, 8_000);
-    input.translateY = clamp(output.translateY - block.y, -8_000, 8_000);
-  } else if (block.kind === 'rotate') {
-    input.rotation = clamp(output.rotation + block.value, -1_440, 1_440);
-  } else if (block.kind === 'scale') {
-    input.scale = clamp(block.value, 0.05, 4);
-  } else if (block.kind === 'opacity') {
-    input.opacity = clamp(block.value, 0, 1);
-  } else if (block.kind === 'blur') {
-    input.blurPx = clamp(block.value, 0, 60);
-  } else if (block.kind === 'reveal') {
-    const amount = clamp(block.value, 0, 100);
+  const setDirectionalClip = (amount: number) => {
     if (block.direction === 'right') input.clipRight = amount;
     else if (block.direction === 'up') input.clipTop = amount;
     else if (block.direction === 'down') input.clipBottom = amount;
     else input.clipLeft = amount;
-  } else if (block.kind === 'bounce') {
-    const travel = block.jumps.reduce(
-      (total, jump) =>
-        total + (jump.direction === 'left' ? -jump.spread : jump.spread),
-      0,
-    );
-    input.translateX = clamp(output.translateX - travel, -8_000, 8_000);
+  };
+
+  switch (block.kind) {
+    case 'move':
+    case 'drift':
+    case 'glide-in':
+    case 'snap-in':
+    case 'magnetic-snap':
+      input.translateX = clamp(output.translateX - block.x, -8_000, 8_000);
+      input.translateY = clamp(output.translateY - block.y, -8_000, 8_000);
+      break;
+    case 'slide-left':
+    case 'dash-in':
+    case 'skid-in':
+    case 'elastic-slide':
+    case 'swoop-left':
+    case 'blur-in-left':
+    case 'slide-fade-right':
+      input.translateX = clamp(
+        output.translateX - Math.abs(block.x),
+        -8_000,
+        8_000,
+      );
+      if (block.kind === 'swoop-left') {
+        input.translateY = clamp(
+          output.translateY + Math.abs(block.y),
+          -8_000,
+          8_000,
+        );
+      }
+      if (block.kind === 'blur-in-left') {
+        input.blurPx = clamp(block.value, 0, 60);
+      }
+      if (block.kind === 'slide-fade-right') input.opacity = 0;
+      break;
+    case 'slide-right':
+    case 'swoop-right':
+    case 'blur-in-right':
+    case 'slide-fade-left':
+      input.translateX = clamp(
+        output.translateX + Math.abs(block.x),
+        -8_000,
+        8_000,
+      );
+      if (block.kind === 'swoop-right') {
+        input.translateY = clamp(
+          output.translateY + Math.abs(block.y),
+          -8_000,
+          8_000,
+        );
+      }
+      if (block.kind === 'blur-in-right') {
+        input.blurPx = clamp(block.value, 0, 60);
+      }
+      if (block.kind === 'slide-fade-left') input.opacity = 0;
+      break;
+    case 'slide-up':
+    case 'gravity-fall':
+    case 'headline-drop':
+    case 'parachute':
+    case 'drop-bounce':
+      input.translateY = clamp(
+        output.translateY - Math.abs(block.y),
+        -8_000,
+        8_000,
+      );
+      break;
+    case 'slide-down':
+    case 'rocket-rise':
+      input.translateY = clamp(
+        output.translateY + Math.abs(block.y),
+        -8_000,
+        8_000,
+      );
+      break;
+    case 'arc-in':
+      input.translateX = clamp(output.translateX - block.x, -8_000, 8_000);
+      input.translateY = clamp(
+        output.translateY + Math.abs(block.y),
+        -8_000,
+        8_000,
+      );
+      break;
+    case 'roll':
+      input.translateX = clamp(output.translateX - block.x, -8_000, 8_000);
+      input.rotation = clamp(output.rotation + block.value, -1_440, 1_440);
+      break;
+    case 'overshoot':
+      input.translateX = clamp(output.translateX - block.x, -8_000, 8_000);
+      break;
+    case 'jump':
+      input.translateY = clamp(
+        output.translateY + Math.abs(block.y),
+        -8_000,
+        8_000,
+      );
+      break;
+    case 'rotate':
+    case 'spin':
+      input.rotation = clamp(output.rotation + block.value, -1_440, 1_440);
+      break;
+    case 'scale':
+    case 'grow':
+    case 'shrink':
+    case 'spring':
+    case 'zoom-in':
+    case 'zoom-out':
+      input.scale = clamp(block.value, 0.05, 4);
+      break;
+    case 'pop-in':
+    case 'dialogue-pop':
+      input.scale = clamp(block.value, 0.05, 4);
+      input.opacity = 0;
+      break;
+    case 'opacity':
+      input.opacity = clamp(block.value, 0, 1);
+      break;
+    case 'caption-slide': {
+      const distance = Math.abs(block.x);
+      if (block.direction === 'right') input.translateX -= distance;
+      else if (block.direction === 'up') input.translateY += distance;
+      else if (block.direction === 'down') input.translateY -= distance;
+      else input.translateX += distance;
+      input.opacity = 0;
+      break;
+    }
+    case 'blur':
+      input.blurPx = clamp(block.value, 0, 60);
+      break;
+    case 'brightness':
+      input.brightness = clamp(block.value, 0, 4);
+      break;
+    case 'contrast':
+      input.contrast = clamp(block.value, 0, 4);
+      break;
+    case 'saturate':
+    case 'desaturate':
+    case 'color-drain':
+      input.saturation = clamp(block.value, 0, 4);
+      break;
+    case 'grayscale':
+      input.grayscale = clamp(block.value, 0, 1);
+      break;
+    case 'sepia':
+    case 'warm-up':
+      input.sepia = clamp(block.value, 0, 1);
+      break;
+    case 'hue-rotate':
+    case 'cool-down':
+      input.hueRotate = clamp(block.value, -720, 720);
+      break;
+    case 'soft-focus':
+      input.blurPx = clamp(block.value, 0, 60);
+      break;
+    case 'hard-focus':
+      input.contrast = clamp(block.value, 0, 4);
+      break;
+    case 'reveal':
+    case 'wipe':
+    case 'text-reveal':
+      setDirectionalClip(clamp(block.value, 0, 100));
+      break;
+    case 'type-on':
+      input.clipRight = clamp(block.value, 0, 100);
+      break;
+    case 'curtain': {
+      const half = clamp(block.value, 0, 100) / 2;
+      input.clipLeft = half;
+      input.clipRight = half;
+      break;
+    }
+    case 'rise-in':
+    case 'caption-rise':
+    case 'fade-up':
+      input.translateY = clamp(
+        output.translateY + Math.abs(block.y),
+        -8_000,
+        8_000,
+      );
+      input.opacity = 0;
+      break;
+    case 'drop-in':
+    case 'fade-down':
+      input.translateY = clamp(
+        output.translateY - Math.abs(block.y),
+        -8_000,
+        8_000,
+      );
+      input.opacity = 0;
+      break;
+    case 'fade-left':
+      input.translateX = clamp(
+        output.translateX + Math.abs(block.x),
+        -8_000,
+        8_000,
+      );
+      input.opacity = 0;
+      break;
+    case 'fade-right':
+      input.translateX = clamp(
+        output.translateX - Math.abs(block.x),
+        -8_000,
+        8_000,
+      );
+      input.opacity = 0;
+      break;
+    case 'zoom-bounce':
+      input.scale = clamp(block.value, 0.05, 4);
+      input.opacity = 0;
+      break;
+    case 'rotate-pop':
+      input.rotation = clamp(output.rotation + block.value, -1_440, 1_440);
+      input.scale = clamp(block.secondaryValue, 0.05, 4);
+      input.opacity = 0;
+      break;
+    case 'flip-in-horizontal':
+      input.scaleX = -1;
+      input.opacity = 0;
+      break;
+    case 'flip-in-vertical':
+      input.scaleY = -1;
+      input.opacity = 0;
+      break;
+    case 'subtitle-fade':
+      input.opacity = clamp(block.value, 0, 1);
+      break;
+    case 'dissolve':
+      input.blurPx = clamp(block.value, 0, 60);
+      input.opacity = 0;
+      break;
+    case 'bounce': {
+      const travel = block.jumps.reduce(
+        (total, jump) =>
+          total + (jump.direction === 'left' ? -jump.spread : jump.spread),
+        0,
+      );
+      input.translateX = clamp(output.translateX - travel, -8_000, 8_000);
+      break;
+    }
+    default:
+      break;
   }
   return input;
 }
@@ -1073,8 +2974,17 @@ export function compileElementMotion(
     translateY: 0,
     opacity: clamp(element.opacity, 0, 1),
     scale: 1,
+    scaleX: 1,
+    scaleY: 1,
     rotation: clamp(element.rotation, -360, 360),
     blurPx: 0,
+    brightness: 1,
+    contrast: 1,
+    saturation: 1,
+    grayscale: 0,
+    sepia: 0,
+    hueRotate: 0,
+    glowPx: 0,
     clipTop: 0,
     clipRight: 0,
     clipBottom: 0,
@@ -1202,32 +3112,23 @@ export function compileElementMotion(
     }
 
     const repetitions = clamp(Math.round(block.repetitions), 1, 20);
-    if (
-      block.kind === 'shake' ||
-      block.kind === 'float' ||
-      block.kind === 'pulse' ||
-      block.kind === 'flash'
-    ) {
+    const runRepeatedAccent = (
+      mutate: (
+        accent: MotionFrameState,
+        beat: number,
+        strength: number,
+      ) => void,
+    ) => {
       const beatDuration = step.durationMs / repetitions;
       for (let beat = 0; beat < repetitions; beat += 1) {
-        const progress = beat / repetitions;
-        const strength = 1 - progress * 0.7;
-        const midpoint =
-          step.startsAtMs + beat * beatDuration + beatDuration / 2;
+        const strength = 1 - (beat / repetitions) * 0.7;
         const accent = copyMotionState(output);
-        if (block.kind === 'shake') {
-          const sign = beat % 2 === 0 ? 1 : -1;
-          accent.translateX += clamp(block.x, -800, 800) * sign * strength;
-          accent.translateY +=
-            clamp(block.secondaryValue, -800, 800) * -sign * strength;
-        } else if (block.kind === 'float') {
-          accent.translateY -= Math.abs(clamp(block.y, -800, 800));
-        } else if (block.kind === 'pulse') {
-          accent.scale = clamp(block.value, 0.05, 4);
-        } else {
-          accent.opacity = clamp(block.value, 0, 1);
-        }
-        pushFrame(accent, midpoint, step.easing);
+        mutate(accent, beat, strength);
+        pushFrame(
+          accent,
+          step.startsAtMs + beat * beatDuration + beatDuration / 2,
+          step.easing,
+        );
         pushFrame(
           output,
           step.startsAtMs + (beat + 1) * beatDuration,
@@ -1235,6 +3136,603 @@ export function compileElementMotion(
         );
       }
       frameState = copyMotionState(output);
+    };
+
+    if (
+      block.kind === 'shake' ||
+      block.kind === 'tremble' ||
+      block.kind === 'text-jitter'
+    ) {
+      runRepeatedAccent((accent, beat, strength) => {
+        const sign = beat % 2 === 0 ? 1 : -1;
+        accent.translateX += clamp(block.x, -800, 800) * sign * strength;
+        accent.translateY +=
+          clamp(block.secondaryValue, -800, 800) * -sign * strength;
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'float' ||
+      block.kind === 'bob' ||
+      block.kind === 'thought-float' ||
+      block.kind === 'letter-hop' ||
+      block.kind === 'speech-bounce'
+    ) {
+      runRepeatedAccent((accent, beat, strength) => {
+        const direction = block.kind === 'bob' && beat % 2 ? 1 : -1;
+        accent.translateY +=
+          direction * Math.abs(clamp(block.y, -800, 800)) * strength;
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'pulse' ||
+      block.kind === 'breathe' ||
+      block.kind === 'word-pulse' ||
+      block.kind === 'loop-scale' ||
+      block.kind === 'heartbeat' ||
+      block.kind === 'throb' ||
+      block.kind === 'inflate' ||
+      block.kind === 'deflate' ||
+      block.kind === 'rubber-band'
+    ) {
+      runRepeatedAccent((accent, beat, strength) => {
+        const target = clamp(block.value, 0.05, 4);
+        const weightedTarget = 1 + (target - 1) * strength;
+        accent.scale =
+          block.kind === 'heartbeat' && beat % 2
+            ? 1 + (target - 1) * 0.55
+            : weightedTarget;
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'flash' ||
+      block.kind === 'flicker' ||
+      block.kind === 'loop-opacity' ||
+      block.kind === 'blink' ||
+      block.kind === 'ghost' ||
+      block.kind === 'text-blink'
+    ) {
+      runRepeatedAccent((accent) => {
+        accent.opacity = clamp(block.value, 0, 1);
+      });
+      continue;
+    }
+
+    if (block.kind === 'blur-pulse' || block.kind === 'focus-pull') {
+      runRepeatedAccent((accent, _beat, strength) => {
+        accent.blurPx = clamp(block.value * strength, 0, 60);
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'glow' ||
+      block.kind === 'neon' ||
+      block.kind === 'shadow-pulse'
+    ) {
+      runRepeatedAccent((accent, _beat, strength) => {
+        accent.glowPx = clamp(block.value * strength, 0, 80);
+      });
+      continue;
+    }
+
+    if (block.kind === 'shimmer' || block.kind === 'exposure-flash') {
+      runRepeatedAccent((accent) => {
+        accent.brightness = clamp(block.value, 0, 4);
+      });
+      continue;
+    }
+
+    if (block.kind === 'sparkle') {
+      runRepeatedAccent((accent, _beat, strength) => {
+        accent.brightness = clamp(block.value, 0, 4);
+        accent.glowPx = clamp(block.secondaryValue * strength, 0, 80);
+      });
+      continue;
+    }
+
+    if (block.kind === 'spotlight') {
+      runRepeatedAccent((accent) => {
+        accent.brightness = clamp(block.value, 0, 4);
+        accent.contrast = clamp(block.secondaryValue, 0, 4);
+      });
+      continue;
+    }
+
+    if (block.kind === 'color-pop') {
+      runRepeatedAccent((accent) => {
+        accent.saturation = clamp(block.value, 0, 4);
+      });
+      continue;
+    }
+
+    if (block.kind === 'silhouette') {
+      runRepeatedAccent((accent) => {
+        accent.brightness = clamp(block.value, 0, 1);
+      });
+      continue;
+    }
+
+    if (block.kind === 'prism' || block.kind === 'chromatic-pulse') {
+      runRepeatedAccent((accent, beat) => {
+        const sign = beat % 2 === 0 ? 1 : -1;
+        accent.hueRotate = clamp(block.value * sign, -720, 720);
+        if (block.kind === 'chromatic-pulse') {
+          accent.saturation = clamp(block.secondaryValue, 0, 4);
+        }
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'sway' ||
+      block.kind === 'swing' ||
+      block.kind === 'loop-rotate' ||
+      block.kind === 'wobble' ||
+      block.kind === 'pendulum' ||
+      block.kind === 'tilt-left' ||
+      block.kind === 'tilt-right' ||
+      block.kind === 'hinge'
+    ) {
+      runRepeatedAccent((accent, beat, strength) => {
+        const fixedDirection =
+          block.kind === 'tilt-left'
+            ? -1
+            : block.kind === 'tilt-right'
+              ? 1
+              : null;
+        const sign = fixedDirection ?? (beat % 2 === 0 ? 1 : -1);
+        accent.rotation += clamp(block.value, -720, 720) * sign * strength;
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'squash' ||
+      block.kind === 'stretch' ||
+      block.kind === 'jello' ||
+      block.kind === 'compress'
+    ) {
+      runRepeatedAccent((accent, beat, strength) => {
+        const amountValue = clamp(block.value, 0, 0.9) * strength;
+        const swap = block.kind === 'jello' && beat % 2 === 1;
+        const widen = block.kind === 'squash' || swap;
+        accent.scaleX = widen ? 1 + amountValue : 1 - amountValue;
+        accent.scaleY = widen ? 1 - amountValue : 1 + amountValue;
+        if (block.kind === 'compress') {
+          accent.scaleX = 1 + amountValue * 0.35;
+          accent.scaleY = 1 - amountValue;
+        }
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'flip-horizontal' ||
+      block.kind === 'card-flip' ||
+      block.kind === 'flip-vertical' ||
+      block.kind === 'coin-flip'
+    ) {
+      runRepeatedAccent((accent) => {
+        if (block.kind === 'flip-horizontal' || block.kind === 'card-flip') {
+          accent.scaleX = -1;
+        } else {
+          accent.scaleY = -1;
+        }
+      });
+      continue;
+    }
+
+    if (block.kind === 'spin-pulse') {
+      runRepeatedAccent((accent, beat) => {
+        const sign = beat % 2 === 0 ? 1 : -1;
+        accent.rotation += clamp(block.value, -720, 720) * sign;
+        accent.scale = clamp(block.secondaryValue, 0.05, 4);
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'yoyo' ||
+      block.kind === 'loop-move' ||
+      block.kind === 'backtrack' ||
+      block.kind === 'boomerang'
+    ) {
+      runRepeatedAccent((accent, beat) => {
+        const sign = block.kind === 'backtrack' && beat % 2 ? -1 : 1;
+        accent.translateX += clamp(block.x, -2_000, 2_000) * sign;
+        accent.translateY += clamp(block.y, -2_000, 2_000) * sign;
+      });
+      continue;
+    }
+
+    if (
+      block.kind === 'drift-left' ||
+      block.kind === 'drift-right' ||
+      block.kind === 'drift-up' ||
+      block.kind === 'drift-down'
+    ) {
+      runRepeatedAccent((accent, _beat, strength) => {
+        if (block.kind === 'drift-left')
+          accent.translateX -= block.x * strength;
+        if (block.kind === 'drift-right')
+          accent.translateX += block.x * strength;
+        if (block.kind === 'drift-up') accent.translateY -= block.y * strength;
+        if (block.kind === 'drift-down')
+          accent.translateY += block.y * strength;
+      });
+      continue;
+    }
+
+    if (block.kind === 'recoil') {
+      runRepeatedAccent((accent, beat, strength) => {
+        const sign = beat % 2 === 0 ? -1 : 1;
+        accent.translateX += Math.abs(block.x) * sign * strength;
+      });
+      continue;
+    }
+
+    if (block.kind === 'settle') {
+      runRepeatedAccent((accent, beat, strength) => {
+        const delta = clamp(block.value, 1, 2) - 1;
+        accent.scale = 1 + delta * (beat % 2 === 0 ? 1 : -0.55) * strength;
+      });
+      continue;
+    }
+
+    const pushRelativePath = (
+      points: Array<
+        Partial<
+          Pick<
+            MotionFrameState,
+            | 'translateX'
+            | 'translateY'
+            | 'rotation'
+            | 'scale'
+            | 'scaleX'
+            | 'scaleY'
+            | 'opacity'
+            | 'blurPx'
+          >
+        >
+      >,
+    ) => {
+      points.forEach((point, pointIndex) => {
+        const pathFrame = copyMotionState(output);
+        if (point.translateX !== undefined) {
+          pathFrame.translateX += point.translateX;
+        }
+        if (point.translateY !== undefined) {
+          pathFrame.translateY += point.translateY;
+        }
+        if (point.rotation !== undefined) {
+          pathFrame.rotation += point.rotation;
+        }
+        if (point.scale !== undefined) pathFrame.scale = point.scale;
+        if (point.scaleX !== undefined) pathFrame.scaleX = point.scaleX;
+        if (point.scaleY !== undefined) pathFrame.scaleY = point.scaleY;
+        if (point.opacity !== undefined) pathFrame.opacity = point.opacity;
+        if (point.blurPx !== undefined) pathFrame.blurPx = point.blurPx;
+        pushFrame(
+          pathFrame,
+          step.startsAtMs +
+            step.durationMs * ((pointIndex + 1) / points.length),
+          step.easing,
+        );
+      });
+      frameState = copyMotionState(output);
+    };
+
+    if (
+      block.kind === 'arc-in' ||
+      block.kind === 'swoop-left' ||
+      block.kind === 'swoop-right'
+    ) {
+      const input = inputStates[index];
+      const arcHeight = Math.abs(block.y);
+      const midpoint = copyMotionState(output);
+      midpoint.translateX = (input.translateX + output.translateX) / 2;
+      midpoint.translateY =
+        Math.min(input.translateY, output.translateY) - arcHeight;
+      pushFrame(midpoint, step.startsAtMs + step.durationMs * 0.5, step.easing);
+      frameState = copyMotionState(output);
+      pushFrame(frameState, endMs, step.easing);
+      continue;
+    }
+
+    if (block.kind === 'spring' || block.kind === 'zoom-bounce') {
+      const accent = copyMotionState(output);
+      accent.scale = clamp(block.secondaryValue, 1, 2);
+      pushFrame(accent, step.startsAtMs + step.durationMs * 0.72, step.easing);
+      frameState = copyMotionState(output);
+      pushFrame(frameState, endMs, step.easing);
+      continue;
+    }
+
+    if (block.kind === 'jump') {
+      const apex = copyMotionState(output);
+      apex.translateY -= Math.abs(clamp(block.y, -2_000, 2_000));
+      pushFrame(apex, step.startsAtMs + step.durationMs * 0.52, step.easing);
+      frameState = copyMotionState(output);
+      pushFrame(frameState, endMs, step.easing);
+      continue;
+    }
+
+    if (
+      block.kind === 'overshoot' ||
+      block.kind === 'dash-in' ||
+      block.kind === 'skid-in' ||
+      block.kind === 'snap-in' ||
+      block.kind === 'magnetic-snap' ||
+      block.kind === 'elastic-slide'
+    ) {
+      const settles = block.kind === 'elastic-slide' ? repetitions : 1;
+      for (let settle = 0; settle < settles; settle += 1) {
+        const strength = 1 - settle / settles;
+        const accent = copyMotionState(output);
+        const direction = block.x < 0 ? -1 : 1;
+        accent.translateX +=
+          clamp(block.secondaryValue, -400, 400) * direction * strength;
+        pushFrame(
+          accent,
+          step.startsAtMs +
+            step.durationMs * (0.58 + ((settle + 0.5) / settles) * 0.38),
+          step.easing,
+        );
+      }
+      frameState = copyMotionState(output);
+      pushFrame(frameState, endMs, step.easing);
+      continue;
+    }
+
+    if (
+      block.kind === 'drop-bounce' ||
+      block.kind === 'gravity-fall' ||
+      block.kind === 'headline-drop' ||
+      block.kind === 'rocket-rise'
+    ) {
+      const bounceCount = block.kind === 'drop-bounce' ? repetitions : 1;
+      const points = Array.from(
+        { length: bounceCount * 2 },
+        (_, pointIndex) => {
+          const bounceIndex = Math.floor(pointIndex / 2);
+          const strength = 1 - bounceIndex / Math.max(bounceCount, 1);
+          return pointIndex % 2 === 0
+            ? {
+                translateY:
+                  (block.kind === 'rocket-rise' ? 1 : -1) *
+                  Math.abs(block.secondaryValue) *
+                  strength,
+              }
+            : { translateY: 0 };
+        },
+      );
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (block.kind === 'rubber-stamp') {
+      const points = Array.from({ length: repetitions * 2 }, (_, pointIndex) =>
+        pointIndex % 2 === 0
+          ? {
+              translateY: Math.abs(block.y),
+              scaleX: 1 + clamp(block.value, 0, 0.9),
+              scaleY: 1 - clamp(block.value, 0, 0.9),
+            }
+          : { translateY: 0, scaleX: 1, scaleY: 1 },
+      );
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (
+      block.kind === 'hop-left' ||
+      block.kind === 'hop-right' ||
+      block.kind === 'toss' ||
+      block.kind === 'fling' ||
+      block.kind === 'slingshot'
+    ) {
+      const points: Array<{ translateX: number; translateY: number }> = [];
+      const trips = block.kind === 'slingshot' ? 1 : repetitions;
+      for (let trip = 0; trip < trips; trip += 1) {
+        if (block.kind === 'slingshot') {
+          points.push({
+            translateX: -Math.sign(block.x || 1) * block.secondaryValue,
+            translateY: Math.abs(block.secondaryValue) / 2,
+          });
+        }
+        const direction = block.kind === 'hop-left' ? -1 : 1;
+        points.push({
+          translateX:
+            block.kind === 'hop-left' || block.kind === 'hop-right'
+              ? direction * Math.abs(block.x)
+              : block.x,
+          translateY: -Math.abs(block.y),
+        });
+        points.push({ translateX: 0, translateY: 0 });
+      }
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (block.kind === 'parachute') {
+      const input = inputStates[index];
+      const points = Array.from({ length: repetitions }, (_, pointIndex) => {
+        const progress = (pointIndex + 1) / repetitions;
+        return {
+          translateX:
+            Math.abs(block.x) *
+            (pointIndex % 2 === 0 ? 1 : -1) *
+            (1 - progress * 0.5),
+          translateY:
+            input.translateY -
+            output.translateY +
+            (output.translateY - input.translateY) * progress,
+        };
+      });
+      points.push({ translateX: 0, translateY: 0 });
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (
+      block.kind === 'orbit' ||
+      block.kind === 'spiral' ||
+      block.kind === 'corkscrew' ||
+      block.kind === 'circle-clockwise' ||
+      block.kind === 'circle-counterclockwise' ||
+      block.kind === 'ellipse-loop'
+    ) {
+      const segments = repetitions * 8;
+      const points = Array.from({ length: segments }, (_, pointIndex) => {
+        const progress = (pointIndex + 1) / segments;
+        const counter = block.kind === 'circle-counterclockwise' ? -1 : 1;
+        const angle = progress * Math.PI * 2 * repetitions * counter;
+        const decay = block.kind === 'spiral' ? 1 - progress : 1;
+        const radiusX = Math.abs(block.x);
+        const radiusY =
+          block.kind === 'circle-clockwise' ||
+          block.kind === 'circle-counterclockwise'
+            ? radiusX
+            : Math.abs(block.y);
+        return {
+          translateX: radiusX * (Math.cos(angle) - 1) * decay,
+          translateY: radiusY * Math.sin(angle) * decay,
+          rotation:
+            block.kind === 'corkscrew' ? block.value * progress : undefined,
+        };
+      });
+      points.push({ translateX: 0, translateY: 0, rotation: 0 });
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (
+      block.kind === 'figure-eight' ||
+      block.kind === 'infinity-loop' ||
+      block.kind === 'wave' ||
+      block.kind === 'letter-wave'
+    ) {
+      const segments = repetitions * 8;
+      const points = Array.from({ length: segments }, (_, pointIndex) => {
+        const angle = ((pointIndex + 1) / segments) * Math.PI * 2 * repetitions;
+        if (block.kind === 'wave' || block.kind === 'letter-wave') {
+          return {
+            translateX: Math.abs(block.x) * Math.sin(angle),
+            translateY: -Math.abs(block.y) * Math.sin(angle * 2),
+          };
+        }
+        return {
+          translateX: Math.abs(block.x) * Math.sin(angle),
+          translateY: Math.abs(block.y) * Math.sin(angle * 2),
+        };
+      });
+      points.push({ translateX: 0, translateY: 0 });
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (
+      block.kind === 'zigzag' ||
+      block.kind === 'snake' ||
+      block.kind === 'sawtooth' ||
+      block.kind === 'ricochet' ||
+      block.kind === 'pinball'
+    ) {
+      const points = Array.from({ length: repetitions }, (_, pointIndex) => {
+        const sign = pointIndex % 2 === 0 ? 1 : -1;
+        return {
+          translateX: Math.abs(block.x) * sign,
+          translateY:
+            block.kind === 'sawtooth'
+              ? pointIndex % 2 === 0
+                ? -Math.abs(block.y)
+                : Math.abs(block.y) * 0.25
+              : Math.abs(block.y) * (pointIndex % 3 === 0 ? -1 : 1),
+        };
+      });
+      points.push({ translateX: 0, translateY: 0 });
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (
+      block.kind === 'ladder-up' ||
+      block.kind === 'ladder-down' ||
+      block.kind === 'stair-step'
+    ) {
+      const verticalDirection = block.kind === 'ladder-down' ? 1 : -1;
+      const points: Array<{ translateX: number; translateY: number }> = [];
+      for (let stair = 0; stair < repetitions; stair += 1) {
+        const level = stair + 1;
+        points.push({
+          translateX: block.x * level,
+          translateY: verticalDirection * block.y * stair,
+        });
+        points.push({
+          translateX: block.x * level,
+          translateY: verticalDirection * block.y * level,
+        });
+      }
+      points.push({ translateX: 0, translateY: 0 });
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (
+      block.kind === 'triangle-path' ||
+      block.kind === 'square-path' ||
+      block.kind === 'diamond-path'
+    ) {
+      const width = Math.abs(block.x);
+      const height = Math.abs(block.y);
+      const shape =
+        block.kind === 'triangle-path'
+          ? [
+              { translateX: 0, translateY: -height },
+              { translateX: width, translateY: height / 2 },
+              { translateX: -width, translateY: height / 2 },
+            ]
+          : block.kind === 'square-path'
+            ? [
+                { translateX: width, translateY: 0 },
+                { translateX: width, translateY: height },
+                { translateX: 0, translateY: height },
+              ]
+            : [
+                { translateX: 0, translateY: -height },
+                { translateX: width, translateY: 0 },
+                { translateX: 0, translateY: height },
+                { translateX: -width, translateY: 0 },
+              ];
+      const points = Array.from({ length: repetitions }, () => [
+        ...shape,
+        { translateX: 0, translateY: 0 },
+      ]).flat();
+      pushRelativePath(points);
+      continue;
+    }
+
+    if (
+      block.kind === 'flip-in-horizontal' ||
+      block.kind === 'flip-in-vertical'
+    ) {
+      const points = Array.from({ length: repetitions }, (_, pointIndex) => ({
+        scaleX:
+          block.kind === 'flip-in-horizontal' && pointIndex % 2 === 0
+            ? -0.2
+            : 1,
+        scaleY:
+          block.kind === 'flip-in-vertical' && pointIndex % 2 === 0 ? -0.2 : 1,
+        opacity: output.opacity,
+      }));
+      points.push({ scaleX: 1, scaleY: 1, opacity: output.opacity });
+      pushRelativePath(points);
       continue;
     }
 
