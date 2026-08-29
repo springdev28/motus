@@ -469,10 +469,24 @@
 }
 
 @media (max-width: 900px) {
+  .studio-shell { overflow: auto; }
   .studio-topbar { grid-template-columns: 160px 1fr; }
   .project-title-input { display: none; }
-  .studio-grid { grid-template-columns: 58px minmax(380px, 1fr) 250px; grid-template-areas: 'tools workspace inspector'; }
-  .layers-panel { display: none; }
+  .studio-grid {
+    min-height: 0;
+    grid-template-columns: 58px minmax(380px, 1fr) 250px;
+    grid-template-areas:
+      'tools workspace inspector'
+      'layers layers layers';
+  }
+  .workspace { min-height: calc(100svh - 60px); }
+  .layers-panel { display: block; overflow: visible; border-top: 1px solid #d4cec6; border-right: 0; }
+  .layer-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .scene-palette button { width: 36px; height: 36px; }
+  .layer-select { min-height: 44px; }
+  .layer-actions { grid-template-columns: repeat(2, 36px); gap: 3px; }
+  .layer-actions button { width: 36px; height: 36px; }
+  .layer-actions svg { width: 15px; }
   .brand-product { display: none; }
 }
 
@@ -502,11 +516,6 @@
   .tool-button { min-height: 48px; }
   .canvas-stage { padding: 12px; }
   .artboard-frame { min-width: 270px; }
-  .scene-palette button { width: 36px; height: 36px; }
-  .layer-select { min-height: 44px; }
-  .layer-actions { grid-template-columns: repeat(2, 36px); gap: 3px; }
-  .layer-actions button { width: 36px; height: 36px; }
-  .layer-actions svg { width: 15px; }
   .publish-field-row { grid-template-columns: 1fr; }
   .save-recovery { grid-template-columns: 20px minmax(0, 1fr); }
   .save-recovery button { grid-column: span 1; }
