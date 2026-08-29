@@ -36,6 +36,7 @@ import {
   restoreProject,
   restoreProjectWithError,
   shouldAutosaveDraft,
+  transformElementByPointer,
   type ProjectHistoryState,
   validateImageAsset,
 } from './motus-model.ts';
@@ -183,6 +184,18 @@ void test('element geometry is constrained without mutating the source', () => {
       opacity: 1,
     },
   );
+});
+
+void test('pointer transforms use a fixed origin and stay inside the canvas', () => {
+  const source = createDefaultProject().scenes[0].elements[0];
+  const moved = transformElementByPointer(source, 'move', -10_000, 10_000);
+  const resized = transformElementByPointer(source, 'resize', 10_000, -10_000);
+
+  assert.equal(source.x > 0, true);
+  assert.equal(moved.x, 0);
+  assert.equal(moved.y, CANVAS_HEIGHT - source.height);
+  assert.equal(resized.width, CANVAS_WIDTH);
+  assert.equal(resized.height, MIN_ELEMENT_HEIGHT);
 });
 
 void test('restored drafts normalize invalid element geometry', () => {

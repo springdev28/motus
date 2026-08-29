@@ -318,6 +318,27 @@ export function constrainElementToCanvas(
   };
 }
 
+export function transformElementByPointer(
+  element: MotusElement,
+  mode: 'move' | 'resize',
+  deltaX: number,
+  deltaY: number,
+): MotusElement {
+  const transformed = {
+    ...element,
+    ...(mode === 'move'
+      ? {
+          x: Math.round(element.x + deltaX),
+          y: Math.round(element.y + deltaY),
+        }
+      : {
+          width: Math.round(element.width + deltaX),
+          height: Math.round(element.height + deltaY),
+        }),
+  };
+  return constrainElementToCanvas(transformed);
+}
+
 export function compileElementMotion(element: MotusElement): CompiledElementMotion {
   const instruction = migrateMotion(element.motion);
   return {

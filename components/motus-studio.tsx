@@ -95,6 +95,7 @@ import {
   restoreProject,
   restoreProjectWithError,
   shouldAutosaveDraft,
+  transformElementByPointer,
   validateImageAsset,
   type ContentRating,
   type Easing,
@@ -406,6 +407,7 @@ export function MotusStudio() {
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const deletionUndoTimer = useRef<number | null>(null);
+  const activePointerCleanup = useRef<(() => void) | null>(null);
 
   const resetEditorHistory = useCallback(() => {
     const reset = resetProjectTimeline({
@@ -524,6 +526,7 @@ export function MotusStudio() {
       if (deletionUndoTimer.current !== null) {
         window.clearTimeout(deletionUndoTimer.current);
       }
+      activePointerCleanup.current?.();
     };
   }, []);
 
@@ -1115,18 +1118,22 @@ export function MotusStudio() {
   ) => {
     const element = findElement(project, activeScene.id, elementId);
     const artboard = event.currentTarget.closest('.artboard') as HTMLElement | null;
-    if (!element || element.locked || !artboard) return;
+    if (!event.isPrimary || !element || element.locked || !artboard) return;
     event.preventDefault();
     event.stopPropagation();
+    activePointerCleanup.current?.();
     setSelectedElementId(elementId);
 
     const bounds = artboard.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    const pointerId = event.pointerId;
     const startX = event.clientX;
     const startY = event.clientY;
     const origin = { x: element.x, y: element.y, width: element.width, height: element.height };
     let moved = false;
 
-    const onMove = (pointer: PointerEvent) => {
+    function onMove(pointer: PointerEvent) {
+      if (pointer.pointerId !== pointerId) return;
       if (!moved) {
         undoStack.current = [
           ...undoStack.current,
@@ -1149,27 +1156,41 @@ export function MotusStudio() {
         const next = cloneProject(current);
         const target = findElement(next, activeScene.id, elementId);
         if (!target) return current;
-        if (mode === 'move') {
-          target.x = Math.round(origin.x + deltaX);
-          target.y = Math.round(origin.y + deltaY);
-        } else {
-          target.width = Math.round(origin.width + deltaX);
-          target.height = Math.round(origin.height + deltaY);
-        }
-        Object.assign(target, constrainElementToCanvas(target));
+        Object.assign(
+          target,
+          transformElementByPointer(
+            { ...target, ...origin },
+            mode,
+            deltaX,
+            deltaY,
+          ),
+        );
         next.updatedAt = new Date().toISOString();
         return next;
       });
-    };
+    }
 
-    const onUp = () => {
+    function cleanup() {
       window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+      if (activePointerCleanup.current === cleanup) {
+        activePointerCleanup.current = null;
+      }
+    }
+
+    function finish(pointer?: PointerEvent | Event) {
+      if (pointer instanceof PointerEvent && pointer.pointerId !== pointerId) return;
+      cleanup();
       if (moved) setNotice(mode === 'move' ? 'Element moved' : 'Element resized');
-    };
+    }
 
     window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp, { once: true });
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish, { once: true });
+    activePointerCleanup.current = cleanup;
   };
 
   useEffect(() => {
