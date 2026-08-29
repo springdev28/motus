@@ -37,6 +37,7 @@ import {
   restoreProject,
   restoreProjectWithError,
   shouldAutosaveDraft,
+  shouldWarnBeforeDraftExit,
   transformElementByPointer,
   type ProjectHistoryState,
   validateImageAsset,
@@ -623,6 +624,45 @@ void test('autosave runs only for hydrated, dirty, conflict-free drafts', () => 
   );
   assert.equal(
     shouldAutosaveDraft({ hydrated: true, dirty: true, externalChange: true }),
+    false,
+  );
+});
+
+void test('exit warnings are limited to genuinely unsafe draft states', () => {
+  assert.equal(
+    shouldWarnBeforeDraftExit({
+      hydrated: true,
+      dirty: true,
+      externalChange: true,
+      saveFailed: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldWarnBeforeDraftExit({
+      hydrated: true,
+      dirty: true,
+      externalChange: false,
+      saveFailed: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldWarnBeforeDraftExit({
+      hydrated: true,
+      dirty: true,
+      externalChange: false,
+      saveFailed: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldWarnBeforeDraftExit({
+      hydrated: false,
+      dirty: true,
+      externalChange: true,
+      saveFailed: true,
+    }),
     false,
   );
 });

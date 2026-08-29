@@ -728,6 +728,19 @@ export function shouldAutosaveDraft(state: DraftAutosaveState): boolean {
   return state.hydrated && state.dirty && !state.externalChange;
 }
 
+export function shouldWarnBeforeDraftExit(state: {
+  hydrated: boolean;
+  dirty: boolean;
+  externalChange: boolean;
+  saveFailed: boolean;
+}): boolean {
+  return (
+    state.hydrated &&
+    state.dirty &&
+    (state.externalChange || state.saveFailed)
+  );
+}
+
 export type DraftSaveStatus = 'conflict' | 'failed' | 'saving' | 'saved';
 
 export function getDraftSaveStatus(state: {

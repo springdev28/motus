@@ -97,6 +97,7 @@ import {
   restoreProject,
   restoreProjectWithError,
   shouldAutosaveDraft,
+  shouldWarnBeforeDraftExit,
   transformElementByPointer,
   validateImageAsset,
   type ContentRating,
@@ -593,11 +594,34 @@ export function MotusStudio() {
   useEffect(() => {
     if (!shouldAutosaveDraft({ hydrated, dirty: isDirty, externalChange: externalDraftChange })) return;
     const flush = () => {
-      persistProject(project, false);
+      if (persistProject(project, false)) setIsDirty(false);
+    };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
     };
     window.addEventListener('pagehide', flush);
-    return () => window.removeEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+    };
   }, [externalDraftChange, hydrated, isDirty, project]);
+
+  useEffect(() => {
+    if (!shouldWarnBeforeDraftExit({
+      hydrated,
+      dirty: isDirty,
+      externalChange: externalDraftChange,
+      saveFailed,
+    })) {
+      return;
+    }
+    const warnBeforeExit = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener('beforeunload', warnBeforeExit);
+    return () => window.removeEventListener('beforeunload', warnBeforeExit);
+  }, [externalDraftChange, hydrated, isDirty, saveFailed]);
 
   useEffect(() => {
     if (!hydrated) return;
