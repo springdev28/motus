@@ -135,6 +135,11 @@ type DeletionUndo = {
   elementId: string;
 };
 
+type PendingProjectImport = {
+  fileName: string;
+  project: MotusProject;
+};
+
 const sceneBackgrounds = [
   { name: 'Amethyst fog', value: 'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)' },
   { name: 'Rose crossing', value: 'linear-gradient(155deg, #38284c 0%, #1c1729 54%, #7d4e61 100%)' },
@@ -436,6 +441,8 @@ export function MotusStudio() {
   const [publishTagsInput, setPublishTagsInput] = useState(
     'science fiction, mystery',
   );
+  const [pendingProjectImport, setPendingProjectImport] =
+    useState<PendingProjectImport | null>(null);
   const [newWorkOpen, setNewWorkOpen] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [externalDraftChange, setExternalDraftChange] = useState(false);
@@ -672,6 +679,7 @@ export function MotusStudio() {
         return;
       }
       setExternalDraftChange(true);
+      setPendingProjectImport(null);
       setConflictOpen(true);
       setNotice('Autosave paused · draft changed in another tab');
     };
@@ -1010,28 +1018,11 @@ export function MotusStudio() {
         setNotice(result.error);
         return;
       }
-      const restored = result.project;
-      restored.updatedAt = nowIso();
-      if (!persistProject(restored, false, false)) {
-        setNotice('Imported project could not be saved — current draft kept');
-        return;
-      }
-      undoStack.current = [
-        createProjectHistoryEntry(project, {
-          sceneId: activeScene.id,
-          elementId: selectedElementId,
-        }),
-      ];
-      redoStack.current = [];
-      endHistoryTransaction();
-      setCanUndo(true);
-      setCanRedo(false);
-      clearDeletionUndo();
-      setProject(restored);
-      setIsDirty(false);
-      setActiveSceneId(restored.scenes[0].id);
-      setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
-      setNotice('Project imported');
+      setPendingProjectImport({
+        fileName: file.name,
+        project: result.project,
+      });
+      setNotice('Project ready to import');
     };
     reader.onerror = () => setNotice('Project file could not be read');
     reader.readAsText(file);
@@ -1138,6 +1129,42 @@ export function MotusStudio() {
     anchor.download = createProjectBackupFileName(candidate);
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const confirmProjectImport = () => {
+    if (!pendingProjectImport) return;
+    if (externalDraftChange) {
+      setPendingProjectImport(null);
+      setConflictOpen(true);
+      return;
+    }
+
+    downloadProject(project);
+    const restored = cloneProject(pendingProjectImport.project);
+    restored.updatedAt = nowIso();
+    if (!persistProject(restored, false, false, true)) {
+      setPendingProjectImport(null);
+      setNotice('Imported project could not be saved — current draft kept and backed up');
+      return;
+    }
+
+    undoStack.current = [
+      createProjectHistoryEntry(project, {
+        sceneId: activeScene.id,
+        elementId: selectedElementId,
+      }),
+    ];
+    redoStack.current = [];
+    endHistoryTransaction();
+    setCanUndo(true);
+    setCanRedo(false);
+    clearDeletionUndo();
+    setProject(restored);
+    setIsDirty(false);
+    setActiveSceneId(restored.scenes[0].id);
+    setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
+    setPendingProjectImport(null);
+    setNotice('Project imported · previous draft downloaded');
   };
 
   const exportProject = () => {
@@ -1374,7 +1401,7 @@ export function MotusStudio() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      const modalOpen = readerOpen || publishOpen || projectDetailsOpen || newWorkOpen || conflictOpen;
+      const modalOpen = readerOpen || publishOpen || projectDetailsOpen || Boolean(pendingProjectImport) || newWorkOpen || conflictOpen;
       const insideNativeControl = target?.closest(
         'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
@@ -1906,6 +1933,34 @@ export function MotusStudio() {
             <Button onClick={() => setConflictOpen(false)} variant="ghost">Review later</Button>
             <Button onClick={keepCurrentDraft} variant="outline">Keep this draft</Button>
             <Button onClick={loadOtherTabDraft}><Download />Back up &amp; load saved</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setPendingProjectImport(null);
+        }}
+        open={Boolean(pendingProjectImport)}
+      >
+        <DialogContent className="new-work-dialog">
+          <DialogHeader>
+            <DialogTitle>Import {pendingProjectImport?.project.title}?</DialogTitle>
+            <DialogDescription>
+              {pendingProjectImport?.fileName} contains {pendingProjectImport?.project.scenes.length}{' '}
+              scene{pendingProjectImport?.project.scenes.length === 1 ? '' : 's'} and will replace the draft currently open in the editor.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="new-work-backup">
+            <Download />
+            <div>
+              <strong>Your current work downloads first</strong>
+              <p>Motus also verifies that the imported draft fits in both recovery slots before switching projects.</p>
+            </div>
+          </div>
+          <div className="new-work-actions">
+            <Button onClick={() => setPendingProjectImport(null)} variant="outline">Cancel</Button>
+            <Button onClick={confirmProjectImport}><Upload />Back up &amp; import</Button>
           </div>
         </DialogContent>
       </Dialog>
