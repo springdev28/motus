@@ -26,6 +26,7 @@ import {
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
   getSceneTabIndexForKey,
+  hasPointerDragStarted,
   parseProjectTags,
   recordProjectHistory,
   removePublicationRevision,
@@ -296,6 +297,16 @@ void test('pointer transforms use a fixed origin and stay inside the canvas', ()
   assert.equal(moved.y, CANVAS_HEIGHT - source.height);
   assert.equal(resized.width, CANVAS_WIDTH);
   assert.equal(resized.height, MIN_ELEMENT_HEIGHT);
+});
+
+void test('pointer drags ignore tap jitter across mouse, pen, and touch input', () => {
+  assert.equal(hasPointerDragStarted(1, 1, 'mouse'), false);
+  assert.equal(hasPointerDragStarted(2, 0, 'mouse'), true);
+  assert.equal(hasPointerDragStarted(2, 2, 'pen'), false);
+  assert.equal(hasPointerDragStarted(3, 0, 'pen'), true);
+  assert.equal(hasPointerDragStarted(4, 4, 'touch'), false);
+  assert.equal(hasPointerDragStarted(6, 0, 'touch'), true);
+  assert.equal(hasPointerDragStarted(Number.NaN, 10, 'touch'), false);
 });
 
 void test('keyboard nudges use precise and accelerated canvas steps', () => {

@@ -523,6 +523,11 @@
   .save-recovery button { grid-column: span 1; }
 }
 
+@media (pointer: coarse) {
+  .resize-handle { right: -18px; bottom: -18px; width: 40px; height: 40px; }
+  .resize-handle svg { width: 16px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

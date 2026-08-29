@@ -420,6 +420,16 @@ export function transformElementByPointer(
   return constrainElementToCanvas(transformed);
 }
 
+export function hasPointerDragStarted(
+  deltaX: number,
+  deltaY: number,
+  pointerType: string,
+): boolean {
+  const threshold = pointerType === 'touch' ? 6 : pointerType === 'pen' ? 3 : 2;
+  return Number.isFinite(deltaX) && Number.isFinite(deltaY) &&
+    Math.hypot(deltaX, deltaY) >= threshold;
+}
+
 export function getKeyboardNudgeDelta(
   key: string,
   accelerated = false,

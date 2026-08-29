@@ -93,6 +93,7 @@ import {
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
   getSceneTabIndexForKey,
+  hasPointerDragStarted,
   hasUnpublishedChanges,
   parseProjectTags,
   recordProjectHistory,
@@ -1360,7 +1361,7 @@ export function MotusStudio() {
   ) => {
     const element = findElement(project, activeScene.id, elementId);
     const artboard = event.currentTarget.closest('.artboard') as HTMLElement | null;
-    if (!event.isPrimary || !element || element.locked || !artboard) return;
+    if (!event.isPrimary || event.button !== 0 || !element || element.locked || !artboard) return;
     event.preventDefault();
     event.stopPropagation();
     activePointerCleanup.current?.();
@@ -1369,6 +1370,7 @@ export function MotusStudio() {
     const bounds = artboard.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
     const pointerId = event.pointerId;
+    const pointerType = event.pointerType;
     const startX = event.clientX;
     const startY = event.clientY;
     const origin = { x: element.x, y: element.y, width: element.width, height: element.height };
@@ -1376,6 +1378,11 @@ export function MotusStudio() {
 
     function onMove(pointer: PointerEvent) {
       if (pointer.pointerId !== pointerId) return;
+      const clientDeltaX = pointer.clientX - startX;
+      const clientDeltaY = pointer.clientY - startY;
+      if (!moved && !hasPointerDragStarted(clientDeltaX, clientDeltaY, pointerType)) {
+        return;
+      }
       if (!moved) {
         undoStack.current = trimProjectHistory([
           ...undoStack.current,
@@ -1392,8 +1399,8 @@ export function MotusStudio() {
         setIsDirty(true);
         moved = true;
       }
-      const deltaX = ((pointer.clientX - startX) / bounds.width) * CANVAS_WIDTH;
-      const deltaY = ((pointer.clientY - startY) / bounds.height) * CANVAS_HEIGHT;
+      const deltaX = (clientDeltaX / bounds.width) * CANVAS_WIDTH;
+      const deltaY = (clientDeltaY / bounds.height) * CANVAS_HEIGHT;
       setProject((current) => {
         const next = cloneProject(current);
         const target = findElement(next, activeScene.id, elementId);
