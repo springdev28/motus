@@ -51,6 +51,10 @@ export function detectImageFormat(bytes: Uint8Array): SupportedImageMime | null 
   return isWebp ? 'image/webp' : null;
 }
 
+export function hasFileDrag(types: Iterable<string>): boolean {
+  return Array.from(types).some((type) => type.toLowerCase() === 'files');
+}
+
 export function validateImageAsset(metadata: ImageAssetMetadata): string | null {
   if (metadata.mime !== 'image/png' && metadata.mime !== 'image/webp') {
     return 'Use a PNG or WebP image';

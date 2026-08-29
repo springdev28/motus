@@ -96,6 +96,7 @@ import {
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
   getTabIndexForKey,
+  hasFileDrag,
   hasPointerDragStarted,
   hasUnpublishedChanges,
   parseProjectTags,
@@ -446,6 +447,7 @@ export function MotusStudio() {
   const [inspectorTab, setInspectorTab] = useState<'design' | 'motion'>('design');
   const [zoom, setZoom] = useState(100);
   const [fitCanvasWidth, setFitCanvasWidth] = useState(430);
+  const [imageDropActive, setImageDropActive] = useState(false);
   const [previewKey, setPreviewKey] = useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
@@ -998,6 +1000,10 @@ export function MotusStudio() {
 
   const uploadImage = async (file?: File) => {
     if (!file) return;
+    if (!canAddElementToScene(activeScene)) {
+      setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
+      return;
+    }
     const envelopeError = validateImageAsset({ mime: file.type, size: file.size });
     if (envelopeError) {
       setNotice(envelopeError);
@@ -1860,12 +1866,45 @@ export function MotusStudio() {
             className="canvas-stage"
             id="scene-canvas"
             onClick={() => setSelectedElementId('')}
+            onDragEnter={(event) => {
+              if (!hasFileDrag(event.dataTransfer.types)) return;
+              event.preventDefault();
+              setImageDropActive(true);
+            }}
+            onDragLeave={(event) => {
+              const nextTarget = event.relatedTarget;
+              if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+              setImageDropActive(false);
+            }}
+            onDragOver={(event) => {
+              if (!hasFileDrag(event.dataTransfer.types)) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'copy';
+              setImageDropActive(true);
+            }}
+            onDrop={(event) => {
+              if (!hasFileDrag(event.dataTransfer.types)) return;
+              event.preventDefault();
+              setImageDropActive(false);
+              const files = Array.from(event.dataTransfer.files);
+              const image = files.find((file) =>
+                file.type === 'image/png' || file.type === 'image/webp'
+              ) ?? files[0];
+              void uploadImage(image);
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Escape') setSelectedElementId('');
             }}
             ref={canvasStage}
             role="presentation"
           >
+            {imageDropActive ? (
+              <output aria-live="polite" className="canvas-drop-overlay">
+                <ImagePlus aria-hidden="true" />
+                <strong>Drop image onto this scene</strong>
+                <span>PNG or WebP · validated before it is added</span>
+              </output>
+            ) : null}
             <div className="artboard-frame" style={{ width: `${artboardWidth}px` }}>
               <SceneView
                 interactive

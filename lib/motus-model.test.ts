@@ -29,6 +29,7 @@ import {
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
   getTabIndexForKey,
+  hasFileDrag,
   hasPointerDragStarted,
   parseProjectTags,
   recordProjectHistory,
@@ -925,6 +926,12 @@ void test('image signatures identify PNG and WebP content', () => {
   assert.equal(detectImageFormat(png), 'image/png');
   assert.equal(detectImageFormat(webp), 'image/webp');
   assert.equal(detectImageFormat(new Uint8Array([0xff, 0xd8, 0xff])), null);
+});
+
+void test('file drags are distinguished from internal text drags', () => {
+  assert.equal(hasFileDrag(['text/plain', 'Files']), true);
+  assert.equal(hasFileDrag(new Set(['files'])), true);
+  assert.equal(hasFileDrag(['text/plain', 'text/html']), false);
 });
 
 void test('image validation enforces format, storage, and decoded dimensions', () => {
