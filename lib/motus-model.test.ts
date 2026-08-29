@@ -24,6 +24,7 @@ import {
   getPublicationReadiness,
   getDraftSaveStatus,
   getKeyboardNudgeDelta,
+  getProjectStorageBytes,
   parseProjectTags,
   recordProjectHistory,
   reorderScenes,
@@ -41,6 +42,7 @@ import {
   transformElementByPointer,
   type ProjectHistoryState,
   validateImageAsset,
+  writeDraftJournal,
 } from './motus-model.ts';
 
 void test('blank projects start private with one editable scene', () => {
@@ -66,6 +68,69 @@ void test('project backup names are portable and never empty', () => {
     createProjectBackupFileName({ id: 'fallback', title: '✨' }),
     'untitled-work.motus.json',
   );
+});
+
+void test('project storage measurement counts encoded bytes without mutation', () => {
+  const project = createDefaultProject();
+  project.title = 'Signal 🌫️';
+  const encodedLength = new TextEncoder().encode(JSON.stringify(project)).byteLength;
+
+  assert.equal(getProjectStorageBytes(project), encodedLength);
+  assert.equal(project.title, 'Signal 🌫️');
+  assert.equal(encodedLength > JSON.stringify(project).length, true);
+});
+
+void test('mirrored journal writes verify both recovery slots before advancing', () => {
+  const values = new Map<string, string>([
+    ['pointer', 'a'],
+    ['slot-a', 'old-active'],
+    ['slot-b', 'old-recovery'],
+  ]);
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+
+  const active = writeDraftJournal(
+    storage,
+    { pointer: 'pointer', slotA: 'slot-a', slotB: 'slot-b' },
+    'candidate',
+    (value) => value === 'candidate',
+    true,
+  );
+
+  assert.equal(active, 'b');
+  assert.equal(values.get('pointer'), 'b');
+  assert.equal(values.get('slot-a'), 'candidate');
+  assert.equal(values.get('slot-b'), 'candidate');
+});
+
+void test('mirrored journal rolls back its recovery slot when capacity fails', () => {
+  const values = new Map<string, string>([
+    ['pointer', 'a'],
+    ['slot-a', 'old-active'],
+    ['slot-b', 'old-recovery'],
+  ]);
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      if (key === 'slot-a' && value === 'candidate') throw new Error('quota');
+      values.set(key, value);
+    },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+
+  assert.throws(() => writeDraftJournal(
+    storage,
+    { pointer: 'pointer', slotA: 'slot-a', slotB: 'slot-b' },
+    'candidate',
+    (value) => value === 'candidate',
+    true,
+  ));
+  assert.equal(values.get('pointer'), 'a');
+  assert.equal(values.get('slot-a'), 'old-active');
+  assert.equal(values.get('slot-b'), 'old-recovery');
 });
 
 void test('project tags preserve normal comma-separated entry safely', () => {

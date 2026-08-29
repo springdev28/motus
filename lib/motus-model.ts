@@ -176,6 +176,61 @@ export type MotusProject = {
   updatedAt: string;
 };
 
+export function getProjectStorageBytes(project: MotusProject): number {
+  return new TextEncoder().encode(JSON.stringify(project)).byteLength;
+}
+
+export type DraftJournalStorage = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+};
+
+export type DraftJournalKeys = {
+  pointer: string;
+  slotA: string;
+  slotB: string;
+};
+
+export function writeDraftJournal(
+  storage: DraftJournalStorage,
+  keys: DraftJournalKeys,
+  encoded: string,
+  validate: (value: string | null) => boolean,
+  mirrorRecovery = false,
+): 'a' | 'b' {
+  const activeSlot = storage.getItem(keys.pointer) === 'b' ? 'b' : 'a';
+  const nextSlot = activeSlot === 'a' ? 'b' : 'a';
+  const activeKey = activeSlot === 'a' ? keys.slotA : keys.slotB;
+  const nextKey = nextSlot === 'a' ? keys.slotA : keys.slotB;
+  const previousRecovery = mirrorRecovery ? storage.getItem(nextKey) : null;
+
+  storage.setItem(nextKey, encoded);
+  if (!validate(storage.getItem(nextKey))) {
+    throw new Error('Draft verification failed');
+  }
+  if (mirrorRecovery) {
+    try {
+      storage.setItem(activeKey, encoded);
+      if (!validate(storage.getItem(activeKey))) {
+        throw new Error('Draft mirror verification failed');
+      }
+    } catch (error) {
+      if (previousRecovery === null) storage.removeItem(nextKey);
+      else storage.setItem(nextKey, previousRecovery);
+      throw error;
+    }
+    try {
+      storage.setItem(keys.pointer, nextSlot);
+    } catch {
+      // Both slots contain the candidate, so the existing pointer remains valid.
+    }
+  } else {
+    storage.setItem(keys.pointer, nextSlot);
+  }
+  return nextSlot;
+}
+
 export type MotusReaderSource = {
   mode: 'draft' | 'revision';
   revision: number | null;

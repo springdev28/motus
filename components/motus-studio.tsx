@@ -82,6 +82,7 @@ import {
   getPublicationReadiness,
   getDraftSaveStatus,
   getKeyboardNudgeDelta,
+  getProjectStorageBytes,
   hasUnpublishedChanges,
   parseProjectTags,
   recordProjectHistory,
@@ -100,6 +101,7 @@ import {
   shouldWarnBeforeDraftExit,
   transformElementByPointer,
   validateImageAsset,
+  writeDraftJournal,
   type ContentRating,
   type Easing,
   type ElementType,
@@ -504,18 +506,21 @@ export function MotusStudio() {
     candidate: MotusProject,
     announce = true,
     trackFailure = true,
+    mirrorRecovery = false,
   ) {
     try {
-      const activeSlot = window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
-      const nextSlot = activeSlot === 'a' ? 'b' : 'a';
-      const nextKey = nextSlot === 'a' ? DRAFT_SLOT_A_KEY : DRAFT_SLOT_B_KEY;
       const encoded = JSON.stringify(candidate);
-
-      window.localStorage.setItem(nextKey, encoded);
-      if (!restoreProject(window.localStorage.getItem(nextKey))) {
-        throw new Error('Draft verification failed');
-      }
-      window.localStorage.setItem(DRAFT_POINTER_KEY, nextSlot);
+      writeDraftJournal(
+        window.localStorage,
+        {
+          pointer: DRAFT_POINTER_KEY,
+          slotA: DRAFT_SLOT_A_KEY,
+          slotB: DRAFT_SLOT_B_KEY,
+        },
+        encoded,
+        (value) => Boolean(restoreProject(value)),
+        mirrorRecovery,
+      );
       setSaveFailed(false);
       if (announce) setNotice('Saved with recovery');
       return true;
@@ -711,6 +716,39 @@ export function MotusStudio() {
     }, transactionKey);
   };
 
+  const commitProjectWithStoragePreflight = (
+    mutate: (draft: MotusProject) => void,
+    failureMessage: string,
+  ) => {
+    activePointerCleanup.current?.();
+    const candidate = cloneProject(project);
+    mutate(candidate);
+    candidate.updatedAt = nowIso();
+    if (!persistProject(candidate, false, false, true)) {
+      const megabytes = (getProjectStorageBytes(candidate) / 1_000_000).toFixed(1);
+      setNotice(`${failureMessage} · ${megabytes} MB draft · download a backup`);
+      return false;
+    }
+    clearDeletionUndo();
+    const history = recordProjectHistory(
+      {
+        undoStack: undoStack.current,
+        transactionKey: historyTransaction.current,
+      },
+      project,
+      { sceneId: activeScene.id, elementId: selectedElementId },
+      null,
+    );
+    undoStack.current = history.undoStack;
+    historyTransaction.current = history.transactionKey;
+    redoStack.current = [];
+    setCanUndo(true);
+    setCanRedo(false);
+    setProject(candidate);
+    setIsDirty(false);
+    return true;
+  };
+
   const endHistoryTransaction = () => {
     historyTransaction.current = null;
   };
@@ -775,21 +813,36 @@ export function MotusStudio() {
     setSelectedElementId(recovery.elementId);
   };
 
-  const addElement = (type: ElementType, overrides: Partial<MotusElement> = {}) => {
+  const addElement = (
+    type: ElementType,
+    overrides: Partial<MotusElement> = {},
+    requireStoragePreflight = false,
+  ) => {
     if (!canAddElementToScene(activeScene)) {
       setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
-      return;
+      return false;
     }
     const index = activeScene.elements.length + 1;
     const element = createElement(type, index, overrides);
-    commitProject((draft) => {
+    const addToDraft = (draft: MotusProject) => {
       draft.scenes
         .find((scene) => scene.id === activeScene.id)
         ?.elements.push(element);
-    });
+    };
+    if (requireStoragePreflight) {
+      if (!commitProjectWithStoragePreflight(
+        addToDraft,
+        'Image cannot fit in device storage',
+      )) {
+        return false;
+      }
+    } else {
+      commitProject(addToDraft);
+    }
     setSelectedElementId(element.id);
     setInspectorTab('design');
     setNotice(`${element.name} added`);
+    return true;
   };
 
   const deleteElement = (elementId: string) => {
@@ -910,14 +963,16 @@ export function MotusStudio() {
 
       const src = await readFileAsDataUrl(file);
       const scale = Math.min(420 / dimensions.width, 420 / dimensions.height);
-      addElement('image', {
+      const added = addElement('image', {
         name: file.name,
         src,
         width: Math.max(8, Math.round(dimensions.width * scale)),
         height: Math.max(8, Math.round(dimensions.height * scale)),
         fill: '#ffffff',
-      });
-      setNotice(`${file.name} added · ${dimensions.width}×${dimensions.height}`);
+      }, true);
+      if (added) {
+        setNotice(`${file.name} added · ${dimensions.width}×${dimensions.height}`);
+      }
     } catch {
       setNotice('Image could not be decoded');
     }
@@ -979,11 +1034,17 @@ export function MotusStudio() {
     copy.name = `${source.name} copy`;
     copy.x = Math.min(CANVAS_WIDTH - copy.width, copy.x + 28);
     copy.y = Math.min(CANVAS_HEIGHT - copy.height, copy.y + 28);
-    commitProject((draft) => {
+    const addCopyToDraft = (draft: MotusProject) => {
       draft.scenes
         .find((scene) => scene.id === activeScene.id)
         ?.elements.push(copy);
-    });
+    };
+    if (!commitProjectWithStoragePreflight(
+      addCopyToDraft,
+      'Layer copy cannot fit in device storage',
+    )) {
+      return;
+    }
     setSelectedElementId(copy.id);
     setNotice('Layer duplicated');
   };
@@ -1018,7 +1079,12 @@ export function MotusStudio() {
       ...element,
       id: `${copy.id}-${element.type}-${index}`,
     }));
-    commitProject((draft) => draft.scenes.splice(sceneIndex + 1, 0, copy));
+    if (!commitProjectWithStoragePreflight(
+      (draft) => draft.scenes.splice(sceneIndex + 1, 0, copy),
+      'Scene copy cannot fit in device storage',
+    )) {
+      return;
+    }
     setActiveSceneId(copy.id);
     setSelectedElementId(copy.elements.at(-1)?.id ?? '');
     setNotice('Scene duplicated');
@@ -1160,11 +1226,17 @@ export function MotusStudio() {
     }
     const createdAt = nowIso();
     const revision = createPublicationRevision(project, createdAt);
-    commitProject((draft) => {
+    const addRevisionToDraft = (draft: MotusProject) => {
       const snapshot = createPublicationRevision(draft, createdAt);
       draft.publications.push(snapshot);
       draft.publishedRevision = snapshot.revision;
-    });
+    };
+    if (!commitProjectWithStoragePreflight(
+      addRevisionToDraft,
+      'Revision cannot fit in device storage',
+    )) {
+      return;
+    }
     setPublishOpen(false);
     setReaderRevision(revision);
     setReaderMatureConfirmed(false);
