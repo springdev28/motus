@@ -433,7 +433,6 @@ export function MotusStudio() {
   const [project, setProject] = useState<MotusProject>(createDefaultProject);
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
   const [selectedElementId, setSelectedElementId] = useState('scene-1-orb');
-  const [activeTool, setActiveTool] = useState('select');
   const [inspectorTab, setInspectorTab] = useState<'design' | 'motion'>('design');
   const [zoom, setZoom] = useState(64);
   const [previewKey, setPreviewKey] = useState(0);
@@ -526,6 +525,7 @@ export function MotusStudio() {
     () => activeScene.elements.find((element) => element.id === selectedElementId),
     [activeScene.elements, selectedElementId],
   );
+  const activeTool = inspectorTab === 'motion' ? 'motion' : 'select';
 
   function persistProject(
     candidate: MotusProject,
@@ -944,8 +944,10 @@ export function MotusStudio() {
   };
 
   const runTool = (toolId: string) => {
-    setActiveTool(toolId);
-    if (toolId === 'select') return;
+    if (toolId === 'select') {
+      setInspectorTab('design');
+      return;
+    }
     if (
       ['image', 'text', 'shape', 'speech'].includes(toolId) &&
       !canAddElementToScene(activeScene)
@@ -1277,7 +1279,6 @@ export function MotusStudio() {
     setIsDirty(false);
     setActiveSceneId(blank.scenes[0].id);
     setSelectedElementId('');
-    setActiveTool('select');
     setInspectorTab('design');
     setNewWorkOpen(false);
     setNotice('New work started · previous draft downloaded');
@@ -1671,7 +1672,7 @@ export function MotusStudio() {
         <aside className="tool-rail" aria-label="Add and edit elements">
           {toolItems.map(({ id, label, icon: Icon }) => (
             <button
-              aria-pressed={activeTool === id}
+              aria-pressed={id === 'select' || id === 'motion' ? activeTool === id : undefined}
               className="tool-button"
               data-active={activeTool === id || undefined}
               key={id}
