@@ -203,6 +203,7 @@ import {
 } from '@/lib/motus-draft-storage';
 const MOTUS_LAYER_CLIPBOARD_TYPE = 'application/x-motus-layer';
 const STUDIO_PANEL_LAYOUT_KEY = 'motus.studio.panel-layout.v1';
+const BLOCK_WORKSPACE_LAYOUT_KEY = 'motus.studio.block-workspace-layout.v1';
 
 type StudioPanelLayout = {
   left: number;
@@ -212,11 +213,21 @@ type StudioPanelLayout = {
 
 type StudioPanelLayouts = Record<'design' | 'motion', StudioPanelLayout>;
 
+type BlockWorkspaceLayout = {
+  library: number;
+  script: number;
+};
+
 type StudioPanelPreset = 'balanced' | 'focus-stage' | 'focus-secondary';
 
 const DEFAULT_STUDIO_PANEL_LAYOUTS: StudioPanelLayouts = {
   design: { left: 16, center: 52, right: 32 },
   motion: { left: 13, center: 57, right: 30 },
+};
+
+const DEFAULT_BLOCK_WORKSPACE_LAYOUT: BlockWorkspaceLayout = {
+  library: 30,
+  script: 70,
 };
 
 const STUDIO_PANEL_PRESETS: Record<
@@ -263,12 +274,34 @@ function isStudioPanelLayout(value: unknown): value is StudioPanelLayout {
   );
 }
 
+function isBlockWorkspaceLayout(value: unknown): value is BlockWorkspaceLayout {
+  if (!value || typeof value !== 'object') return false;
+  const layout = value as Partial<BlockWorkspaceLayout>;
+  if (
+    typeof layout.library !== 'number' ||
+    !Number.isFinite(layout.library) ||
+    typeof layout.script !== 'number' ||
+    !Number.isFinite(layout.script)
+  ) {
+    return false;
+  }
+  return (
+    layout.library > 0 &&
+    layout.script > 0 &&
+    Math.abs(layout.library + layout.script - 100) < 1
+  );
+}
+
 function getStudioGridTemplate(
   workspace: 'design' | 'motion',
   layout: StudioPanelLayout,
 ) {
-  const centerMinimum = workspace === 'motion' ? '400px' : '340px';
+  const centerMinimum = workspace === 'motion' ? '460px' : '340px';
   return `60px minmax(112px, ${layout.left}fr) minmax(${centerMinimum}, ${layout.center}fr) minmax(260px, ${layout.right}fr)`;
+}
+
+function getBlockWorkspaceGridTemplate(layout: BlockWorkspaceLayout) {
+  return `minmax(220px, ${layout.library}fr) minmax(240px, ${layout.script}fr)`;
 }
 
 type DeletionUndo = {
@@ -1400,6 +1433,10 @@ export function MotusStudio() {
   const [studioPanelLayouts, setStudioPanelLayouts] =
     useState<StudioPanelLayouts>(DEFAULT_STUDIO_PANEL_LAYOUTS);
   const [panelLayoutRevision, setPanelLayoutRevision] = useState(0);
+  const [blockWorkspaceLayout, setBlockWorkspaceLayout] =
+    useState<BlockWorkspaceLayout>(DEFAULT_BLOCK_WORKSPACE_LAYOUT);
+  const [blockWorkspaceLayoutRevision, setBlockWorkspaceLayoutRevision] =
+    useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
   const [readerMode, setReaderMode] = useState<ReaderMode>('scroll');
@@ -1448,6 +1485,7 @@ export function MotusStudio() {
   const projectInput = useRef<HTMLInputElement>(null);
   const canvasStage = useRef<HTMLDivElement>(null);
   const studioGrid = useRef<HTMLDivElement>(null);
+  const motionProperties = useRef<HTMLDivElement>(null);
   const readerScroll = useRef<HTMLDivElement>(null);
   const canvasElementRefs = useRef(new Map<string, HTMLDivElement>());
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -1683,16 +1721,26 @@ export function MotusStudio() {
       syncDesktopState();
       try {
         const encoded = window.localStorage.getItem(STUDIO_PANEL_LAYOUT_KEY);
-        if (!encoded) return;
-        const saved = JSON.parse(encoded) as Partial<StudioPanelLayouts>;
-        if (
-          isStudioPanelLayout(saved.design) &&
-          isStudioPanelLayout(saved.motion)
-        ) {
-          setStudioPanelLayouts({
-            design: { ...saved.design },
-            motion: { ...saved.motion },
-          });
+        if (encoded) {
+          const saved = JSON.parse(encoded) as Partial<StudioPanelLayouts>;
+          if (
+            isStudioPanelLayout(saved.design) &&
+            isStudioPanelLayout(saved.motion)
+          ) {
+            setStudioPanelLayouts({
+              design: { ...saved.design },
+              motion: { ...saved.motion },
+            });
+          }
+        }
+        const encodedBlockWorkspace = window.localStorage.getItem(
+          BLOCK_WORKSPACE_LAYOUT_KEY,
+        );
+        if (encodedBlockWorkspace) {
+          const savedBlockWorkspace = JSON.parse(encodedBlockWorkspace);
+          if (isBlockWorkspaceLayout(savedBlockWorkspace)) {
+            setBlockWorkspaceLayout({ ...savedBlockWorkspace });
+          }
         }
       } catch {
         // A malformed preference should never prevent the editor from opening.
@@ -3586,6 +3634,12 @@ export function MotusStudio() {
         ),
       } satisfies CSSProperties)
     : undefined;
+  const blockWorkspaceStyle = desktopPanelsEnabled
+    ? ({
+        gridTemplateColumns:
+          getBlockWorkspaceGridTemplate(blockWorkspaceLayout),
+      } satisfies CSSProperties)
+    : undefined;
   const applyStudioPanelLayout = (layout: Record<string, number>) => {
     const candidate = {
       left: layout.left,
@@ -3621,6 +3675,33 @@ export function MotusStudio() {
       // Panel sizing remains usable for this session without local storage.
     }
   };
+  const applyBlockWorkspaceLayout = (layout: Record<string, number>) => {
+    const candidate = {
+      library: layout.library,
+      script: layout.script,
+    };
+    if (!isBlockWorkspaceLayout(candidate)) return;
+    if (motionProperties.current) {
+      motionProperties.current.style.gridTemplateColumns =
+        getBlockWorkspaceGridTemplate(candidate);
+    }
+  };
+  const rememberBlockWorkspaceLayout = (layout: Record<string, number>) => {
+    const candidate = {
+      library: layout.library,
+      script: layout.script,
+    };
+    if (!isBlockWorkspaceLayout(candidate)) return;
+    setBlockWorkspaceLayout(candidate);
+    try {
+      window.localStorage.setItem(
+        BLOCK_WORKSPACE_LAYOUT_KEY,
+        JSON.stringify(candidate),
+      );
+    } catch {
+      // The inner divider remains usable for this session without local storage.
+    }
+  };
   const applyStudioPanelPreset = (preset: StudioPanelPreset) => {
     const nextLayout = {
       ...STUDIO_PANEL_PRESETS[inspectorTab][preset],
@@ -3653,12 +3734,15 @@ export function MotusStudio() {
       motion: { ...DEFAULT_STUDIO_PANEL_LAYOUTS.motion },
     });
     setPanelLayoutRevision((revision) => revision + 1);
+    setBlockWorkspaceLayout({ ...DEFAULT_BLOCK_WORKSPACE_LAYOUT });
+    setBlockWorkspaceLayoutRevision((revision) => revision + 1);
     try {
       window.localStorage.removeItem(STUDIO_PANEL_LAYOUT_KEY);
+      window.localStorage.removeItem(BLOCK_WORKSPACE_LAYOUT_KEY);
     } catch {
       // Resetting the live layout still succeeds without local storage.
     }
-    setNotice('Panel widths reset');
+    setNotice('Panel layouts reset');
   };
 
   return (
@@ -4804,7 +4888,11 @@ export function MotusStudio() {
                     onDragStart={startMotionDrag}
                     sensors={motionSensors}
                   >
-                    <div className="property-stack motion-properties">
+                    <div
+                      className="property-stack motion-properties"
+                      ref={motionProperties}
+                      style={blockWorkspaceStyle}
+                    >
                       <section className="block-workspace-intro">
                         <div>
                           <span>BLOCKS</span>
@@ -5723,6 +5811,27 @@ export function MotusStudio() {
                           },
                         )}
                       </MotionProgramDropzone>
+                      {desktopPanelsEnabled ? (
+                        <div className="block-workspace-resize-layer">
+                          <ResizablePanelGroup
+                            defaultLayout={blockWorkspaceLayout}
+                            id="block-workspace-panels"
+                            key={blockWorkspaceLayoutRevision}
+                            onLayoutChange={applyBlockWorkspaceLayout}
+                            onLayoutChanged={rememberBlockWorkspaceLayout}
+                            orientation="horizontal"
+                          >
+                            <ResizablePanel id="library" minSize="220px" />
+                            <ResizableHandle
+                              aria-label="Resize block library and script"
+                              className="block-workspace-resize-handle"
+                              title="Drag to resize the block library and script"
+                              withHandle
+                            />
+                            <ResizablePanel id="script" minSize="240px" />
+                          </ResizablePanelGroup>
+                        </div>
+                      ) : null}
                     </div>
                     <DragOverlay>
                       {activeMotionDrag ? (
@@ -5763,7 +5872,7 @@ export function MotusStudio() {
               />
               <ResizablePanel
                 id="center"
-                minSize={inspectorTab === 'motion' ? '400px' : '340px'}
+                minSize={inspectorTab === 'motion' ? '460px' : '340px'}
               />
               <ResizableHandle
                 aria-label={

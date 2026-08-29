@@ -4295,14 +4295,71 @@
   display: none;
 }
 .inspector-panel[data-workspace='motion'] .motion-properties {
+  position: relative;
   display: grid;
   width: 100%;
   height: 100%;
   min-height: 0;
-  grid-template-columns: minmax(236px, 30%) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 30%) minmax(240px, 1fr);
   grid-template-rows: 48px minmax(0, 1fr);
   gap: 0;
   margin: 0;
+}
+.block-workspace-resize-layer {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  pointer-events: none;
+}
+.block-workspace-resize-layer [data-slot='resizable-panel-group'],
+.block-workspace-resize-layer [data-slot='resizable-panel'] {
+  pointer-events: none;
+}
+.block-workspace-resize-handle[data-slot='resizable-handle'] {
+  width: 1px;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  touch-action: none;
+}
+.block-workspace-resize-handle[data-slot='resizable-handle']::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: 999px;
+  background: #b8adc7;
+  content: '';
+  opacity: 0.42;
+  transition:
+    opacity 140ms ease,
+    background 140ms ease;
+}
+.block-workspace-resize-handle[data-slot='resizable-handle']:hover::before,
+.block-workspace-resize-handle[data-slot='resizable-handle'][data-separator='active']::before,
+.block-workspace-resize-handle[data-slot='resizable-handle']:focus-visible::before {
+  background: #6b52e8;
+  opacity: 1;
+}
+.block-workspace-resize-handle[data-slot='resizable-handle'] > div {
+  width: 4px;
+  height: 42px;
+  border: 1px solid rgb(255 255 255 / 90%);
+  border-radius: 999px;
+  background: #7f68eb;
+  box-shadow: 0 2px 8px rgb(42 28 89 / 24%);
+  opacity: 0.62;
+  transition: opacity 140ms ease;
+}
+.block-workspace-resize-handle[data-slot='resizable-handle']:hover > div,
+.block-workspace-resize-handle[data-slot='resizable-handle']:focus-visible
+  > div,
+.block-workspace-resize-handle[data-slot='resizable-handle'][data-separator='active']
+  > div {
+  opacity: 1;
+}
+.block-workspace-resize-handle[data-slot='resizable-handle']:focus-visible {
+  outline: 2px solid #6b52e8;
+  outline-offset: -2px;
 }
 .inspector-panel[data-workspace='motion'] .block-workspace-intro {
   grid-row: 1;
@@ -4411,7 +4468,7 @@
 }
 .inspector-panel[data-workspace='motion'] .block-palette-layout {
   min-height: 0;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr);
 }
 .inspector-panel[data-workspace='motion'] .block-category-rail {
   overflow: auto;
