@@ -1918,6 +1918,77 @@ export function createMotionBlock(
   return block;
 }
 
+function hasSingleLeadingMotionEvent(blocks: readonly MotionBlock[]): boolean {
+  return (
+    blocks[0]?.kind === 'scene-enter' &&
+    blocks.slice(1).every((block) => block.kind !== 'scene-enter')
+  );
+}
+
+export function insertMotionActionBefore(
+  blocks: readonly MotionBlock[],
+  action: MotionBlock,
+  beforeActionId: string | null = null,
+): MotionBlock[] {
+  const unchanged = () => [...blocks];
+  if (
+    !hasSingleLeadingMotionEvent(blocks) ||
+    action.kind === 'scene-enter' ||
+    blocks.length >= MAX_MOTION_BLOCKS ||
+    blocks.some((block) => block.id === action.id)
+  ) {
+    return unchanged();
+  }
+
+  const actions = blocks.slice(1);
+  const insertionIndex =
+    beforeActionId === null
+      ? actions.length
+      : actions.findIndex((block) => block.id === beforeActionId);
+  if (insertionIndex < 0) return unchanged();
+
+  return [
+    blocks[0],
+    ...actions.slice(0, insertionIndex),
+    action,
+    ...actions.slice(insertionIndex),
+  ];
+}
+
+export function reorderMotionActionBefore(
+  blocks: readonly MotionBlock[],
+  actionId: string,
+  beforeActionId: string | null = null,
+): MotionBlock[] {
+  const unchanged = () => [...blocks];
+  if (!hasSingleLeadingMotionEvent(blocks)) return unchanged();
+
+  const actions = blocks.slice(1);
+  const actionIndex = actions.findIndex((block) => block.id === actionId);
+  if (actionIndex < 0 || beforeActionId === actionId) return unchanged();
+  if (
+    beforeActionId !== null &&
+    !actions.some((block) => block.id === beforeActionId)
+  ) {
+    return unchanged();
+  }
+
+  const action = actions[actionIndex];
+  const remaining = actions.filter((block) => block.id !== actionId);
+  const insertionIndex =
+    beforeActionId === null
+      ? remaining.length
+      : remaining.findIndex((block) => block.id === beforeActionId);
+  if (insertionIndex < 0) return unchanged();
+
+  return [
+    blocks[0],
+    ...remaining.slice(0, insertionIndex),
+    action,
+    ...remaining.slice(insertionIndex),
+  ];
+}
+
 export type ImageAssetMetadata = {
   mime: string;
   size: number;

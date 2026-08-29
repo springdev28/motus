@@ -45,9 +45,11 @@ import {
   hasFileDrag,
   hasPointerDragStarted,
   hasUnpublishedChanges,
+  insertMotionActionBefore,
   parseProjectTags,
   recordProjectHistory,
   removePublicationRevision,
+  reorderMotionActionBefore,
   reorderScenes,
   resetProjectTimeline,
   resolveDraftConflict,
@@ -683,6 +685,151 @@ void test('motion restore keeps one event hat and respects the total block limit
     maximumBlocks.filter((block) => block.kind !== 'scene-enter').length,
     MAX_MOTION_BLOCKS - 1,
   );
+});
+
+void test('insertMotionActionBefore inserts before the first or a middle action', () => {
+  const event = createMotionBlock('scene-enter', 'event');
+  const first = createMotionBlock('move', 'first');
+  const middle = createMotionBlock('rotate', 'middle');
+  const last = createMotionBlock('scale', 'last');
+  const program = [event, first, middle, last];
+
+  assert.deepEqual(
+    insertMotionActionBefore(
+      program,
+      createMotionBlock('wait', 'before-first'),
+      'first',
+    ).map((block) => block.id),
+    ['event', 'before-first', 'first', 'middle', 'last'],
+  );
+  assert.deepEqual(
+    insertMotionActionBefore(
+      program,
+      createMotionBlock('wait', 'before-middle'),
+      'middle',
+    ).map((block) => block.id),
+    ['event', 'first', 'before-middle', 'middle', 'last'],
+  );
+  assert.deepEqual(
+    program.map((block) => block.id),
+    ['event', 'first', 'middle', 'last'],
+  );
+});
+
+void test('insertMotionActionBefore appends when no target is provided', () => {
+  const event = createMotionBlock('scene-enter', 'event');
+  const first = createMotionBlock('move', 'first');
+  const appended = createMotionBlock('wait', 'appended');
+
+  const result = insertMotionActionBefore([event, first], appended);
+
+  assert.deepEqual(
+    result.map((block) => block.id),
+    ['event', 'first', 'appended'],
+  );
+  assert.equal(result[0], event);
+});
+
+void test('insertMotionActionBefore rejects unknown targets and full programs', () => {
+  const event = createMotionBlock('scene-enter', 'event');
+  const first = createMotionBlock('move', 'first');
+  const program = [event, first];
+
+  assert.deepEqual(
+    insertMotionActionBefore(
+      program,
+      createMotionBlock('wait', 'unknown-target'),
+      'missing',
+    ),
+    program,
+  );
+
+  const fullProgram = [
+    event,
+    ...Array.from({ length: MAX_MOTION_BLOCKS - 1 }, (_, index) =>
+      createMotionBlock('wait', `action-${index + 1}`),
+    ),
+  ];
+  const atCap = insertMotionActionBefore(
+    fullProgram,
+    createMotionBlock('move', 'over-cap'),
+  );
+
+  assert.equal(atCap.length, MAX_MOTION_BLOCKS);
+  assert.deepEqual(atCap, fullProgram);
+  assert.equal(
+    atCap.some((block) => block.id === 'over-cap'),
+    false,
+  );
+});
+
+void test('reorderMotionActionBefore moves actions before first, middle, or end', () => {
+  const event = createMotionBlock('scene-enter', 'event');
+  const first = createMotionBlock('move', 'first');
+  const middle = createMotionBlock('rotate', 'middle');
+  const last = createMotionBlock('scale', 'last');
+  const program = [event, first, middle, last];
+
+  assert.deepEqual(
+    reorderMotionActionBefore(program, 'last', 'first').map(
+      (block) => block.id,
+    ),
+    ['event', 'last', 'first', 'middle'],
+  );
+  assert.deepEqual(
+    reorderMotionActionBefore(program, 'first', 'last').map(
+      (block) => block.id,
+    ),
+    ['event', 'middle', 'first', 'last'],
+  );
+  assert.deepEqual(
+    reorderMotionActionBefore(program, 'first').map((block) => block.id),
+    ['event', 'middle', 'last', 'first'],
+  );
+  assert.deepEqual(
+    program.map((block) => block.id),
+    ['event', 'first', 'middle', 'last'],
+  );
+});
+
+void test('reorderMotionActionBefore is unchanged for unknown or self targets', () => {
+  const program = [
+    createMotionBlock('scene-enter', 'event'),
+    createMotionBlock('move', 'first'),
+    createMotionBlock('rotate', 'middle'),
+  ];
+
+  assert.deepEqual(reorderMotionActionBefore(program, 'missing'), program);
+  assert.deepEqual(
+    reorderMotionActionBefore(program, 'first', 'missing'),
+    program,
+  );
+  assert.deepEqual(
+    reorderMotionActionBefore(program, 'first', 'first'),
+    program,
+  );
+});
+
+void test('motion action helpers never move, remove, or duplicate the event', () => {
+  const event = createMotionBlock('scene-enter', 'event');
+  const first = createMotionBlock('move', 'first');
+  const program = [event, first];
+
+  const insertedEvent = insertMotionActionBefore(
+    program,
+    createMotionBlock('scene-enter', 'second-event'),
+  );
+  const movedEvent = reorderMotionActionBefore(program, 'event');
+  const targetedEvent = reorderMotionActionBefore(program, 'first', 'event');
+
+  for (const result of [insertedEvent, movedEvent, targetedEvent]) {
+    assert.deepEqual(result, program);
+    assert.equal(result[0], event);
+    assert.equal(
+      result.filter((block) => block.kind === 'scene-enter').length,
+      1,
+    );
+  }
 });
 
 void test('every exposed block control changes its compiled animation', () => {
