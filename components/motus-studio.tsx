@@ -1987,6 +1987,9 @@ export function MotusStudio() {
                   tabIndex={scene.id === activeScene.id ? 0 : -1}
                   type="button"
                 >
+                  <div aria-hidden="true" className="scene-thumbnail-preview">
+                    <SceneView scene={scene} />
+                  </div>
                   <span>{String(index + 1).padStart(2, '0')}</span>
                   <small>{scene.name}</small>
                 </button>

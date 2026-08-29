@@ -354,9 +354,16 @@
 .scene-strip-copy strong { color: #89828a; font-family: var(--font-mono); font-size: 8px; }
 .scene-tabs { display: flex; flex: 0 0 auto; gap: 8px; }
 .scene-thumbnail { position: relative; width: 52px; height: 72px; flex: 0 0 auto; overflow: hidden; border: 1px solid #bcb5b4; border-radius: 5px; color: white; cursor: pointer; text-align: left; }
+.scene-thumbnail::after { position: absolute; z-index: 1; inset: 42% 0 0; background: linear-gradient(180deg, transparent, rgb(12 10 18 / 82%)); content: ''; pointer-events: none; }
 .scene-thumbnail[data-active] { border-color: #6549df; box-shadow: 0 0 0 2px #8069ef; }
-.scene-thumbnail span { position: absolute; top: 5px; left: 6px; font-family: var(--font-mono); font-size: 7px; }
-.scene-thumbnail small { position: absolute; right: 5px; bottom: 5px; left: 5px; overflow: hidden; font-size: 7px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.scene-thumbnail-preview { position: absolute; inset: 0; pointer-events: none; }
+.scene-thumbnail-preview .artboard { height: 100%; aspect-ratio: auto; box-shadow: none; }
+.scene-thumbnail-preview .artboard-grid { background-size: 6px 6px; }
+.scene-thumbnail-preview .element-shape { box-shadow: 0 0 4px var(--element-fill); }
+.scene-thumbnail-preview .element-text { font-size: 4px; }
+.scene-thumbnail-preview .element-speech { font-size: 3px; box-shadow: 1px 1px 0 rgb(12 10 22 / 45%); }
+.scene-thumbnail span { position: absolute; z-index: 2; top: 5px; left: 6px; font-family: var(--font-mono); font-size: 7px; text-shadow: 0 1px 3px rgb(0 0 0 / 75%); }
+.scene-thumbnail small { position: absolute; z-index: 2; right: 5px; bottom: 5px; left: 5px; overflow: hidden; font-size: 7px; font-weight: 700; text-overflow: ellipsis; text-shadow: 0 1px 3px rgb(0 0 0 / 85%); white-space: nowrap; }
 .scene-action { height: 72px !important; flex: 0 0 auto; border-style: dashed !important; }
 .scene-icon-action { flex: 0 0 auto; }
 
