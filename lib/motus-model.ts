@@ -451,14 +451,39 @@ export function cloneProject(project: MotusProject): MotusProject {
   return structuredClone(project);
 }
 
+export type EditorSelection = {
+  sceneId: string;
+  elementId: string;
+};
+
+export type ProjectHistoryEntry = {
+  project: MotusProject;
+  selection: EditorSelection;
+};
+
 export type ProjectHistoryState = {
-  undoStack: MotusProject[];
+  undoStack: ProjectHistoryEntry[];
   transactionKey: string | null;
 };
+
+export function createProjectHistoryEntry(
+  project: MotusProject,
+  selection: EditorSelection,
+): ProjectHistoryEntry {
+  return {
+    project: cloneProject(project),
+    selection: resolveEditorSelection(
+      project,
+      selection.sceneId,
+      selection.elementId,
+    ),
+  };
+}
 
 export function recordProjectHistory(
   history: ProjectHistoryState,
   project: MotusProject,
+  selection: EditorSelection,
   transactionKey: string | null = null,
   limit = 50,
 ): ProjectHistoryState {
@@ -466,7 +491,9 @@ export function recordProjectHistory(
     transactionKey === null || history.transactionKey !== transactionKey;
   return {
     undoStack: shouldCapture
-      ? [...history.undoStack, cloneProject(project)].slice(-Math.max(1, limit))
+      ? [...history.undoStack, createProjectHistoryEntry(project, selection)].slice(
+          -Math.max(1, limit),
+        )
       : history.undoStack,
     transactionKey,
   };
@@ -508,11 +535,6 @@ export function restoreNewestProject(
   })[0];
   return winner ? { source: winner.source, project: winner.project } : null;
 }
-
-export type EditorSelection = {
-  sceneId: string;
-  elementId: string;
-};
 
 export function resolveEditorSelection(
   project: MotusProject,

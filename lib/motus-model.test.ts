@@ -12,6 +12,7 @@ import {
   createBlankProject,
   constrainElementToCanvas,
   createDefaultProject,
+  createProjectHistoryEntry,
   createProjectBackupFileName,
   createPublicationRevision,
   describeElementForAccessibility,
@@ -86,23 +87,40 @@ void test('comic text is included in concise accessible element labels', () => {
 
 void test('continuous edit gestures occupy one undo history entry', () => {
   const project = createDefaultProject();
+  const selection = { sceneId: 'scene-2', elementId: 'scene-2-speech' };
   let history: ProjectHistoryState = { undoStack: [], transactionKey: null };
 
-  history = recordProjectHistory(history, project, 'project:title');
+  history = recordProjectHistory(history, project, selection, 'project:title');
   project.title = 'S';
-  history = recordProjectHistory(history, project, 'project:title');
+  history = recordProjectHistory(history, project, selection, 'project:title');
   project.title = 'Signal';
 
   assert.equal(history.undoStack.length, 1);
-  assert.equal(history.undoStack[0].title, 'Signal in the Fog');
+  assert.equal(history.undoStack[0].project.title, 'Signal in the Fog');
+  assert.deepEqual(history.undoStack[0].selection, selection);
 
-  history = recordProjectHistory(history, project, 'project:description');
+  history = recordProjectHistory(history, project, selection, 'project:description');
   assert.equal(history.undoStack.length, 2);
-  assert.equal(history.undoStack[1].title, 'Signal');
+  assert.equal(history.undoStack[1].project.title, 'Signal');
 
-  history = recordProjectHistory(history, project);
-  history = recordProjectHistory(history, project);
+  history = recordProjectHistory(history, project, selection);
+  history = recordProjectHistory(history, project, selection);
   assert.equal(history.undoStack.length, 4);
+});
+
+void test('history entries clone projects and repair stale selection', () => {
+  const project = createDefaultProject();
+  const entry = createProjectHistoryEntry(project, {
+    sceneId: 'missing-scene',
+    elementId: 'missing-layer',
+  });
+
+  project.title = 'Changed after capture';
+  assert.equal(entry.project.title, 'Signal in the Fog');
+  assert.deepEqual(entry.selection, {
+    sceneId: 'scene-1',
+    elementId: 'scene-1-speech',
+  });
 });
 
 void test('element geometry is constrained without mutating the source', () => {

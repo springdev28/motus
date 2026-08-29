@@ -67,6 +67,7 @@ import {
   createBlankProject,
   createDefaultProject,
   createElement,
+  createProjectHistoryEntry,
   createProjectBackupFileName,
   createPublicationRevision,
   describeElementForAccessibility,
@@ -90,6 +91,7 @@ import {
   type MotusProject,
   type MotusPublicationRevision,
   type MotusScene,
+  type ProjectHistoryEntry,
   type PublicationVisibility,
 } from '@/lib/motus-model';
 
@@ -384,8 +386,8 @@ export function MotusStudio() {
   const [deletionUndo, setDeletionUndo] = useState<DeletionUndo | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
-  const undoStack = useRef<MotusProject[]>([]);
-  const redoStack = useRef<MotusProject[]>([]);
+  const undoStack = useRef<ProjectHistoryEntry[]>([]);
+  const redoStack = useRef<ProjectHistoryEntry[]>([]);
   const historyTransaction = useRef<string | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
@@ -551,18 +553,19 @@ export function MotusStudio() {
     setIsDirty(true);
     setCanUndo(true);
     setCanRedo(false);
+    const history = recordProjectHistory(
+      {
+        undoStack: undoStack.current,
+        transactionKey: historyTransaction.current,
+      },
+      project,
+      { sceneId: activeScene.id, elementId: selectedElementId },
+      transactionKey,
+    );
+    undoStack.current = history.undoStack;
+    historyTransaction.current = history.transactionKey;
+    redoStack.current = [];
     setProject((current) => {
-      const history = recordProjectHistory(
-        {
-          undoStack: undoStack.current,
-          transactionKey: historyTransaction.current,
-        },
-        current,
-        transactionKey,
-      );
-      undoStack.current = history.undoStack;
-      historyTransaction.current = history.transactionKey;
-      redoStack.current = [];
       const next = cloneProject(current);
       mutate(next);
       next.updatedAt = new Date().toISOString();
@@ -603,14 +606,18 @@ export function MotusStudio() {
     endHistoryTransaction();
     const previous = undoStack.current.pop();
     if (!previous) return;
+    redoStack.current.push(
+      createProjectHistoryEntry(project, {
+        sceneId: activeScene.id,
+        elementId: selectedElementId,
+      }),
+    );
     setCanUndo(undoStack.current.length > 0);
     setCanRedo(true);
     setIsDirty(true);
-    reconcileSelection(previous);
-    setProject((current) => {
-      redoStack.current.push(cloneProject(current));
-      return previous;
-    });
+    setActiveSceneId(previous.selection.sceneId);
+    setSelectedElementId(previous.selection.elementId);
+    setProject(previous.project);
     setNotice('Undid change');
   };
 
@@ -619,14 +626,18 @@ export function MotusStudio() {
     endHistoryTransaction();
     const next = redoStack.current.pop();
     if (!next) return;
+    undoStack.current.push(
+      createProjectHistoryEntry(project, {
+        sceneId: activeScene.id,
+        elementId: selectedElementId,
+      }),
+    );
     setCanUndo(true);
     setCanRedo(redoStack.current.length > 0);
     setIsDirty(true);
-    reconcileSelection(next);
-    setProject((current) => {
-      undoStack.current.push(cloneProject(current));
-      return next;
-    });
+    setActiveSceneId(next.selection.sceneId);
+    setSelectedElementId(next.selection.elementId);
+    setProject(next.project);
     setNotice('Redid change');
   };
 
@@ -770,7 +781,12 @@ export function MotusStudio() {
         setNotice('Imported project could not be saved — current draft kept');
         return;
       }
-      undoStack.current = [cloneProject(project)];
+      undoStack.current = [
+        createProjectHistoryEntry(project, {
+          sceneId: activeScene.id,
+          elementId: selectedElementId,
+        }),
+      ];
       redoStack.current = [];
       endHistoryTransaction();
       setCanUndo(true);
@@ -879,7 +895,13 @@ export function MotusStudio() {
       saved.project,
       'load-saved',
     );
-    undoStack.current = [...undoStack.current, cloneProject(project)].slice(-50);
+    undoStack.current = [
+      ...undoStack.current,
+      createProjectHistoryEntry(project, {
+        sceneId: activeScene.id,
+        elementId: selectedElementId,
+      }),
+    ].slice(-50);
     redoStack.current = [];
     endHistoryTransaction();
     setCanUndo(true);
@@ -919,7 +941,12 @@ export function MotusStudio() {
       return;
     }
 
-    undoStack.current = [cloneProject(project)];
+    undoStack.current = [
+      createProjectHistoryEntry(project, {
+        sceneId: activeScene.id,
+        elementId: selectedElementId,
+      }),
+    ];
     redoStack.current = [];
     endHistoryTransaction();
     setCanUndo(true);
@@ -972,7 +999,13 @@ export function MotusStudio() {
       setNotice('Revision could not be restored');
       return;
     }
-    undoStack.current = [...undoStack.current, cloneProject(project)].slice(-50);
+    undoStack.current = [
+      ...undoStack.current,
+      createProjectHistoryEntry(project, {
+        sceneId: activeScene.id,
+        elementId: selectedElementId,
+      }),
+    ].slice(-50);
     redoStack.current = [];
     endHistoryTransaction();
     setCanUndo(true);
@@ -1006,7 +1039,13 @@ export function MotusStudio() {
 
     const onMove = (pointer: PointerEvent) => {
       if (!moved) {
-        undoStack.current = [...undoStack.current, cloneProject(project)].slice(-50);
+        undoStack.current = [
+          ...undoStack.current,
+          createProjectHistoryEntry(project, {
+            sceneId: activeScene.id,
+            elementId,
+          }),
+        ].slice(-50);
         redoStack.current = [];
         endHistoryTransaction();
         setCanUndo(true);
