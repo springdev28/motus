@@ -1,5 +1,5 @@
-import { MotusStudio } from '@/components/motus-studio';
+import { MotusHome } from '@/components/motus-home';
 
 export default function Home() {
-  return <MotusStudio />;
+  return <MotusHome />;
 }

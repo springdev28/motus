@@ -13,6 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
+import Link from 'next/link';
 import {
   DndContext,
   DragOverlay,
@@ -102,6 +103,11 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from '@/components/ui/native-select';
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from '@/components/ui/resizable';
 import { Textarea } from '@/components/ui/textarea';
 import {
   CANVAS_HEIGHT,
@@ -165,7 +171,6 @@ import {
   resolveEditorSelection,
   resolveReaderSource,
   resolveSelectionAfterElementDeletion,
-  restoreNewestProject,
   restorePublicationToDraft,
   restoreProject,
   restoreProjectWithError,
@@ -190,12 +195,54 @@ import {
   type ProjectHistoryEntry,
   type PublicationVisibility,
 } from '@/lib/motus-model';
-
-const LEGACY_STORAGE_KEY = 'motus.project.v2';
-const DRAFT_SLOT_A_KEY = 'motus.project.slot.a.v4';
-const DRAFT_SLOT_B_KEY = 'motus.project.slot.b.v4';
-const DRAFT_POINTER_KEY = 'motus.project.active-slot.v4';
+import {
+  DRAFT_POINTER_KEY,
+  DRAFT_SLOT_A_KEY,
+  DRAFT_SLOT_B_KEY,
+  readNewestMotusDraft,
+} from '@/lib/motus-draft-storage';
 const MOTUS_LAYER_CLIPBOARD_TYPE = 'application/x-motus-layer';
+const STUDIO_PANEL_LAYOUT_KEY = 'motus.studio.panel-layout.v1';
+
+type StudioPanelLayout = {
+  left: number;
+  center: number;
+  right: number;
+};
+
+type StudioPanelLayouts = Record<'design' | 'motion', StudioPanelLayout>;
+
+const DEFAULT_STUDIO_PANEL_LAYOUTS: StudioPanelLayouts = {
+  design: { left: 16, center: 52, right: 32 },
+  motion: { left: 13, center: 57, right: 30 },
+};
+
+function isStudioPanelLayout(value: unknown): value is StudioPanelLayout {
+  if (!value || typeof value !== 'object') return false;
+  const layout = value as Partial<StudioPanelLayout>;
+  const values = [layout.left, layout.center, layout.right];
+  const total = values.reduce<number>(
+    (sum, candidate) =>
+      sum + (typeof candidate === 'number' ? candidate : Number.NaN),
+    0,
+  );
+  return (
+    values.every(
+      (candidate) =>
+        typeof candidate === 'number' &&
+        Number.isFinite(candidate) &&
+        candidate > 0,
+    ) && Math.abs(total - 100) < 1
+  );
+}
+
+function getStudioGridTemplate(
+  workspace: 'design' | 'motion',
+  layout: StudioPanelLayout,
+) {
+  const centerMinimum = workspace === 'motion' ? '400px' : '340px';
+  return `60px minmax(112px, ${layout.left}fr) minmax(${centerMinimum}, ${layout.center}fr) minmax(260px, ${layout.right}fr)`;
+}
 
 type DeletionUndo = {
   message: string;
@@ -1196,7 +1243,7 @@ export function MotusStudio() {
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
   const [selectedElementId, setSelectedElementId] = useState('scene-1-orb');
   const [inspectorTab, setInspectorTab] = useState<'design' | 'motion'>(
-    'motion',
+    'design',
   );
   const [zoom, setZoom] = useState(100);
   const [fitCanvasWidth, setFitCanvasWidth] = useState(430);
@@ -1206,7 +1253,11 @@ export function MotusStudio() {
   const [previewScope, setPreviewScope] = useState<PreviewScope>('selected');
   const [previewRunning, setPreviewRunning] = useState(false);
   const [mobileStudioPane, setMobileStudioPane] =
-    useState<MobileStudioPane>('blocks');
+    useState<MobileStudioPane>('stage');
+  const [desktopPanelsEnabled, setDesktopPanelsEnabled] = useState(false);
+  const [studioPanelLayouts, setStudioPanelLayouts] =
+    useState<StudioPanelLayouts>(DEFAULT_STUDIO_PANEL_LAYOUTS);
+  const [panelLayoutRevision, setPanelLayoutRevision] = useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
   const [readerMode, setReaderMode] = useState<ReaderMode>('scroll');
@@ -1254,6 +1305,7 @@ export function MotusStudio() {
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const canvasStage = useRef<HTMLDivElement>(null);
+  const studioGrid = useRef<HTMLDivElement>(null);
   const readerScroll = useRef<HTMLDivElement>(null);
   const canvasElementRefs = useRef(new Map<string, HTMLDivElement>());
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -1460,25 +1512,7 @@ export function MotusStudio() {
 
   function readSavedDraft() {
     try {
-      const activeSlot =
-        window.localStorage.getItem(DRAFT_POINTER_KEY) === 'b' ? 'b' : 'a';
-      return restoreNewestProject([
-        {
-          source: 'legacy',
-          value: window.localStorage.getItem(LEGACY_STORAGE_KEY),
-          priority: -1,
-        },
-        {
-          source: 'slot-a',
-          value: window.localStorage.getItem(DRAFT_SLOT_A_KEY),
-          priority: activeSlot === 'a' ? 1 : 0,
-        },
-        {
-          source: 'slot-b',
-          value: window.localStorage.getItem(DRAFT_SLOT_B_KEY),
-          priority: activeSlot === 'b' ? 1 : 0,
-        },
-      ]);
+      return readNewestMotusDraft(window.localStorage);
     } catch {
       setSaveFailed(true);
       setNotice('Browser storage unavailable — export a backup');
@@ -1492,6 +1526,40 @@ export function MotusStudio() {
         window.clearTimeout(deletionUndoTimer.current);
       }
       activePointerCleanup.current?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const desktopQuery = window.matchMedia('(min-width: 901px)');
+    const syncDesktopState = () => {
+      if (active) setDesktopPanelsEnabled(desktopQuery.matches);
+    };
+
+    queueMicrotask(() => {
+      if (!active) return;
+      syncDesktopState();
+      try {
+        const encoded = window.localStorage.getItem(STUDIO_PANEL_LAYOUT_KEY);
+        if (!encoded) return;
+        const saved = JSON.parse(encoded) as Partial<StudioPanelLayouts>;
+        if (
+          isStudioPanelLayout(saved.design) &&
+          isStudioPanelLayout(saved.motion)
+        ) {
+          setStudioPanelLayouts({
+            design: { ...saved.design },
+            motion: { ...saved.motion },
+          });
+        }
+      } catch {
+        // A malformed preference should never prevent the editor from opening.
+      }
+    });
+    desktopQuery.addEventListener('change', syncDesktopState);
+    return () => {
+      active = false;
+      desktopQuery.removeEventListener('change', syncDesktopState);
     };
   }, []);
 
@@ -2679,6 +2747,68 @@ export function MotusStudio() {
     setNotice(`Previewing ${work.title}`);
   };
 
+  useEffect(() => {
+    if (!hydrated) return;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      const parameters = new URLSearchParams(window.location.search);
+      const readerTarget = parameters.get('reader');
+      const catalogTarget = parameters.get('catalog');
+      const newWorkRequested = parameters.get('new') === '1';
+      const requestedWorkValue = parameters.get('work');
+      const requestedWork =
+        requestedWorkValue === null ? Number.NaN : Number(requestedWorkValue);
+
+      if (newWorkRequested) {
+        const saved = readSavedDraft();
+        if (saved) {
+          setNewWorkOpen(true);
+        } else {
+          const blank = createBlankProject(uniqueId('work'), nowIso());
+          if (persistProject(blank, false, false)) {
+            resetEditorHistory();
+            setProject(blank);
+            setIsDirty(false);
+            setActiveSceneId(blank.scenes[0].id);
+            setSelectedElementId('');
+            setInspectorTab('design');
+            setMobileStudioPane('stage');
+            setNotice('Blank work ready');
+          }
+        }
+      } else if (readerTarget === 'draft') {
+        openReader();
+      } else if (
+        catalogTarget === 'works' &&
+        Number.isInteger(requestedWork) &&
+        requestedWork >= 0 &&
+        requestedWork < workCatalog.length
+      ) {
+        openCatalogWork(workCatalog[requestedWork], requestedWork);
+      } else if (catalogTarget === 'works' || catalogTarget === 'motion') {
+        setCatalogTab(catalogTarget);
+        setCatalogOpen(true);
+      }
+
+      if (newWorkRequested || readerTarget || catalogTarget) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('new');
+        cleanUrl.searchParams.delete('reader');
+        cleanUrl.searchParams.delete('catalog');
+        cleanUrl.searchParams.delete('work');
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`,
+        );
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [hydrated, resetEditorHistory]);
+
   const publishRevision = () => {
     if (externalDraftChange) {
       setConflictOpen(true);
@@ -2874,7 +3004,7 @@ export function MotusStudio() {
         newWorkOpen ||
         conflictOpen;
       const insideNativeControl = target?.closest(
-        'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
+        'input, textarea, select, button, a, [role="separator"], [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
       if (event.defaultPrevented || event.isComposing) return;
 
@@ -2919,7 +3049,7 @@ export function MotusStudio() {
     const onKeyUp = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       const insideNativeControl = target?.closest(
-        'input, textarea, select, button, a, [contenteditable="true"], [contenteditable="plaintext-only"]',
+        'input, textarea, select, button, a, [role="separator"], [contenteditable="true"], [contenteditable="plaintext-only"]',
       );
       if (
         !insideNativeControl &&
@@ -3262,6 +3392,63 @@ export function MotusStudio() {
     onPointerUp: endHistoryTransaction,
     value: numericDrafts[key] ?? String(value),
   });
+  const activePanelLayout = studioPanelLayouts[inspectorTab];
+  const studioGridStyle = desktopPanelsEnabled
+    ? ({
+        gridTemplateColumns: getStudioGridTemplate(
+          inspectorTab,
+          activePanelLayout,
+        ),
+      } satisfies CSSProperties)
+    : undefined;
+  const applyStudioPanelLayout = (layout: Record<string, number>) => {
+    const candidate = {
+      left: layout.left,
+      center: layout.center,
+      right: layout.right,
+    };
+    if (!isStudioPanelLayout(candidate)) return;
+    if (studioGrid.current) {
+      studioGrid.current.style.gridTemplateColumns = getStudioGridTemplate(
+        inspectorTab,
+        candidate,
+      );
+    }
+  };
+  const rememberStudioPanelLayout = (layout: Record<string, number>) => {
+    const candidate = {
+      left: layout.left,
+      center: layout.center,
+      right: layout.right,
+    };
+    if (!isStudioPanelLayout(candidate)) return;
+    const nextLayouts = {
+      ...studioPanelLayouts,
+      [inspectorTab]: candidate,
+    };
+    setStudioPanelLayouts(nextLayouts);
+    try {
+      window.localStorage.setItem(
+        STUDIO_PANEL_LAYOUT_KEY,
+        JSON.stringify(nextLayouts),
+      );
+    } catch {
+      // Panel sizing remains usable for this session without local storage.
+    }
+  };
+  const resetStudioPanelLayouts = () => {
+    setStudioPanelLayouts({
+      design: { ...DEFAULT_STUDIO_PANEL_LAYOUTS.design },
+      motion: { ...DEFAULT_STUDIO_PANEL_LAYOUTS.motion },
+    });
+    setPanelLayoutRevision((revision) => revision + 1);
+    try {
+      window.localStorage.removeItem(STUDIO_PANEL_LAYOUT_KEY);
+    } catch {
+      // Resetting the live layout still succeeds without local storage.
+    }
+    setNotice('Panel widths reset');
+  };
 
   return (
     <main className="studio-shell">
@@ -3287,14 +3474,30 @@ export function MotusStudio() {
       />
 
       <header className="studio-topbar">
-        <div className="brand-lockup" aria-label="Motus Studio">
+        <Link
+          aria-label="Motus home"
+          className="brand-lockup"
+          href="/"
+          onClick={(event) => {
+            activePointerCleanup.current?.();
+            endHistoryTransaction();
+            if (externalDraftChange) {
+              event.preventDefault();
+              setConflictOpen(true);
+              return;
+            }
+            if (isDirty && !persistProject(project, false)) {
+              event.preventDefault();
+            }
+          }}
+        >
           <span className="brand-mark" aria-hidden="true">
             <span />
             <span />
           </span>
           <span className="brand-name">MOTUS</span>
           <span className="brand-product">STUDIO</span>
-        </div>
+        </Link>
 
         <Input
           {...textHistoryProps}
@@ -3443,6 +3646,13 @@ export function MotusStudio() {
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="min-h-10 px-2.5"
+                onClick={resetStudioPanelLayouts}
+              >
+                <Maximize2 />
+                Reset panel widths
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="min-h-10 px-2.5"
                 onClick={() => {
                   setCatalogTab('works');
                   setCatalogOpen(true);
@@ -3471,51 +3681,55 @@ export function MotusStudio() {
         </div>
       </header>
 
-      {inspectorTab === 'motion' ? (
-        <nav aria-label="Motion editor panes" className="mobile-pane-switcher">
-          <button
-            aria-controls="blocks-pane"
-            aria-pressed={mobileStudioPane === 'blocks'}
-            className="mobile-pane-tab"
-            id="mobile-pane-blocks"
-            onClick={() => setMobileStudioPane('blocks')}
-            onKeyDown={handleMobilePaneKeyDown}
-            type="button"
-          >
+      <nav aria-label="Studio panes" className="mobile-pane-switcher">
+        <button
+          aria-controls="blocks-pane"
+          aria-pressed={mobileStudioPane === 'blocks'}
+          className="mobile-pane-tab"
+          id="mobile-pane-blocks"
+          onClick={() => setMobileStudioPane('blocks')}
+          onKeyDown={handleMobilePaneKeyDown}
+          type="button"
+        >
+          {inspectorTab === 'motion' ? (
             <Code2 aria-hidden="true" />
-            Blocks
-          </button>
-          <button
-            aria-controls="stage-pane"
-            aria-pressed={mobileStudioPane === 'stage'}
-            className="mobile-pane-tab"
-            id="mobile-pane-stage"
-            onClick={() => setMobileStudioPane('stage')}
-            onKeyDown={handleMobilePaneKeyDown}
-            type="button"
-          >
-            <Maximize2 aria-hidden="true" />
-            Stage
-          </button>
-          <button
-            aria-controls="layers-pane"
-            aria-pressed={mobileStudioPane === 'layers'}
-            className="mobile-pane-tab"
-            id="mobile-pane-layers"
-            onClick={() => setMobileStudioPane('layers')}
-            onKeyDown={handleMobilePaneKeyDown}
-            type="button"
-          >
-            <Layers3 aria-hidden="true" />
-            Layers
-          </button>
-        </nav>
-      ) : null}
+          ) : (
+            <Pencil aria-hidden="true" />
+          )}
+          {inspectorTab === 'motion' ? 'Blocks' : 'Properties'}
+        </button>
+        <button
+          aria-controls="stage-pane"
+          aria-pressed={mobileStudioPane === 'stage'}
+          className="mobile-pane-tab"
+          id="mobile-pane-stage"
+          onClick={() => setMobileStudioPane('stage')}
+          onKeyDown={handleMobilePaneKeyDown}
+          type="button"
+        >
+          <Maximize2 aria-hidden="true" />
+          Stage
+        </button>
+        <button
+          aria-controls="layers-pane"
+          aria-pressed={mobileStudioPane === 'layers'}
+          className="mobile-pane-tab"
+          id="mobile-pane-layers"
+          onClick={() => setMobileStudioPane('layers')}
+          onKeyDown={handleMobilePaneKeyDown}
+          type="button"
+        >
+          <Layers3 aria-hidden="true" />
+          Layers
+        </button>
+      </nav>
 
       <div
         className="studio-grid"
         data-mobile-pane={mobileStudioPane}
         data-workspace={inspectorTab}
+        ref={studioGrid}
+        style={studioGridStyle}
       >
         <aside className="tool-rail" aria-label="Add and edit elements">
           {toolItems.map(({ id, label, icon: Icon }) => (
@@ -3706,8 +3920,8 @@ export function MotusStudio() {
               <Move />
               <span>
                 {inspectorTab === 'motion'
-                  ? 'Stage preview'
-                  : 'Drag, paste, or use arrow keys · Shift moves 10 px'}
+                  ? 'Stage · select layers, then edit their blocks'
+                  : 'Stage · drag, paste, or use arrow keys · Shift moves 10 px'}
               </span>
               <span className="canvas-sr-instructions" id="canvas-instructions">
                 Select a layer on the stage. Use arrow keys to move it one
@@ -4178,11 +4392,31 @@ export function MotusStudio() {
                     ) : null}
                     <div className="property-grid">
                       {(['x', 'y', 'width', 'height'] as const).map(
+                        // oxlint-disable-next-line react/react-compiler -- input callbacks access editor history refs only after user interaction.
                         (property) => (
                           <label key={property}>
                             <span>{property.toUpperCase()}</span>
                             <Input
-                              {...continuousHistoryProps}
+                              {...numericDraftProps(
+                                `element:${selectedElement.id}:${property}`,
+                                Math.round(selectedElement[property]),
+                                (candidate) => {
+                                  if (!Number.isFinite(candidate)) {
+                                    return Math.round(
+                                      selectedElement[property],
+                                    );
+                                  }
+                                  return Math.round(candidate);
+                                },
+                                (candidate) =>
+                                  updateElement(
+                                    selectedElement.id,
+                                    (item) => {
+                                      item[property] = candidate;
+                                    },
+                                    `element:${selectedElement.id}:${property}`,
+                                  ),
+                              )}
                               max={
                                 property === 'x'
                                   ? CANVAS_WIDTH - selectedElement.width
@@ -4199,17 +4433,7 @@ export function MotusStudio() {
                                     ? MIN_ELEMENT_HEIGHT
                                     : 0
                               }
-                              onChange={(event) =>
-                                updateElement(
-                                  selectedElement.id,
-                                  (item) => {
-                                    item[property] = Number(event.target.value);
-                                  },
-                                  `element:${selectedElement.id}:${property}`,
-                                )
-                              }
                               type="number"
-                              value={Math.round(selectedElement[property])}
                             />
                           </label>
                         ),
@@ -4311,13 +4535,26 @@ export function MotusStudio() {
                           }{' '}
                           ms
                         </small>
-                        <Button
-                          onClick={() => startCanvasPreview('selected')}
-                          size="sm"
-                        >
-                          <Flag fill="currentColor" />
-                          Run
-                        </Button>
+                        <div className="block-workspace-actions">
+                          <Button
+                            onClick={() => {
+                              setInspectorTab('design');
+                              setMobileStudioPane('blocks');
+                            }}
+                            size="sm"
+                            variant="outline"
+                          >
+                            <Pencil />
+                            Edit layer
+                          </Button>
+                          <Button
+                            onClick={() => startCanvasPreview('selected')}
+                            size="sm"
+                          >
+                            <Flag fill="currentColor" />
+                            Run
+                          </Button>
+                        </div>
                       </section>
 
                       <section
@@ -5215,6 +5452,44 @@ export function MotusStudio() {
             )}
           </div>
         </aside>
+
+        {desktopPanelsEnabled ? (
+          <div className="studio-resize-layer">
+            <ResizablePanelGroup
+              defaultLayout={activePanelLayout}
+              id={`studio-panels-${inspectorTab}`}
+              key={`${inspectorTab}-${panelLayoutRevision}`}
+              onLayoutChange={applyStudioPanelLayout}
+              onLayoutChanged={rememberStudioPanelLayout}
+              orientation="horizontal"
+            >
+              <ResizablePanel id="left" minSize="112px" />
+              <ResizableHandle
+                aria-label={
+                  inspectorTab === 'motion'
+                    ? 'Resize Layers and Blocks'
+                    : 'Resize Layers and Stage'
+                }
+                className="studio-resize-handle"
+                withHandle
+              />
+              <ResizablePanel
+                id="center"
+                minSize={inspectorTab === 'motion' ? '400px' : '340px'}
+              />
+              <ResizableHandle
+                aria-label={
+                  inspectorTab === 'motion'
+                    ? 'Resize Blocks and Stage'
+                    : 'Resize Stage and Properties'
+                }
+                className="studio-resize-handle"
+                withHandle
+              />
+              <ResizablePanel id="right" minSize="260px" />
+            </ResizablePanelGroup>
+          </div>
+        ) : null}
       </div>
 
       <Dialog onOpenChange={setCatalogOpen} open={catalogOpen}>

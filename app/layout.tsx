@@ -6,22 +6,29 @@ const siteOrigin =
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin),
-  title: 'Motus Studio — Motion comics, made visual',
+  title: 'Motus — Motion comics, made visual',
   description:
     'Build layered motion comics with a visual canvas and editable animation blocks.',
   icons: {
     icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
   },
   openGraph: {
-    title: 'Motus Studio — Motion comics, made visual',
+    title: 'Motus — Motion comics, made visual',
     description:
       'Build layered motion comics with a visual canvas and editable animation blocks.',
-    images: [{ url: '/og.png', width: 1728, height: 910, alt: 'Motus — Motion comics, made visual.' }],
+    images: [
+      {
+        url: '/og.png',
+        width: 1728,
+        height: 910,
+        alt: 'Motus — Motion comics, made visual.',
+      },
+    ],
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Motus Studio — Motion comics, made visual',
+    title: 'Motus — Motion comics, made visual',
     description:
       'Build layered motion comics with a visual canvas and editable animation blocks.',
     images: ['/og.png'],
