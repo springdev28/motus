@@ -20,6 +20,7 @@ export const MAX_PROJECT_TAGS = 8;
 export const MAX_PROJECT_TAG_LENGTH = 40;
 export const MAX_PROJECT_SCENES = 100;
 export const MAX_SCENE_ELEMENTS = 500;
+export const MAX_SCENE_THUMBNAIL_ELEMENTS = 12;
 export const MAX_ELEMENT_TEXT_LENGTH = 50_000;
 export const MAX_PROJECT_HISTORY_ENTRIES = 50;
 export const MAX_PROJECT_HISTORY_BYTES = 24_000_000;
@@ -159,6 +160,24 @@ export type MotusScene = {
   background: string;
   elements: MotusElement[];
 };
+
+export function getSceneThumbnailElements(
+  scene: Pick<MotusScene, 'elements'>,
+  limit = MAX_SCENE_THUMBNAIL_ELEMENTS,
+): MotusElement[] {
+  const visibleElements = scene.elements.filter((element) => element.visible);
+  const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
+  if (safeLimit === 0 || visibleElements.length === 0) return [];
+  if (visibleElements.length <= safeLimit) return [...visibleElements];
+  if (safeLimit === 1) return [visibleElements.at(-1)!];
+
+  return Array.from({ length: safeLimit }, (_, index) => {
+    const sourceIndex = Math.round(
+      (index * (visibleElements.length - 1)) / (safeLimit - 1),
+    );
+    return visibleElements[sourceIndex];
+  });
+}
 
 export type MotusPublicationRevision = {
   id: string;

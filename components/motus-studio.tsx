@@ -73,6 +73,7 @@ import {
   MAX_PROJECT_SCENES,
   MAX_PROJECT_TITLE_LENGTH,
   MAX_SCENE_ELEMENTS,
+  MAX_SCENE_THUMBNAIL_ELEMENTS,
   MIN_ELEMENT_HEIGHT,
   MIN_ELEMENT_WIDTH,
   canAddElementToScene,
@@ -96,6 +97,7 @@ import {
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
+  getSceneThumbnailElements,
   getTabIndexForKey,
   hasFileDrag,
   hasPointerDragStarted,
@@ -232,6 +234,7 @@ function renderElementContent(element: MotusElement) {
 
 type SceneViewProps = {
   scene: MotusScene;
+  elementLimit?: number;
   selectedId?: string;
   playingKey?: number;
   interactive?: boolean;
@@ -252,6 +255,7 @@ type SceneViewProps = {
 
 function SceneView({
   scene,
+  elementLimit,
   selectedId,
   playingKey = 0,
   interactive = false,
@@ -261,11 +265,15 @@ function SceneView({
   onElementRef,
   onPointerAction,
 }: SceneViewProps) {
+  const renderedElements = elementLimit === undefined
+    ? scene.elements
+    : getSceneThumbnailElements(scene, elementLimit);
+
   return (
     <div className="artboard" style={{ background: scene.background }}>
       <div className="artboard-grid" />
       <div className="artboard-horizon" />
-      {scene.elements.map((element) => {
+      {renderedElements.map((element) => {
         if (!element.visible) return null;
         const selected = selectedId === element.id;
         const compiledMotion = compileElementMotion(element);
@@ -1988,7 +1996,10 @@ export function MotusStudio() {
                   type="button"
                 >
                   <div aria-hidden="true" className="scene-thumbnail-preview">
-                    <SceneView scene={scene} />
+                    <SceneView
+                      elementLimit={MAX_SCENE_THUMBNAIL_ELEMENTS}
+                      scene={scene}
+                    />
                   </div>
                   <span>{String(index + 1).padStart(2, '0')}</span>
                   <small>{scene.name}</small>

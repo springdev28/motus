@@ -28,6 +28,7 @@ import {
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
+  getSceneThumbnailElements,
   getTabIndexForKey,
   hasFileDrag,
   hasPointerDragStarted,
@@ -933,6 +934,24 @@ void test('file drags are distinguished from internal text drags', () => {
   assert.equal(hasFileDrag(['text/plain', 'Files']), true);
   assert.equal(hasFileDrag(new Set(['files'])), true);
   assert.equal(hasFileDrag(['text/plain', 'text/html']), false);
+});
+
+void test('scene thumbnails sample visible layers without mutating the scene', () => {
+  const scene = createDefaultProject().scenes[0];
+  scene.elements = Array.from({ length: 20 }, (_, index) => ({
+    ...createElement('shape', index + 1),
+    id: `layer-${index}`,
+  }));
+
+  assert.deepEqual(
+    getSceneThumbnailElements(scene, 5).map((element) => element.id),
+    ['layer-0', 'layer-5', 'layer-10', 'layer-14', 'layer-19'],
+  );
+  assert.equal(scene.elements.length, 20);
+
+  scene.elements[19].visible = false;
+  assert.equal(getSceneThumbnailElements(scene, 1)[0].id, 'layer-18');
+  assert.deepEqual(getSceneThumbnailElements(scene, 0), []);
 });
 
 void test('supported clipboard and drop images select the first safe format', () => {
