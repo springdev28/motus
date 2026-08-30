@@ -132,6 +132,10 @@ import {
 } from '@/components/ui/resizable';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  getDevicePublicationSlug,
+  saveDevicePublication,
+} from '@/lib/motus-device-publication';
+import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   ELEMENT_FONT_PRESETS,
@@ -1644,9 +1648,7 @@ export function ReaderScene({
     if (prefersReducedMotion) {
       queueMicrotask(() => {
         setReducedMotion(true);
-        onEnter?.(index);
       });
-      return;
     }
 
     if (!('IntersectionObserver' in window)) {
@@ -1660,7 +1662,7 @@ export function ReaderScene({
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
-        setPlayingKey(sessionKey || 1);
+        if (!prefersReducedMotion) setPlayingKey(sessionKey || 1);
         onEnter?.(index);
         observer.disconnect();
       },
@@ -3917,6 +3919,12 @@ export function MotusStudio() {
     ) {
       return;
     }
+    const retainedInDeviceLibrary = saveDevicePublication(
+      window.localStorage,
+      project.id,
+      revision,
+    );
+    resetEditorHistory();
     setPublishOpen(false);
     setReaderCatalogProject(null);
     setReaderCatalogFormat(null);
@@ -3927,7 +3935,11 @@ export function MotusStudio() {
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
-    setNotice(`Revision ${revision.revision} published`);
+    setNotice(
+      retainedInDeviceLibrary
+        ? `Revision ${revision.revision} published in this browser`
+        : `Revision ${revision.revision} published · browser library copy unavailable`,
+    );
   };
 
   const restoreRevision = (revision: MotusPublicationRevision) => {
@@ -8010,7 +8022,7 @@ export function MotusStudio() {
               Remove revision {pendingRevisionRemoval?.revision}?
             </DialogTitle>
             <DialogDescription>
-              This removes an older immutable snapshot from this device. The
+              This removes an older immutable snapshot from this browser. The
               current published revision stays untouched.
             </DialogDescription>
           </DialogHeader>
@@ -8102,6 +8114,19 @@ export function MotusStudio() {
               mode="compact"
               tone="dark"
             />
+            {readerSource.mode === 'revision' &&
+            readerSource.revision === project.publishedRevision &&
+            !readerCatalogProject ? (
+              <div className="reader-published-route">
+                <span>
+                  Revision {readerSource.revision} is stored in this browser.
+                </span>
+                <a href={`/read/${getDevicePublicationSlug(project.id)}`}>
+                  Open browser reader
+                  <ArrowRight aria-hidden="true" />
+                </a>
+              </div>
+            ) : null}
           </div>
           {(readerSource.contentRating === 'mature' ||
             readerSource.contentRating === 'adults-only') &&
@@ -8343,9 +8368,8 @@ export function MotusStudio() {
             </div>
 
             <p className="publish-note">
-              This alpha site remains owner-only. Choosing public records your
-              intended visibility in the revision but does not change site
-              access.
+              Nothing is uploaded. This reader edition is stored only in this
+              browser; visibility is recorded as intent.
             </p>
 
             <section

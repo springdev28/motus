@@ -20,6 +20,16 @@ import { ReaderScene } from '@/components/motus-studio';
 import { MotusWorkMetadataSummary } from '@/components/motus-work-metadata-summary';
 import { Button } from '@/components/ui/button';
 import {
+  DEVICE_FOLLOWED_WORKS_STORAGE_KEY,
+  DEVICE_READING_PROGRESS_STORAGE_KEY,
+  getDevicePublicationCover,
+  isDevicePublicationSlug,
+  parseDeviceFollowedSlugs,
+  parseDeviceReadingProgress,
+  resolveDevicePublication,
+  type DevicePublication,
+} from '@/lib/motus-device-publication';
+import {
   MOTUS_LIBRARY_WORKS,
   createCatalogPreviewProject,
   getCatalogPreviewLayout,
@@ -28,26 +38,169 @@ import {
   parseStoredReadingProgress,
   parseStoredSlugSet,
 } from '@/lib/motus-library';
+import type {
+  ContentRating,
+  MotusProject,
+  WorkOrigin,
+  WorkStatus,
+} from '@/lib/motus-model';
 
 const FOLLOWED_WORKS_STORAGE_KEY = 'motus:followed-works:v1';
 const READING_PROGRESS_STORAGE_KEY = 'motus:reading-progress:v1';
 
 type ReaderMode = 'scroll' | 'page';
 
+type ReaderWorkView = {
+  slug: string;
+  title: string;
+  creator: string;
+  creatorHandle: string | null;
+  creatorHref: string | null;
+  description: string;
+  tags: readonly string[];
+  genre: string;
+  formatLabel: string;
+  statusLabel: string;
+  ratingLabel: string;
+  languageLabel: string;
+  originLabel: string;
+  palette: string;
+  accent: string;
+  contentRating: ContentRating;
+  project: MotusProject;
+  previewLayout: ReturnType<typeof getCatalogPreviewLayout> | null;
+  devicePublication: DevicePublication | null;
+};
+
+const RATING_LABELS: Record<ContentRating, string> = {
+  'all-ages': 'General',
+  teen: 'Teen',
+  mature: 'Mature',
+  'adults-only': 'Adults only',
+};
+
+const STATUS_LABELS: Record<WorkStatus, string> = {
+  ongoing: 'Ongoing',
+  completed: 'Completed',
+  hiatus: 'Hiatus',
+};
+
+function getDeviceOriginLabel(
+  origin: WorkOrigin | null,
+  publication: DevicePublication,
+) {
+  const metadata = publication.source.metadata;
+  if (origin === 'original') return 'Original';
+  if (origin === 'motus-fanwork') {
+    return `Motus fanwork${metadata.sourceTitle ? ` · ${metadata.sourceTitle}` : ''}`;
+  }
+  if (origin === 'external-fanwork') {
+    return `External fanwork${metadata.fandom ? ` · ${metadata.fandom}` : ''}`;
+  }
+  return 'Not specified';
+}
+
+function createDeviceReaderWork(
+  publication: DevicePublication,
+): ReaderWorkView {
+  const cover = getDevicePublicationCover(publication);
+  const metadata = publication.source.metadata;
+  return {
+    slug: publication.slug,
+    title: publication.source.title,
+    creator:
+      metadata.contributorNames.join(' · ') || publication.source.creatorName,
+    creatorHandle: null,
+    creatorHref: null,
+    description: publication.source.description,
+    tags: publication.source.tags,
+    genre: metadata.genres[0] ?? 'Motion work',
+    formatLabel: publication.source.format === 'page' ? 'Page' : 'Vertical',
+    statusLabel: metadata.workStatus
+      ? STATUS_LABELS[metadata.workStatus]
+      : `Revision ${publication.revision.revision}`,
+    ratingLabel: RATING_LABELS[publication.source.contentRating],
+    languageLabel: publication.source.language.toLocaleUpperCase(),
+    originLabel: getDeviceOriginLabel(metadata.origin, publication),
+    palette: cover.background,
+    accent: cover.accent,
+    contentRating: publication.source.contentRating,
+    project: publication.project,
+    previewLayout: null,
+    devicePublication: publication,
+  };
+}
+
 export function MotusReader({ slug }: { slug: string }) {
-  const work = getLibraryWork(slug);
+  const catalogWork = getLibraryWork(slug);
   const workIndex = MOTUS_LIBRARY_WORKS.findIndex(
     (candidate) => candidate.slug === slug,
   );
-  const project = useMemo(
-    () =>
-      work ? createCatalogPreviewProject(work, Math.max(workIndex, 0)) : null,
-    [work, workIndex],
+  const expectsDevicePublication = isDevicePublicationSlug(slug);
+  const [devicePublication, setDevicePublication] =
+    useState<DevicePublication | null>(null);
+  const [deviceResolutionComplete, setDeviceResolutionComplete] = useState(
+    () => !expectsDevicePublication,
   );
-  const creator = work ? getLibraryCreatorById(work.creatorId) : null;
-  const previewLayout = work ? getCatalogPreviewLayout(work.format) : null;
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      if (!expectsDevicePublication) {
+        setDevicePublication(null);
+      } else {
+        try {
+          setDevicePublication(
+            resolveDevicePublication(window.localStorage, slug),
+          );
+        } catch {
+          setDevicePublication(null);
+        }
+      }
+      setDeviceResolutionComplete(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [expectsDevicePublication, slug]);
+
+  const work = useMemo<ReaderWorkView | null>(() => {
+    if (catalogWork) {
+      const project = createCatalogPreviewProject(
+        catalogWork,
+        Math.max(workIndex, 0),
+      );
+      const creator = getLibraryCreatorById(catalogWork.creatorId);
+      return {
+        slug: catalogWork.slug,
+        title: catalogWork.title,
+        creator: catalogWork.creator,
+        creatorHandle: catalogWork.creatorHandle,
+        creatorHref: `/creator/${creator?.routeHandle ?? catalogWork.creatorHandle.replace(/^@/, '')}`,
+        description: catalogWork.description,
+        tags: catalogWork.tags,
+        genre: catalogWork.genre,
+        formatLabel: catalogWork.format,
+        statusLabel: catalogWork.status,
+        ratingLabel: catalogWork.rating,
+        languageLabel: catalogWork.language,
+        originLabel:
+          catalogWork.origin === 'fanwork'
+            ? `Fanwork · ${catalogWork.fandom}`
+            : 'Original',
+        palette: catalogWork.palette,
+        accent: catalogWork.accent,
+        contentRating: project.contentRating,
+        project,
+        previewLayout: getCatalogPreviewLayout(catalogWork.format),
+        devicePublication: null,
+      };
+    }
+    return devicePublication ? createDeviceReaderWork(devicePublication) : null;
+  }, [catalogWork, devicePublication, workIndex]);
+  const project = work?.project ?? null;
   const requiresRatingGate =
-    work?.rating === 'Mature' || work?.rating === 'Adults only';
+    work?.contentRating === 'mature' || work?.contentRating === 'adults-only';
   const [mode, setMode] = useState<ReaderMode>(() =>
     project?.format === 'page' ? 'page' : 'scroll',
   );
@@ -92,12 +245,23 @@ export function MotusReader({ slug }: { slug: string }) {
         | ReturnType<typeof parseStoredReadingProgress>[string]
         | undefined;
       try {
-        followedWorks = parseStoredSlugSet(
-          window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
-        );
-        savedProgress = parseStoredReadingProgress(
-          window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
-        )[work.slug];
+        if (work.devicePublication) {
+          followedWorks = parseDeviceFollowedSlugs(
+            window.localStorage.getItem(DEVICE_FOLLOWED_WORKS_STORAGE_KEY),
+            work.devicePublication,
+          );
+          savedProgress = parseDeviceReadingProgress(
+            window.localStorage.getItem(DEVICE_READING_PROGRESS_STORAGE_KEY),
+            work.devicePublication,
+          )[work.slug];
+        } else {
+          followedWorks = parseStoredSlugSet(
+            window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
+          );
+          savedProgress = parseStoredReadingProgress(
+            window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
+          )[work.slug];
+        }
       } catch {
         // Reading remains available when browser storage is unavailable.
         setFollowStorageAvailable(false);
@@ -113,6 +277,7 @@ export function MotusReader({ slug }: { slug: string }) {
         ),
       );
       setFollowed(followedWorks.has(work.slug));
+      setMode(project.format === 'page' ? 'page' : 'scroll');
       setActiveChapterId(resumedChapter.id);
       setPageIndex(resumedIndex);
       setResumeTarget(
@@ -155,12 +320,21 @@ export function MotusReader({ slug }: { slug: string }) {
         Math.max(Math.floor(nextSceneIndex), 0),
         chapter.scenes.length - 1,
       );
-      let progress = {} as ReturnType<typeof parseStoredReadingProgress>;
+      let progress: Record<
+        string,
+        { chapterId: string; sceneId: string; updatedAt: string }
+      > = {};
       let storageReadable = true;
+      const storageKey = work.devicePublication
+        ? DEVICE_READING_PROGRESS_STORAGE_KEY
+        : READING_PROGRESS_STORAGE_KEY;
       try {
-        progress = parseStoredReadingProgress(
-          window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
-        );
+        progress = work.devicePublication
+          ? parseDeviceReadingProgress(
+              window.localStorage.getItem(storageKey),
+              work.devicePublication,
+            )
+          : parseStoredReadingProgress(window.localStorage.getItem(storageKey));
       } catch {
         // A blocked read still allows the current reading session to continue.
         storageReadable = false;
@@ -172,10 +346,7 @@ export function MotusReader({ slug }: { slug: string }) {
       };
       if (!storageReadable) return;
       try {
-        window.localStorage.setItem(
-          READING_PROGRESS_STORAGE_KEY,
-          JSON.stringify(progress),
-        );
+        window.localStorage.setItem(storageKey, JSON.stringify(progress));
       } catch {
         // Reading remains available when browser storage is unavailable.
       }
@@ -234,41 +405,62 @@ export function MotusReader({ slug }: { slug: string }) {
   };
 
   const toggleFollow = () => {
-    if (!work) return;
-    let followedWorks = new Set(followed ? [work.slug] : []);
-    let storageReadable = followStorageAvailable;
-    if (storageReadable) {
-      try {
-        followedWorks = parseStoredSlugSet(
-          window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
-        );
-      } catch {
-        storageReadable = false;
-        setFollowStorageAvailable(false);
-      }
+    if (!work || !hydrated || !followStorageAvailable) return;
+    let followedWorks: Set<string>;
+    const storageKey = work.devicePublication
+      ? DEVICE_FOLLOWED_WORKS_STORAGE_KEY
+      : FOLLOWED_WORKS_STORAGE_KEY;
+    try {
+      followedWorks = work.devicePublication
+        ? parseDeviceFollowedSlugs(
+            window.localStorage.getItem(storageKey),
+            work.devicePublication,
+          )
+        : parseStoredSlugSet(window.localStorage.getItem(storageKey));
+    } catch {
+      setFollowStorageAvailable(false);
+      return;
     }
     if (followedWorks.has(work.slug)) followedWorks.delete(work.slug);
     else followedWorks.add(work.slug);
-    if (storageReadable) {
-      try {
-        window.localStorage.setItem(
-          FOLLOWED_WORKS_STORAGE_KEY,
-          JSON.stringify([...followedWorks]),
-        );
-      } catch {
-        setFollowStorageAvailable(false);
-      }
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify([...followedWorks]),
+      );
+      setFollowed(followedWorks.has(work.slug));
+    } catch {
+      setFollowStorageAvailable(false);
     }
-    setFollowed(followedWorks.has(work.slug));
   };
+
+  if (!deviceResolutionComplete) {
+    return (
+      <main
+        aria-busy="true"
+        aria-live="polite"
+        className="published-reader-missing"
+      >
+        <MotusLogo />
+        <span>OPENING PUBLISHED REVISION</span>
+        <h1>Loading this browser’s saved work…</h1>
+      </main>
+    );
+  }
 
   if (!work || !project || !activeChapter) {
     return (
       <main className="published-reader-missing">
         <MotusLogo />
         <span>WORK NOT FOUND</span>
-        <h1>This story is not in the Motus library.</h1>
-        <a href="/discover">Return to Explore</a>
+        <h1>
+          {expectsDevicePublication
+            ? 'No matching published revision is saved in this browser.'
+            : 'This story is not in the Motus library.'}
+        </h1>
+        <a href={expectsDevicePublication ? '/' : '/discover'}>
+          {expectsDevicePublication ? 'Return home' : 'Return to Explore'}
+        </a>
       </main>
     );
   }
@@ -286,9 +478,12 @@ export function MotusReader({ slug }: { slug: string }) {
   return (
     <div className="published-reader-shell">
       <header className="published-reader-header">
-        <a className="published-reader-back" href="/discover">
+        <a
+          className="published-reader-back"
+          href={work.devicePublication ? '/' : '/discover'}
+        >
           <ArrowLeft aria-hidden="true" />
-          Explore
+          {work.devicePublication ? 'Home' : 'Explore'}
         </a>
         <a aria-label="Motus home" className="published-reader-brand" href="/">
           <MotusLogo />
@@ -298,14 +493,23 @@ export function MotusReader({ slug }: { slug: string }) {
           <Button
             aria-pressed={followed}
             className="published-reader-follow"
+            disabled={!hydrated || !followStorageAvailable}
             onClick={toggleFollow}
             size="sm"
             variant={followed ? 'secondary' : 'default'}
           >
             {followed ? <Check /> : <Heart />}
-            {followed ? 'Following' : 'Follow work'}
+            {work.devicePublication
+              ? followed
+                ? 'Saved to Home'
+                : 'Save to Home'
+              : followed
+                ? 'Following'
+                : 'Follow work'}
           </Button>
-          {!followStorageAvailable ? <small>Session only</small> : null}
+          {!followStorageAvailable ? (
+            <small>Not saved · browser storage unavailable</small>
+          ) : null}
         </div>
       </header>
 
@@ -322,26 +526,41 @@ export function MotusReader({ slug }: { slug: string }) {
           </div>
           <div className="published-reader-copy">
             <span className="published-reader-eyebrow">
-              {work.format} · {work.status}
+              {work.formatLabel} · {work.statusLabel}
             </span>
-            {previewLayout && !previewLayout.native ? (
+            {work.devicePublication ? (
+              <span className="published-reader-device">
+                Published in this browser · revision{' '}
+                {work.devicePublication.revision.revision} ·{' '}
+                {work.devicePublication.source.visibility} intent
+              </span>
+            ) : null}
+            {work.previewLayout && !work.previewLayout.native ? (
               <span className="published-reader-prototype">
-                Prototype preview · {previewLayout.label} layout
+                Prototype preview · {work.previewLayout.label} layout
               </span>
             ) : null}
             <h1>{work.title}</h1>
-            <a
-              href={`/creator/${creator?.routeHandle ?? work.creatorHandle.replace(/^@/, '')}`}
-            >
-              {work.creator} <small>{work.creatorHandle}</small>
-            </a>
+            {work.creatorHref ? (
+              <a href={work.creatorHref}>
+                {work.creator} <small>{work.creatorHandle}</small>
+              </a>
+            ) : (
+              <span className="published-reader-local-creator">
+                by {work.creator}
+              </span>
+            )}
             <p>{work.description}</p>
             <div className="published-reader-tags" aria-label="Work tags">
-              {work.tags.map((tag) => (
-                <a href={`/discover?q=${encodeURIComponent(tag)}`} key={tag}>
-                  #{tag}
-                </a>
-              ))}
+              {work.tags.map((tag) =>
+                work.devicePublication ? (
+                  <span key={tag}>#{tag}</span>
+                ) : (
+                  <a href={`/discover?q=${encodeURIComponent(tag)}`} key={tag}>
+                    #{tag}
+                  </a>
+                ),
+              )}
             </div>
             <MotusWorkMetadataSummary
               contentRating={project.contentRating}
@@ -359,19 +578,15 @@ export function MotusReader({ slug }: { slug: string }) {
             </div>
             <div>
               <dt>Language</dt>
-              <dd>{work.language}</dd>
+              <dd>{work.languageLabel}</dd>
             </div>
             <div>
               <dt>Rating</dt>
-              <dd>{work.rating}</dd>
+              <dd>{work.ratingLabel}</dd>
             </div>
             <div>
               <dt>Origin</dt>
-              <dd>
-                {work.origin === 'fanwork'
-                  ? `Fanwork · ${work.fandom}`
-                  : 'Original'}
-              </dd>
+              <dd>{work.originLabel}</dd>
             </div>
           </dl>
         </section>
@@ -383,20 +598,20 @@ export function MotusReader({ slug }: { slug: string }) {
           >
             <BookOpen aria-hidden="true" />
             <span>
-              {work.rating === 'Adults only'
+              {work.contentRating === 'adults-only'
                 ? 'ADULTS ONLY · 18+'
                 : 'MATURE CONTENT'}
             </span>
             <h2 id="rating-title">Continue to this work?</h2>
             <p>
-              {work.rating === 'Adults only'
+              {work.contentRating === 'adults-only'
                 ? 'The creator restricted this work to adults. Continue only if you are 18 or older.'
                 : 'The creator marked this work as Mature. Continue only when this rating is appropriate for you.'}
             </p>
             <div>
-              <a href="/discover">Go back</a>
+              <a href={work.devicePublication ? '/' : '/discover'}>Go back</a>
               <Button onClick={() => setMatureConfirmed(true)}>
-                {work.rating === 'Adults only'
+                {work.contentRating === 'adults-only'
                   ? 'I am 18 or older — continue'
                   : 'Continue to reader'}
               </Button>
@@ -539,7 +754,11 @@ export function MotusReader({ slug }: { slug: string }) {
                   editable blocks.
                 </span>
               </div>
-              <a href="/studio">Create with Motus</a>
+              <a href="/studio">
+                {work.devicePublication
+                  ? 'Edit in Studio'
+                  : 'Create with Motus'}
+              </a>
             </footer>
           </section>
         )}

@@ -22,20 +22,28 @@ import { MotusLogo } from '@/components/motus-logo';
 import { Button } from '@/components/ui/button';
 import {
   LIBRARY_ENTITY_TYPES,
+  LIBRARY_COMMUNITY_SLUGS,
   LIBRARY_WORK_FORMATS,
+  LIBRARY_WORK_GENRES,
+  LIBRARY_WORK_ORIGINS,
   LIBRARY_WORK_RATINGS,
   LIBRARY_WORK_STATUSES,
   MOTUS_LIBRARY_COMMUNITIES,
   MOTUS_LIBRARY_CREATORS,
   MOTUS_LIBRARY_WORKS,
   filterLibraryWorks,
+  getLibraryCommunityBySlug,
+  getLibraryWorksForCommunity,
   getLibraryWorksForCreator,
   migrateStoredCreatorHandles,
   parseStoredCreatorIdSet,
   parseStoredSlugSet,
   type LibraryCreatorId,
+  type LibraryCommunitySlug,
   type LibraryEntityType,
   type LibraryWorkFormat,
+  type LibraryWorkGenre,
+  type LibraryWorkOrigin,
   type LibraryWorkRating,
   type LibraryWorkStatus,
 } from '@/lib/motus-library';
@@ -81,6 +89,10 @@ export function MotusDiscover() {
   const [format, setFormat] = useState<FilterValue<LibraryWorkFormat>>('All');
   const [status, setStatus] = useState<FilterValue<LibraryWorkStatus>>('All');
   const [rating, setRating] = useState<FilterValue<LibraryWorkRating>>('All');
+  const [genre, setGenre] = useState<FilterValue<LibraryWorkGenre>>('All');
+  const [origin, setOrigin] = useState<FilterValue<LibraryWorkOrigin>>('All');
+  const [communitySlug, setCommunitySlug] =
+    useState<FilterValue<LibraryCommunitySlug>>('All');
   const [followedOnly, setFollowedOnly] = useState(false);
   const [followedWorks, setFollowedWorks] = useState<Set<string>>(new Set());
   const [followedCreators, setFollowedCreators] = useState<
@@ -97,11 +109,34 @@ export function MotusDiscover() {
       const requestedEntity = parameters.get('entity');
       const requestedQuery =
         parameters.get('q') ?? parameters.get('creator') ?? '';
+      const requestedGenre = parameters.get('genre');
+      const requestedOrigin = parameters.get('origin');
+      const requestedCommunity = parameters.get('community');
       if (
         requestedEntity &&
         LIBRARY_ENTITY_TYPES.includes(requestedEntity as LibraryEntityType)
       ) {
         setEntity(requestedEntity as LibraryEntityType);
+      }
+      if (
+        requestedGenre &&
+        LIBRARY_WORK_GENRES.includes(requestedGenre as LibraryWorkGenre)
+      ) {
+        setGenre(requestedGenre as LibraryWorkGenre);
+      }
+      if (
+        requestedOrigin &&
+        LIBRARY_WORK_ORIGINS.includes(requestedOrigin as LibraryWorkOrigin)
+      ) {
+        setOrigin(requestedOrigin as LibraryWorkOrigin);
+      }
+      if (
+        requestedCommunity &&
+        LIBRARY_COMMUNITY_SLUGS.includes(
+          requestedCommunity as LibraryCommunitySlug,
+        )
+      ) {
+        setCommunitySlug(requestedCommunity as LibraryCommunitySlug);
       }
       setQuery(requestedQuery);
       setFollowedOnly(parameters.get('view') === 'following');
@@ -150,10 +185,23 @@ export function MotusDiscover() {
         format,
         status,
         rating,
+        genre,
+        origin,
+        communitySlug,
         followedOnly,
         followedSlugs: followedWorks,
       }).sort((left, right) => right.popularity - left.popularity),
-    [followedOnly, followedWorks, format, query, rating, status],
+    [
+      communitySlug,
+      followedOnly,
+      followedWorks,
+      format,
+      genre,
+      origin,
+      query,
+      rating,
+      status,
+    ],
   );
 
   const creators = useMemo(() => {
@@ -211,6 +259,9 @@ export function MotusDiscover() {
     format !== 'All' ||
     status !== 'All' ||
     rating !== 'All' ||
+    genre !== 'All' ||
+    origin !== 'All' ||
+    communitySlug !== 'All' ||
     followedOnly;
 
   const clearFilters = () => {
@@ -218,6 +269,9 @@ export function MotusDiscover() {
     setFormat('All');
     setStatus('All');
     setRating('All');
+    setGenre('All');
+    setOrigin('All');
+    setCommunitySlug('All');
     setFollowedOnly(false);
   };
 
@@ -352,7 +406,7 @@ export function MotusDiscover() {
                   }
                   value={format}
                 >
-                  <option>All</option>
+                  <option value="All">All formats</option>
                   {LIBRARY_WORK_FORMATS.map((item) => (
                     <option key={item}>{item}</option>
                   ))}
@@ -369,7 +423,7 @@ export function MotusDiscover() {
                   }
                   value={status}
                 >
-                  <option>All</option>
+                  <option value="All">All statuses</option>
                   {LIBRARY_WORK_STATUSES.map((item) => (
                     <option key={item}>{item}</option>
                   ))}
@@ -386,9 +440,61 @@ export function MotusDiscover() {
                   }
                   value={rating}
                 >
-                  <option>All</option>
+                  <option value="All">All ratings</option>
                   {LIBRARY_WORK_RATINGS.map((item) => (
                     <option key={item}>{item}</option>
+                  ))}
+                </select>
+                <ChevronDown aria-hidden="true" />
+              </label>
+              <label>
+                <span>Genre</span>
+                <select
+                  onChange={(event) =>
+                    setGenre(
+                      event.target.value as FilterValue<LibraryWorkGenre>,
+                    )
+                  }
+                  value={genre}
+                >
+                  <option value="All">All genres</option>
+                  {LIBRARY_WORK_GENRES.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+                <ChevronDown aria-hidden="true" />
+              </label>
+              <label>
+                <span>Origin</span>
+                <select
+                  onChange={(event) =>
+                    setOrigin(
+                      event.target.value as FilterValue<LibraryWorkOrigin>,
+                    )
+                  }
+                  value={origin}
+                >
+                  <option value="All">All origins</option>
+                  <option value="original">Original</option>
+                  <option value="fanwork">Fanwork</option>
+                </select>
+                <ChevronDown aria-hidden="true" />
+              </label>
+              <label>
+                <span>Community</span>
+                <select
+                  onChange={(event) =>
+                    setCommunitySlug(
+                      event.target.value as FilterValue<LibraryCommunitySlug>,
+                    )
+                  }
+                  value={communitySlug}
+                >
+                  <option value="All">All communities</option>
+                  {MOTUS_LIBRARY_COMMUNITIES.map((community) => (
+                    <option key={community.slug} value={community.slug}>
+                      {community.name}
+                    </option>
                   ))}
                 </select>
                 <ChevronDown aria-hidden="true" />
@@ -453,6 +559,24 @@ export function MotusDiscover() {
                           </small>
                           <strong>{work.title}</strong>
                           <span>{work.creator}</span>
+                          <span
+                            className="discover-work-taxonomy"
+                            aria-label="Work classification"
+                          >
+                            <i>{work.genre}</i>
+                            <i>
+                              {work.origin === 'original'
+                                ? 'Original'
+                                : `Fanwork · ${work.fandom}`}
+                            </i>
+                            {work.communitySlugs[0] ? (
+                              <i>
+                                {getLibraryCommunityBySlug(
+                                  work.communitySlugs[0],
+                                )?.name ?? work.communitySlugs[0]}
+                              </i>
+                            ) : null}
+                          </span>
                           <p>{work.description}</p>
                           <span className="discover-work-meta">
                             <Clock3 /> {work.updatedLabel}
@@ -570,32 +694,37 @@ export function MotusDiscover() {
               <output>{communities.length} communities</output>
             </header>
             <div className="discover-community-grid">
-              {communities.map((community) => (
-                <article key={community.slug}>
-                  <span
-                    aria-hidden="true"
-                    className="discover-community-mark"
-                    style={{ background: community.palette }}
-                  >
-                    <Users />
-                  </span>
-                  <div>
-                    <span>{community.privacy}</span>
-                    <h3>{community.name}</h3>
-                    <p>{community.description}</p>
-                    <small>
-                      {community.members.toLocaleString()} members ·{' '}
-                      {community.works} works
-                    </small>
-                  </div>
-                  <button
-                    onClick={() => searchFor(community.tags[0])}
-                    type="button"
-                  >
-                    Browse archive <ArrowRight />
-                  </button>
-                </article>
-              ))}
+              {communities.map((community) => {
+                const featuredWorks = getLibraryWorksForCommunity(
+                  community.slug,
+                );
+                return (
+                  <article key={community.slug}>
+                    <span
+                      aria-hidden="true"
+                      className="discover-community-mark"
+                      style={{ background: community.palette }}
+                    >
+                      <Users />
+                    </span>
+                    <div>
+                      <span>{community.privacy}</span>
+                      <h3>{community.name}</h3>
+                      <p>{community.description}</p>
+                      <small>
+                        {community.members.toLocaleString()} members ·{' '}
+                        {community.works} works · {featuredWorks.length}{' '}
+                        featured here
+                      </small>
+                    </div>
+                    <a
+                      href={`/discover?entity=works&community=${community.slug}`}
+                    >
+                      See featured works <ArrowRight />
+                    </a>
+                  </article>
+                );
+              })}
             </div>
           </section>
         ) : null}

@@ -28,6 +28,24 @@ export const LIBRARY_WORK_RATINGS = [
   'Adults only',
 ] as const;
 
+export const LIBRARY_WORK_GENRES = [
+  'Action',
+  'Drama',
+  'Fantasy',
+  'Horror',
+  'Mystery',
+  'Romance',
+  'Science fiction',
+] as const;
+
+export const LIBRARY_WORK_ORIGINS = ['original', 'fanwork'] as const;
+
+export const LIBRARY_COMMUNITY_SLUGS = [
+  'motion-makers',
+  'quiet-panels',
+  'midnight-archive',
+] as const;
+
 export const LIBRARY_ENTITY_TYPES = [
   'works',
   'creators',
@@ -67,9 +85,11 @@ export const LIBRARY_CONTENT_WARNING_LABELS = {
 export type LibraryWorkFormat = (typeof LIBRARY_WORK_FORMATS)[number];
 export type LibraryWorkStatus = (typeof LIBRARY_WORK_STATUSES)[number];
 export type LibraryWorkRating = (typeof LIBRARY_WORK_RATINGS)[number];
+export type LibraryWorkGenre = (typeof LIBRARY_WORK_GENRES)[number];
 export type LibraryEntityType = (typeof LIBRARY_ENTITY_TYPES)[number];
 export type LibraryCreatorId = (typeof LIBRARY_CREATOR_IDS)[number];
-export type LibraryWorkOrigin = 'original' | 'fanwork';
+export type LibraryWorkOrigin = (typeof LIBRARY_WORK_ORIGINS)[number];
+export type LibraryCommunitySlug = (typeof LIBRARY_COMMUNITY_SLUGS)[number];
 export type LibraryContentWarningId =
   (typeof LIBRARY_CONTENT_WARNING_IDS)[number];
 
@@ -103,7 +123,7 @@ export type LibraryCreator = {
   bio: string;
   banner: string;
   accent: string;
-  communitySlugs: readonly string[];
+  communitySlugs: readonly LibraryCommunitySlug[];
   featuredWorkSlug: string;
 };
 
@@ -115,7 +135,8 @@ export type LibraryWork = {
   creatorHandle: string;
   origin: LibraryWorkOrigin;
   contentWarningIds: readonly LibraryContentWarningId[];
-  genre: string;
+  genre: LibraryWorkGenre;
+  communitySlugs: readonly LibraryCommunitySlug[];
   format: LibraryWorkFormat;
   status: LibraryWorkStatus;
   rating: LibraryWorkRating;
@@ -133,7 +154,7 @@ export type LibraryWork = {
 };
 
 export type LibraryCommunity = {
-  slug: string;
+  slug: LibraryCommunitySlug;
   name: string;
   description: string;
   members: number;
@@ -244,6 +265,7 @@ export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
     origin: 'original',
     contentWarningIds: [],
     genre: 'Science fiction',
+    communitySlugs: ['motion-makers'],
     format: 'Vertical scroll',
     status: 'Ongoing',
     rating: 'Teen',
@@ -269,6 +291,7 @@ export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
     origin: 'original',
     contentWarningIds: [],
     genre: 'Fantasy',
+    communitySlugs: ['quiet-panels'],
     format: 'Hybrid',
     status: 'Completed',
     rating: 'General',
@@ -293,6 +316,7 @@ export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
     origin: 'original',
     contentWarningIds: [],
     genre: 'Romance',
+    communitySlugs: ['motion-makers'],
     format: 'Motion comic',
     status: 'Ongoing',
     rating: 'Teen',
@@ -318,6 +342,7 @@ export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
     origin: 'original',
     contentWarningIds: ['horror-imagery', 'distressing-themes'],
     genre: 'Horror',
+    communitySlugs: ['midnight-archive'],
     format: 'Vertical scroll',
     status: 'Hiatus',
     rating: 'Mature',
@@ -342,6 +367,7 @@ export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
     origin: 'original',
     contentWarningIds: [],
     genre: 'Drama',
+    communitySlugs: ['quiet-panels'],
     format: 'Page',
     status: 'Completed',
     rating: 'Teen',
@@ -367,6 +393,7 @@ export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
     origin: 'original',
     contentWarningIds: ['violence'],
     genre: 'Fantasy',
+    communitySlugs: ['motion-makers'],
     format: 'Spread',
     status: 'Ongoing',
     rating: 'Teen',
@@ -391,6 +418,7 @@ export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
     origin: 'original',
     contentWarningIds: [],
     genre: 'Action',
+    communitySlugs: ['motion-makers'],
     format: 'Vertical scroll',
     status: 'Ongoing',
     rating: 'General',
@@ -415,6 +443,7 @@ export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
     origin: 'fanwork',
     contentWarningIds: ['horror-imagery', 'distressing-themes'],
     genre: 'Mystery',
+    communitySlugs: ['midnight-archive'],
     format: 'Motion comic',
     status: 'Completed',
     rating: 'Adults only',
@@ -471,6 +500,9 @@ export type LibraryWorkFilters = {
   format?: LibraryWorkFormat | 'All';
   status?: LibraryWorkStatus | 'All';
   rating?: LibraryWorkRating | 'All';
+  genre?: LibraryWorkGenre | 'All';
+  origin?: LibraryWorkOrigin | 'All';
+  communitySlug?: LibraryCommunitySlug | 'All';
   followedSlugs?: ReadonlySet<string>;
   followedOnly?: boolean;
 };
@@ -502,6 +534,24 @@ export function filterLibraryWorks(
       work.rating !== filters.rating
     )
       return false;
+    if (
+      filters.genre &&
+      filters.genre !== 'All' &&
+      work.genre !== filters.genre
+    )
+      return false;
+    if (
+      filters.origin &&
+      filters.origin !== 'All' &&
+      work.origin !== filters.origin
+    )
+      return false;
+    if (
+      filters.communitySlug &&
+      filters.communitySlug !== 'All' &&
+      !work.communitySlugs.includes(filters.communitySlug)
+    )
+      return false;
     if (filters.followedOnly && !filters.followedSlugs?.has(work.slug))
       return false;
     if (!query) return true;
@@ -515,6 +565,9 @@ export function filterLibraryWorks(
       work.rating,
       work.language,
       work.fandom ?? '',
+      ...work.communitySlugs.map(
+        (slug) => getLibraryCommunityBySlug(slug)?.name ?? '',
+      ),
       ...work.tags,
       ...work.characters,
     ]
@@ -526,6 +579,23 @@ export function filterLibraryWorks(
 
 export function getLibraryWork(slug: string): LibraryWork | null {
   return MOTUS_LIBRARY_WORKS.find((work) => work.slug === slug) ?? null;
+}
+
+export function getLibraryCommunityBySlug(
+  slug: string,
+): LibraryCommunity | null {
+  return (
+    MOTUS_LIBRARY_COMMUNITIES.find((community) => community.slug === slug) ??
+    null
+  );
+}
+
+export function getLibraryWorksForCommunity(
+  slug: LibraryCommunitySlug,
+): LibraryWork[] {
+  return MOTUS_LIBRARY_WORKS.filter((work) =>
+    work.communitySlugs.includes(slug),
+  );
 }
 
 export function getLibraryCreatorByHandle(
@@ -771,6 +841,10 @@ export function createCatalogPreviewProject(
       contentWarnings: work.contentWarningIds.map(
         (warningId) => LIBRARY_CONTENT_WARNING_LABELS[warningId],
       ),
+      communityLinks: work.communitySlugs.flatMap((slug) => {
+        const community = getLibraryCommunityBySlug(slug);
+        return community ? [community.name] : [];
+      }),
     },
     work.creator,
   );

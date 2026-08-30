@@ -1,4 +1,4 @@
-import { restoreNewestProject } from '@/lib/motus-model';
+import { restoreNewestProject } from './motus-model.ts';
 
 export const LEGACY_STORAGE_KEY = 'motus.project.v2';
 export const DRAFT_SLOT_A_KEY = 'motus.project.slot.a.v4';

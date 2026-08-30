@@ -3,8 +3,11 @@ import test from 'node:test';
 
 import {
   LIBRARY_CONTENT_WARNING_IDS,
+  LIBRARY_COMMUNITY_SLUGS,
   LIBRARY_CREATOR_IDS,
   LIBRARY_WORK_FORMATS,
+  LIBRARY_WORK_GENRES,
+  LIBRARY_WORK_ORIGINS,
   LIBRARY_WORK_RATINGS,
   LIBRARY_WORK_STATUSES,
   MOTUS_LIBRARY_COMMUNITIES,
@@ -15,10 +18,12 @@ import {
   getCatalogPreviewLayout,
   getCatalogChapterId,
   getCatalogSceneId,
+  getLibraryCommunityBySlug,
   getLibraryCreatorByHandle,
   getLibraryCreatorById,
   getLibraryCreatorProfile,
   getLibraryWorksForCreator,
+  getLibraryWorksForCommunity,
   getLibraryWork,
   migrateStoredCreatorHandles,
   parseStoredCreatorIdSet,
@@ -121,6 +126,30 @@ void test('library exposes every status and complete source rating taxonomy', ()
   }
 });
 
+void test('library exposes stable genre, origin, and community taxonomies', () => {
+  assert.deepEqual(LIBRARY_WORK_GENRES, [
+    'Action',
+    'Drama',
+    'Fantasy',
+    'Horror',
+    'Mystery',
+    'Romance',
+    'Science fiction',
+  ]);
+  assert.deepEqual(LIBRARY_WORK_ORIGINS, ['original', 'fanwork']);
+  assert.deepEqual(LIBRARY_COMMUNITY_SLUGS, [
+    'motion-makers',
+    'quiet-panels',
+    'midnight-archive',
+  ]);
+  for (const genre of LIBRARY_WORK_GENRES) {
+    assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.genre === genre));
+  }
+  for (const origin of LIBRARY_WORK_ORIGINS) {
+    assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.origin === origin));
+  }
+});
+
 void test('combined filters and normalized search never leak nonmatching works', () => {
   assert.deepEqual(
     filterLibraryWorks(MOTUS_LIBRARY_WORKS, {
@@ -139,6 +168,40 @@ void test('combined filters and normalized search never leak nonmatching works',
       followedSlugs: new Set(),
     }),
     [],
+  );
+});
+
+void test('genre, origin, and community filters compose by exact association', () => {
+  assert.deepEqual(
+    filterLibraryWorks(MOTUS_LIBRARY_WORKS, {
+      genre: 'Science fiction',
+      origin: 'original',
+      communitySlug: 'motion-makers',
+      format: 'Vertical scroll',
+      status: 'Ongoing',
+      rating: 'Teen',
+      followedOnly: true,
+      followedSlugs: new Set(['the-last-signal', 'iron-orchard']),
+    }).map((work) => work.slug),
+    ['the-last-signal'],
+  );
+  assert.deepEqual(
+    filterLibraryWorks(MOTUS_LIBRARY_WORKS, {
+      communitySlug: 'quiet-panels',
+      origin: 'fanwork',
+    }),
+    [],
+  );
+  assert.deepEqual(
+    filterLibraryWorks(MOTUS_LIBRARY_WORKS, {
+      query: 'Motion Makers',
+    }).map((work) => work.slug),
+    [
+      'the-last-signal',
+      'neon-hearts-club',
+      'iron-orchard',
+      'cloudbreak-courier',
+    ],
   );
 });
 
@@ -188,7 +251,7 @@ void test('stable reader projects preserve work metadata and editable motion', (
   assert.deepEqual(project.metadata.characters, [...work.characters]);
   assert.deepEqual(project.metadata.relationships, []);
   assert.deepEqual(project.metadata.themes, []);
-  assert.deepEqual(project.metadata.communityLinks, []);
+  assert.deepEqual(project.metadata.communityLinks, ['Motion Makers']);
   assert.equal(project.language, 'en');
   assert.equal(project.visibility, 'public');
   assert.equal(project.publishedRevision, 0);
@@ -330,6 +393,35 @@ void test('creator profiles derive deterministic portfolios and affiliations', (
     }
   }
   assert.equal(getLibraryCreatorProfile('unknown'), null);
+});
+
+void test('works use explicit deterministic community associations', () => {
+  const expected = {
+    'motion-makers': [
+      'the-last-signal',
+      'neon-hearts-club',
+      'iron-orchard',
+      'cloudbreak-courier',
+    ],
+    'quiet-panels': ['tea-at-the-edge-of-magic', 'paper-moons-of-kyoto'],
+    'midnight-archive': ['the-house-below-rain', 'afterimage-archive'],
+  } as const;
+  const knownCommunities = new Set<string>(LIBRARY_COMMUNITY_SLUGS);
+  for (const work of MOTUS_LIBRARY_WORKS) {
+    assert.equal(new Set(work.communitySlugs).size, work.communitySlugs.length);
+    assert.ok(work.communitySlugs.length > 0);
+    for (const slug of work.communitySlugs) {
+      assert.ok(knownCommunities.has(slug));
+    }
+  }
+  for (const slug of LIBRARY_COMMUNITY_SLUGS) {
+    assert.equal(getLibraryCommunityBySlug(slug)?.slug, slug);
+    assert.deepEqual(
+      getLibraryWorksForCommunity(slug).map((work) => work.slug),
+      [...expected[slug]],
+    );
+  }
+  assert.equal(getLibraryCommunityBySlug('unknown'), null);
 });
 
 void test('work origin and warning metadata use the supported taxonomy', () => {
