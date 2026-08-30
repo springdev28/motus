@@ -261,4 +261,3 @@ Golden JSON fixtures and expected frame/state outputs should be committed before
 5. Resolve the eight decisions above as short architecture/product decision records.
 6. Convert Milestones 1–5 into epics and acceptance-tested stories.
 7. Scaffold the application only after the Milestone 0 exit gate passes.
-

@@ -236,6 +236,7 @@ import {
   restoreProjectWithError,
   shouldAutosaveDraft,
   shouldEndContinuousHistoryOnKey,
+  snapSelectedElementMovement,
   trimProjectHistory,
   transformElementByPointer,
   translateSelectedElements,
@@ -244,6 +245,7 @@ import {
   writeDraftJournal,
   type BounceJump,
   type Easing,
+  type ElementAlignmentGuide,
   type ElementPointerTransformMode,
   type ElementFontPreset,
   type ElementFontWeight,
@@ -1840,6 +1842,7 @@ function animateElementProgram(
 
 type SceneViewProps = {
   scene: MotusScene;
+  alignmentGuides?: readonly ElementAlignmentGuide[];
   elementLimit?: number;
   selectedId?: string;
   selectedIds?: ReadonlySet<string>;
@@ -1875,6 +1878,7 @@ type ReaderTriggerElement = (
 
 function SceneView({
   scene,
+  alignmentGuides = [],
   elementLimit,
   selectedId,
   selectedIds,
@@ -2073,6 +2077,19 @@ function SceneView({
     >
       <div className="artboard-grid" />
       <div className="artboard-horizon" />
+      {alignmentGuides.map((guide, index) => (
+        <span
+          aria-hidden="true"
+          className={`alignment-guide alignment-guide-${guide.axis}`}
+          data-target={guide.target}
+          key={`${guide.axis}-${guide.position}-${index}`}
+          style={
+            guide.axis === 'vertical'
+              ? { left: `${(guide.position / CANVAS_WIDTH) * 100}%` }
+              : { top: `${(guide.position / CANVAS_HEIGHT) * 100}%` }
+          }
+        />
+      ))}
       {renderedElements.map((element) => {
         if (!element.visible) return null;
         const selected =
@@ -2467,6 +2484,9 @@ export function MotusStudio() {
   const [zoom, setZoom] = useState(100);
   const [fitCanvasWidth, setFitCanvasWidth] = useState(430);
   const [imageDropActive, setImageDropActive] = useState(false);
+  const [activeAlignmentGuides, setActiveAlignmentGuides] = useState<
+    ElementAlignmentGuide[]
+  >([]);
   const [canvasPreviewKey, setCanvasPreviewKey] = useState(0);
   const [readerPreviewKey, setReaderPreviewKey] = useState(0);
   const [previewScope, setPreviewScope] = useState<PreviewScope>('selected');
@@ -2564,6 +2584,7 @@ export function MotusStudio() {
 
   const resetTransientCanvasState = useCallback(() => {
     activePointerCleanup.current?.();
+    setActiveAlignmentGuides([]);
     setPreviewRunning(false);
     setCanvasPreviewKey(0);
     setEditingTextElementId(null);
@@ -5133,6 +5154,7 @@ export function MotusStudio() {
     event.preventDefault();
     event.stopPropagation();
     activePointerCleanup.current?.();
+    setActiveAlignmentGuides([]);
     const groupMove =
       mode === 'move' &&
       selectedElementIdSet.has(elementId) &&
@@ -5164,6 +5186,10 @@ export function MotusStudio() {
           },
         ]),
     );
+    const originSceneElements = activeScene.elements.map((item) => {
+      const geometry = originGeometry.get(item.id);
+      return geometry ? { ...item, ...geometry } : item;
+    });
     const pointerId = event.pointerId;
     const pointerType = event.pointerType;
     const startX = event.clientX;
@@ -5185,6 +5211,7 @@ export function MotusStudio() {
       startCanvasX - centerX,
     );
     let moved = false;
+    let aligned = false;
 
     function onMove(pointer: PointerEvent) {
       if (pointer.pointerId !== pointerId) return;
@@ -5217,7 +5244,25 @@ export function MotusStudio() {
       const deltaY = (clientDeltaY / bounds.height) * CANVAS_HEIGHT;
       let transformDeltaX = deltaX;
       let transformDeltaY = deltaY;
-      if (mode === 'rotate') {
+      if (mode === 'move') {
+        if (pointer.altKey) {
+          aligned = false;
+          setActiveAlignmentGuides([]);
+        } else {
+          const snapped = snapSelectedElementMovement(
+            originSceneElements,
+            moveSelectionIds,
+            deltaX,
+            deltaY,
+            (6 / bounds.width) * CANVAS_WIDTH,
+            (6 / bounds.height) * CANVAS_HEIGHT,
+          );
+          transformDeltaX = snapped.deltaX;
+          transformDeltaY = snapped.deltaY;
+          aligned = snapped.guides.length > 0;
+          setActiveAlignmentGuides(snapped.guides);
+        }
+      } else if (mode === 'rotate') {
         const pointerCanvasX =
           ((pointer.clientX - bounds.left) / bounds.width) * CANVAS_WIDTH;
         const pointerCanvasY =
@@ -5241,12 +5286,8 @@ export function MotusStudio() {
         if (groupMove) {
           const scene = findProjectScene(next, activeScene.id)?.scene;
           if (!scene) return current;
-          const originElements = scene.elements.map((item) => {
-            const geometry = originGeometry.get(item.id);
-            return geometry ? { ...item, ...geometry } : item;
-          });
           scene.elements = translateSelectedElements(
-            originElements,
+            originSceneElements,
             moveSelectionIds,
             transformDeltaX,
             transformDeltaY,
@@ -5278,6 +5319,7 @@ export function MotusStudio() {
       if (activePointerCleanup.current === cleanup) {
         activePointerCleanup.current = null;
       }
+      setActiveAlignmentGuides([]);
     }
 
     function finish(pointer?: PointerEvent | Event) {
@@ -5287,9 +5329,9 @@ export function MotusStudio() {
       if (moved) {
         setNotice(
           groupMove
-            ? `${moveSelectionIds.length} unlocked ${moveSelectionIds.length === 1 ? 'layer' : 'layers'} moved`
+            ? `${moveSelectionIds.length} unlocked ${moveSelectionIds.length === 1 ? 'layer' : 'layers'} moved${aligned ? ' · aligned' : ''}`
             : mode === 'move'
-              ? 'Element moved'
+              ? `Element moved${aligned ? ' · aligned' : ''}`
               : mode === 'rotate'
                 ? 'Element rotated'
                 : 'Element resized',
@@ -6612,16 +6654,18 @@ export function MotusStudio() {
                 layer from the current selection. Selected unlocked layers move
                 together. The add/remove buttons in Layers provide the same
                 control on touch screens. Press Control or Command plus A to
-                select every layer. Double-click text, or press Enter on
-                selected text, to edit it directly on the stage. For exact
-                keyboard resizing and rotation, use Width, Height, and Rotation
-                in the Design inspector.
+                select every layer. Dragged layers snap to canvas and visible
+                layer edges and centers; hold Alt or Option for free movement.
+                Double-click text, or press Enter on selected text, to edit it
+                directly on the stage. For exact keyboard resizing and rotation,
+                use Width, Height, and Rotation in the Design inspector.
               </span>
               {inspectorTab === 'design' ? (
                 <>
                   <kbd>⌘/Ctrl+S save</kbd>
                   <kbd>⌘/Ctrl+C/X/V layer</kbd>
                   <kbd>⌫ delete</kbd>
+                  <kbd>⌥ bypass snap</kbd>
                 </>
               ) : null}
             </div>
@@ -6708,6 +6752,7 @@ export function MotusStudio() {
               style={{ width: `${artboardWidth}px` }}
             >
               <SceneView
+                alignmentGuides={activeAlignmentGuides}
                 editingTextId={editingTextElementId}
                 interactive
                 onBeginTextEdit={beginTextEditing}

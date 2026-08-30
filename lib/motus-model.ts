@@ -3855,6 +3855,326 @@ export function translateSelectedElements(
   );
 }
 
+export type ElementVisualBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  centerX: number;
+  centerY: number;
+};
+
+export type ElementAlignmentGuide = {
+  axis: 'vertical' | 'horizontal';
+  position: number;
+  target: 'canvas' | 'element';
+  targetElementId?: string;
+  movingAnchor: 'start' | 'center' | 'end';
+  targetAnchor: 'start' | 'center' | 'end';
+};
+
+export type ElementMovementSnapResult = {
+  deltaX: number;
+  deltaY: number;
+  guides: ElementAlignmentGuide[];
+};
+
+/** Returns the visible axis-aligned bounds of an element after rotation. */
+export function getElementVisualBounds(
+  element: MotusElement,
+): ElementVisualBounds {
+  const x = finite(element.x, 0);
+  const y = finite(element.y, 0);
+  const width = Math.max(0, finite(element.width, 0));
+  const height = Math.max(0, finite(element.height, 0));
+  const centerX = x + width / 2;
+  const centerY = y + height / 2;
+  const radians = (finite(element.rotation, 0) * Math.PI) / 180;
+  const visualHalfWidth =
+    (Math.abs(Math.cos(radians)) * width +
+      Math.abs(Math.sin(radians)) * height) /
+    2;
+  const visualHalfHeight =
+    (Math.abs(Math.sin(radians)) * width +
+      Math.abs(Math.cos(radians)) * height) /
+    2;
+
+  return {
+    left: centerX - visualHalfWidth,
+    top: centerY - visualHalfHeight,
+    right: centerX + visualHalfWidth,
+    bottom: centerY + visualHalfHeight,
+    centerX,
+    centerY,
+  };
+}
+
+type SnapAnchor = ElementAlignmentGuide['movingAnchor'];
+
+type SnapCandidate = {
+  position: number;
+  target: ElementAlignmentGuide['target'];
+  targetElementId?: string;
+  targetAnchor: SnapAnchor;
+  order: number;
+};
+
+type MovingSnapAnchor = {
+  position: number;
+  anchor: SnapAnchor;
+  order: number;
+};
+
+function getBoundedMovementDelta(
+  visualBounds: readonly ElementVisualBounds[],
+  deltaX: number,
+  deltaY: number,
+  canvasWidth: number,
+  canvasHeight: number,
+) {
+  const minimumX = Math.min(...visualBounds.map((bounds) => bounds.left));
+  const minimumY = Math.min(...visualBounds.map((bounds) => bounds.top));
+  const maximumX = Math.max(...visualBounds.map((bounds) => bounds.right));
+  const maximumY = Math.max(...visualBounds.map((bounds) => bounds.bottom));
+  const minimumDeltaX = -minimumX;
+  const maximumDeltaX = canvasWidth - maximumX;
+  const minimumDeltaY = -minimumY;
+  const maximumDeltaY = canvasHeight - maximumY;
+  return {
+    deltaX:
+      minimumDeltaX <= maximumDeltaX
+        ? clamp(Math.round(finite(deltaX, 0)), minimumDeltaX, maximumDeltaX)
+        : 0,
+    deltaY:
+      minimumDeltaY <= maximumDeltaY
+        ? clamp(Math.round(finite(deltaY, 0)), minimumDeltaY, maximumDeltaY)
+        : 0,
+    minimumDeltaX,
+    maximumDeltaX,
+    minimumDeltaY,
+    maximumDeltaY,
+  };
+}
+
+function resolveAxisSnap(
+  axis: ElementAlignmentGuide['axis'],
+  movingAnchors: readonly MovingSnapAnchor[],
+  candidates: readonly SnapCandidate[],
+  baseDelta: number,
+  minimumDelta: number,
+  maximumDelta: number,
+  threshold: number,
+): { delta: number; guide: ElementAlignmentGuide } | null {
+  let best:
+    | {
+        pointerDistance: number;
+        achievedDistance: number;
+        candidate: SnapCandidate;
+        moving: MovingSnapAnchor;
+        delta: number;
+      }
+    | undefined;
+
+  for (const moving of movingAnchors) {
+    for (const candidate of candidates) {
+      const pointerDistance = Math.abs(
+        moving.position + baseDelta - candidate.position,
+      );
+      if (pointerDistance > threshold) continue;
+      const delta = Math.round(
+        baseDelta + candidate.position - (moving.position + baseDelta),
+      );
+      if (delta < minimumDelta || delta > maximumDelta) continue;
+      const achievedDistance = Math.abs(
+        moving.position + delta - candidate.position,
+      );
+      if (
+        best &&
+        (pointerDistance > best.pointerDistance ||
+          (pointerDistance === best.pointerDistance &&
+            (achievedDistance > best.achievedDistance ||
+              (achievedDistance === best.achievedDistance &&
+                (candidate.order > best.candidate.order ||
+                  (candidate.order === best.candidate.order &&
+                    moving.order >= best.moving.order))))))
+      ) {
+        continue;
+      }
+      best = {
+        pointerDistance,
+        achievedDistance,
+        candidate,
+        moving,
+        delta,
+      };
+    }
+  }
+
+  if (!best) return null;
+  return {
+    delta: best.delta,
+    guide: {
+      axis,
+      position: best.candidate.position,
+      target: best.candidate.target,
+      ...(best.candidate.targetElementId
+        ? { targetElementId: best.candidate.targetElementId }
+        : {}),
+      movingAnchor: best.moving.anchor,
+      targetAnchor: best.candidate.targetAnchor,
+    },
+  };
+}
+
+/**
+ * Snaps one movable layer or a movable selection to canvas and visible-layer
+ * edges and centers. The result remains an integer, canvas-bounded shared delta
+ * so selected layers cannot shear apart.
+ */
+export function snapSelectedElementMovement(
+  elements: readonly MotusElement[],
+  selectedElementIds: Iterable<string>,
+  deltaX: number,
+  deltaY: number,
+  thresholdX = 12,
+  thresholdY = thresholdX,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): ElementMovementSnapResult {
+  const selectedIds = new Set(selectedElementIds);
+  const selected = getEditableSelectedElements(elements, selectedIds);
+  if (selected.length === 0) {
+    return { deltaX: 0, deltaY: 0, guides: [] };
+  }
+
+  const safeCanvasWidth = Math.max(0, finite(canvasWidth, CANVAS_WIDTH));
+  const safeCanvasHeight = Math.max(0, finite(canvasHeight, CANVAS_HEIGHT));
+  const visualBounds = selected.map(({ element }) =>
+    getElementVisualBounds(element),
+  );
+  const bounded = getBoundedMovementDelta(
+    visualBounds,
+    deltaX,
+    deltaY,
+    safeCanvasWidth,
+    safeCanvasHeight,
+  );
+  const movingBounds = {
+    left: Math.min(...visualBounds.map((bounds) => bounds.left)),
+    top: Math.min(...visualBounds.map((bounds) => bounds.top)),
+    right: Math.max(...visualBounds.map((bounds) => bounds.right)),
+    bottom: Math.max(...visualBounds.map((bounds) => bounds.bottom)),
+  };
+  const movingHorizontal: MovingSnapAnchor[] = [
+    { position: movingBounds.left, anchor: 'start', order: 0 },
+    {
+      position: (movingBounds.left + movingBounds.right) / 2,
+      anchor: 'center',
+      order: 1,
+    },
+    { position: movingBounds.right, anchor: 'end', order: 2 },
+  ];
+  const movingVertical: MovingSnapAnchor[] = [
+    { position: movingBounds.top, anchor: 'start', order: 0 },
+    {
+      position: (movingBounds.top + movingBounds.bottom) / 2,
+      anchor: 'center',
+      order: 1,
+    },
+    { position: movingBounds.bottom, anchor: 'end', order: 2 },
+  ];
+  const horizontalCandidates: SnapCandidate[] = [
+    { position: 0, target: 'canvas', targetAnchor: 'start', order: 0 },
+    {
+      position: safeCanvasWidth / 2,
+      target: 'canvas',
+      targetAnchor: 'center',
+      order: 1,
+    },
+    {
+      position: safeCanvasWidth,
+      target: 'canvas',
+      targetAnchor: 'end',
+      order: 2,
+    },
+  ];
+  const verticalCandidates: SnapCandidate[] = [
+    { position: 0, target: 'canvas', targetAnchor: 'start', order: 0 },
+    {
+      position: safeCanvasHeight / 2,
+      target: 'canvas',
+      targetAnchor: 'center',
+      order: 1,
+    },
+    {
+      position: safeCanvasHeight,
+      target: 'canvas',
+      targetAnchor: 'end',
+      order: 2,
+    },
+  ];
+  let candidateOrder = 3;
+  for (const element of elements) {
+    if (selectedIds.has(element.id) || !element.visible) continue;
+    const bounds = getElementVisualBounds(element);
+    for (const [position, targetAnchor] of [
+      [bounds.left, 'start'],
+      [bounds.centerX, 'center'],
+      [bounds.right, 'end'],
+    ] as const) {
+      horizontalCandidates.push({
+        position,
+        target: 'element',
+        targetElementId: element.id,
+        targetAnchor,
+        order: candidateOrder,
+      });
+      candidateOrder += 1;
+    }
+    for (const [position, targetAnchor] of [
+      [bounds.top, 'start'],
+      [bounds.centerY, 'center'],
+      [bounds.bottom, 'end'],
+    ] as const) {
+      verticalCandidates.push({
+        position,
+        target: 'element',
+        targetElementId: element.id,
+        targetAnchor,
+        order: candidateOrder,
+      });
+      candidateOrder += 1;
+    }
+  }
+
+  const horizontalSnap = resolveAxisSnap(
+    'vertical',
+    movingHorizontal,
+    horizontalCandidates,
+    bounded.deltaX,
+    bounded.minimumDeltaX,
+    bounded.maximumDeltaX,
+    Math.max(0, finite(thresholdX, 0)),
+  );
+  const verticalSnap = resolveAxisSnap(
+    'horizontal',
+    movingVertical,
+    verticalCandidates,
+    bounded.deltaY,
+    bounded.minimumDeltaY,
+    bounded.maximumDeltaY,
+    Math.max(0, finite(thresholdY, 0)),
+  );
+
+  return {
+    deltaX: horizontalSnap?.delta ?? bounded.deltaX,
+    deltaY: verticalSnap?.delta ?? bounded.deltaY,
+    guides: [horizontalSnap?.guide, verticalSnap?.guide].filter(
+      (guide): guide is ElementAlignmentGuide => Boolean(guide),
+    ),
+  };
+}
+
 /** Aligns editable selected elements to their collective authored bounds. */
 export function alignSelectedElements(
   elements: readonly MotusElement[],

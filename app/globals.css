@@ -4167,6 +4167,35 @@
   );
 }
 
+.alignment-guide {
+  position: absolute;
+  z-index: 8;
+  display: block;
+  background: #ff69d4;
+  box-shadow:
+    0 0 0 1px rgb(45 18 79 / 36%),
+    0 0 8px rgb(255 105 212 / 72%);
+  pointer-events: none;
+}
+.alignment-guide[data-target='canvas'] {
+  background: #e5ff73;
+  box-shadow:
+    0 0 0 1px rgb(45 18 79 / 36%),
+    0 0 8px rgb(229 255 115 / 74%);
+}
+.alignment-guide-vertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+.alignment-guide-horizontal {
+  right: 0;
+  left: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
 .canvas-element {
   position: absolute;
   display: flex;

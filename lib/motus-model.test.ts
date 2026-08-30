@@ -59,6 +59,7 @@ import {
   getDraftSaveStatus,
   getDraftExitAction,
   getEditorShortcut,
+  getElementVisualBounds,
   getDefaultElementTypography,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
@@ -97,6 +98,7 @@ import {
   restoreProjectWithError,
   shouldAutosaveDraft,
   shouldEndContinuousHistoryOnKey,
+  snapSelectedElementMovement,
   trimProjectHistory,
   transformElementByPointer,
   translateSelectedElements,
@@ -558,6 +560,305 @@ void test('selected elements translate with one shared canvas-clamped delta', ()
       { id: 'unselected', x: 300, y: 500 },
     ],
   );
+});
+
+void test('visual element bounds include rotation around the element center', () => {
+  const element = createElement('shape', 1, {
+    id: 'rotated',
+    x: 100,
+    y: 200,
+    width: 120,
+    height: 60,
+    rotation: 90,
+  });
+
+  const bounds = getElementVisualBounds(element);
+
+  assert.ok(Math.abs(bounds.left - 130) < 1e-9);
+  assert.ok(Math.abs(bounds.top - 170) < 1e-9);
+  assert.ok(Math.abs(bounds.right - 190) < 1e-9);
+  assert.ok(Math.abs(bounds.bottom - 290) < 1e-9);
+  assert.deepEqual(
+    { centerX: bounds.centerX, centerY: bounds.centerY },
+    { centerX: 160, centerY: 230 },
+  );
+});
+
+void test('movement snapping aligns a layer center to both canvas axes', () => {
+  const moving = createElement('shape', 1, {
+    id: 'moving',
+    x: 100,
+    y: 200,
+    width: 100,
+    height: 100,
+  });
+
+  const snapped = snapSelectedElementMovement(
+    [moving],
+    [moving.id],
+    386,
+    466,
+    6,
+    6,
+  );
+
+  assert.deepEqual(
+    { deltaX: snapped.deltaX, deltaY: snapped.deltaY },
+    { deltaX: 390, deltaY: 470 },
+  );
+  assert.deepEqual(
+    snapped.guides.map(({ axis, position, target, movingAnchor }) => ({
+      axis,
+      position,
+      target,
+      movingAnchor,
+    })),
+    [
+      {
+        axis: 'vertical',
+        position: CANVAS_WIDTH / 2,
+        target: 'canvas',
+        movingAnchor: 'center',
+      },
+      {
+        axis: 'horizontal',
+        position: CANVAS_HEIGHT / 2,
+        target: 'canvas',
+        movingAnchor: 'center',
+      },
+    ],
+  );
+  const [translated] = translateSelectedElements(
+    [moving],
+    [moving.id],
+    snapped.deltaX,
+    snapped.deltaY,
+  );
+  assert.deepEqual({ x: translated.x, y: translated.y }, { x: 490, y: 670 });
+});
+
+void test('movement snapping uses visible locked peers and ignores hidden peers', () => {
+  const moving = createElement('shape', 1, {
+    id: 'moving',
+    x: 100,
+    y: 100,
+    width: 100,
+    height: 100,
+  });
+  const lockedPeer = createElement('text', 2, {
+    id: 'locked-peer',
+    x: 400,
+    y: 500,
+    width: 200,
+    height: 150,
+    locked: true,
+  });
+  const hiddenPeer = createElement('shape', 3, {
+    id: 'hidden-peer',
+    x: 300,
+    y: 300,
+    width: 100,
+    height: 100,
+    visible: false,
+  });
+
+  const snapped = snapSelectedElementMovement(
+    [moving, hiddenPeer, lockedPeer],
+    [moving.id],
+    196,
+    296,
+    6,
+    6,
+  );
+
+  assert.deepEqual(
+    { deltaX: snapped.deltaX, deltaY: snapped.deltaY },
+    { deltaX: 200, deltaY: 300 },
+  );
+  assert.equal(snapped.guides.length, 2);
+  assert.ok(
+    snapped.guides.every(
+      (guide) =>
+        guide.target === 'element' && guide.targetElementId === lockedPeer.id,
+    ),
+  );
+
+  const hiddenOnly = snapSelectedElementMovement(
+    [moving, hiddenPeer],
+    [moving.id],
+    99,
+    99,
+    4,
+    4,
+  );
+  assert.deepEqual(hiddenOnly, { deltaX: 99, deltaY: 99, guides: [] });
+});
+
+void test('movement snapping stays free outside the threshold', () => {
+  const moving = createElement('shape', 1, {
+    id: 'moving',
+    x: 100,
+    y: 100,
+    width: 100,
+    height: 100,
+  });
+
+  const snapped = snapSelectedElementMovement(
+    [moving],
+    [moving.id],
+    330,
+    300,
+    6,
+    6,
+  );
+
+  assert.deepEqual(snapped, { deltaX: 330, deltaY: 300, guides: [] });
+});
+
+void test('movement snapping resolves equal peer candidates deterministically', () => {
+  const moving = createElement('shape', 1, {
+    id: 'moving',
+    x: 100,
+    y: 100,
+    width: 100,
+    height: 100,
+  });
+  const firstPeer = createElement('shape', 2, {
+    id: 'first-peer',
+    x: 400,
+    y: 600,
+    width: 100,
+    height: 100,
+  });
+  const secondPeer = createElement('shape', 3, {
+    id: 'second-peer',
+    x: 400,
+    y: 900,
+    width: 100,
+    height: 100,
+  });
+
+  const snapped = snapSelectedElementMovement(
+    [moving, firstPeer, secondPeer],
+    [moving.id],
+    198,
+    100,
+    4,
+    4,
+  );
+
+  const verticalGuide = snapped.guides.find(
+    (guide) => guide.axis === 'vertical',
+  );
+  assert.equal(snapped.deltaX, 200);
+  assert.equal(verticalGuide?.targetElementId, firstPeer.id);
+});
+
+void test('group snapping preserves spacing and excludes every moving layer', () => {
+  const first = createElement('shape', 1, {
+    id: 'first',
+    x: 100,
+    y: 100,
+    width: 100,
+    height: 100,
+  });
+  const second = createElement('shape', 2, {
+    id: 'second',
+    x: 300,
+    y: 150,
+    width: 100,
+    height: 100,
+  });
+  const peer = createElement('shape', 3, {
+    id: 'peer',
+    x: 700,
+    y: 600,
+    width: 100,
+    height: 100,
+  });
+  const elements = [first, second, peer];
+
+  const snapped = snapSelectedElementMovement(
+    elements,
+    [first.id, second.id],
+    296,
+    0,
+    6,
+    6,
+  );
+  const moved = translateSelectedElements(
+    elements,
+    [first.id, second.id],
+    snapped.deltaX,
+    snapped.deltaY,
+  );
+
+  assert.equal(snapped.deltaX, 300);
+  assert.equal(snapped.guides[0]?.targetElementId, peer.id);
+  assert.deepEqual(
+    moved.slice(0, 2).map(({ x, y }) => ({ x, y })),
+    [
+      { x: 400, y: 100 },
+      { x: 600, y: 150 },
+    ],
+  );
+  assert.equal(moved[1].x - moved[0].x, second.x - first.x);
+  assert.strictEqual(moved[2], peer);
+});
+
+void test('movement snapping clamps unsafe and non-finite deltas', () => {
+  const moving = createElement('shape', 1, {
+    id: 'moving',
+    x: 900,
+    y: 200,
+    width: 100,
+    height: 100,
+  });
+
+  const clamped = snapSelectedElementMovement(
+    [moving],
+    [moving.id],
+    Number.POSITIVE_INFINITY,
+    Number.NaN,
+    Number.NaN,
+    Number.NaN,
+  );
+
+  assert.equal(clamped.deltaX, 0);
+  assert.equal(clamped.deltaY, 0);
+  assert.ok(Number.isFinite(clamped.deltaX));
+  assert.ok(Number.isFinite(clamped.deltaY));
+});
+
+void test('rotated non-square layers can snap their visible edges to canvas', () => {
+  const rotated = createElement('shape', 1, {
+    id: 'rotated',
+    x: 0,
+    y: 200,
+    width: 400,
+    height: 100,
+    rotation: 90,
+  });
+
+  const snapped = snapSelectedElementMovement(
+    [rotated],
+    [rotated.id],
+    -149,
+    0,
+    2,
+    2,
+  );
+
+  assert.equal(snapped.deltaX, -150);
+  assert.deepEqual(snapped.guides, [
+    {
+      axis: 'vertical',
+      position: 0,
+      target: 'canvas',
+      movingAnchor: 'start',
+      targetAnchor: 'start',
+    },
+  ]);
 });
 
 void test('selected elements align to editable cohort bounds in every direction', () => {
