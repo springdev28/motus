@@ -17,10 +17,11 @@ import { readNewestMotusDraft } from '@/lib/motus-draft-storage';
 import { MotusLogo } from '@/components/motus-logo';
 import {
   MOTUS_LIBRARY_WORKS,
+  createCatalogPreviewProject,
   parseStoredReadingProgress,
   type LibraryReadingProgress,
 } from '@/lib/motus-library';
-import type { MotusProject } from '@/lib/motus-model';
+import { getProjectScenes, type MotusProject } from '@/lib/motus-model';
 
 const discoverWorks = MOTUS_LIBRARY_WORKS.slice(0, 4);
 const READING_PROGRESS_STORAGE_KEY = 'motus:reading-progress:v1';
@@ -61,11 +62,15 @@ export function MotusHome() {
       } catch {
         setDraft({ status: 'empty', project: null });
       }
-      setReadingProgress(
-        parseStoredReadingProgress(
-          window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
-        ),
-      );
+      try {
+        setReadingProgress(
+          parseStoredReadingProgress(
+            window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
+          ),
+        );
+      } catch {
+        setReadingProgress({});
+      }
     });
     return () => {
       active = false;
@@ -74,18 +79,19 @@ export function MotusHome() {
 
   const projectSummary = useMemo(() => {
     if (draft.status !== 'ready') return null;
-    const elements = draft.project.scenes.flatMap((scene) => scene.elements);
+    const scenes = getProjectScenes(draft.project);
+    const elements = scenes.flatMap((scene) => scene.elements);
     return {
       blocks: elements.reduce(
         (total, element) => total + element.motion.blocks.length,
         0,
       ),
       cover:
-        draft.project.scenes.find(
-          (scene) => scene.id === draft.project.coverSceneId,
-        )?.background ??
-        draft.project.scenes[0]?.background ??
+        scenes.find((scene) => scene.id === draft.project.coverSceneId)
+          ?.background ??
+        scenes[0]?.background ??
         '#28223c',
+      scenes: scenes.length,
       layers: elements.length,
     };
   }, [draft]);
@@ -94,7 +100,35 @@ export function MotusHome() {
     () =>
       MOTUS_LIBRARY_WORKS.flatMap((work) => {
         const progress = readingProgress[work.slug];
-        return progress ? [{ work, progress }] : [];
+        if (!progress) return [];
+        const preview = createCatalogPreviewProject(work);
+        const chapterIndex = Math.max(
+          0,
+          preview.chapters.findIndex(
+            (chapter) => chapter.id === progress.chapterId,
+          ),
+        );
+        const chapter = preview.chapters[chapterIndex] ?? preview.chapters[0];
+        const sceneIndex = Math.max(
+          0,
+          chapter.scenes.findIndex((scene) => scene.id === progress.sceneId),
+        );
+        const completedScenes =
+          preview.chapters
+            .slice(0, chapterIndex)
+            .reduce((total, item) => total + item.scenes.length, 0) +
+          sceneIndex +
+          1;
+        return [
+          {
+            work,
+            progress,
+            chapterIndex,
+            sceneIndex,
+            completedScenes,
+            totalScenes: getProjectScenes(preview).length,
+          },
+        ];
       })
         .sort(
           (left, right) =>
@@ -183,7 +217,13 @@ export function MotusHome() {
                   <div>
                     <span>{draft.project.visibility.toUpperCase()} DRAFT</span>
                     <h3>{draft.project.title}</h3>
-                    <p>{draft.project.chapterTitle}</p>
+                    <p>
+                      {draft.project.chapters.length}{' '}
+                      {draft.project.chapters.length === 1
+                        ? 'chapter'
+                        : 'chapters'}{' '}
+                      · {draft.project.format === 'page' ? 'Page' : 'Vertical'}
+                    </p>
                   </div>
                   <a className="home-continue-button" href="/studio">
                     Continue editing <ArrowRight aria-hidden="true" />
@@ -192,7 +232,7 @@ export function MotusHome() {
                 <dl className="home-project-stats">
                   <div>
                     <dt>Scenes</dt>
-                    <dd>{draft.project.scenes.length}</dd>
+                    <dd>{projectSummary.scenes}</dd>
                   </div>
                   <div>
                     <dt>Layers</dt>
@@ -277,39 +317,53 @@ export function MotusHome() {
                 <span>LIBRARY</span>
                 <h2 id="reading-title">Continue reading</h2>
               </div>
-              <a href="/discover?view=following">
+              <a href="/discover">
                 Open Library <ArrowRight aria-hidden="true" />
               </a>
             </header>
             <div className="home-discover-grid home-reading-grid">
-              {continueReading.map(({ work, progress }) => {
-                const completedScenes = Math.min(progress.sceneIndex + 1, 3);
-                return (
-                  <a href={`/read/${work.slug}`} key={work.slug}>
-                    <span
-                      aria-hidden="true"
-                      className="home-work-cover"
-                      style={{ background: work.palette }}
-                    >
-                      <span>{completedScenes} / 3</span>
-                      <BookOpen />
-                    </span>
-                    <span className="home-work-copy">
-                      <strong>{work.title}</strong>
-                      <small>{work.creator}</small>
-                      <em>Resume at scene {completedScenes}</em>
-                    </span>
-                    <progress
-                      aria-label={`${Math.round((completedScenes / 3) * 100)} percent read`}
-                      className="home-reading-progress"
-                      max={100}
-                      value={Math.round((completedScenes / 3) * 100)}
-                    >
-                      {Math.round((completedScenes / 3) * 100)}%
-                    </progress>
-                  </a>
-                );
-              })}
+              {continueReading.map(
+                ({
+                  work,
+                  chapterIndex,
+                  sceneIndex,
+                  completedScenes,
+                  totalScenes,
+                }) => {
+                  const percent = Math.round(
+                    (completedScenes / totalScenes) * 100,
+                  );
+                  return (
+                    <a href={`/read/${work.slug}`} key={work.slug}>
+                      <span
+                        aria-hidden="true"
+                        className="home-work-cover"
+                        style={{ background: work.palette }}
+                      >
+                        <span>
+                          {completedScenes} / {totalScenes}
+                        </span>
+                        <BookOpen />
+                      </span>
+                      <span className="home-work-copy">
+                        <strong>{work.title}</strong>
+                        <small>{work.creator}</small>
+                        <em>
+                          Chapter {chapterIndex + 1} · scene {sceneIndex + 1}
+                        </em>
+                      </span>
+                      <progress
+                        aria-label={`${percent} percent read`}
+                        className="home-reading-progress"
+                        max={100}
+                        value={percent}
+                      >
+                        {percent}%
+                      </progress>
+                    </a>
+                  );
+                },
+              )}
             </div>
           </section>
         ) : null}

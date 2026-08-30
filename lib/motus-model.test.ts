@@ -15,6 +15,9 @@ import {
   MAX_MOTION_BLOCKS,
   MAX_MOTION_EVENT_SOURCE_ID_LENGTH,
   MAX_PROJECT_DESCRIPTION_LENGTH,
+  MAX_PROJECT_CHAPTERS,
+  MAX_PROJECT_SCENES,
+  MAX_PUBLICATION_REVISION,
   MAX_SCENE_NAME_LENGTH,
   MIN_ELEMENT_FONT_SIZE,
   MIN_ELEMENT_HEIGHT,
@@ -29,9 +32,11 @@ import {
   MOTION_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
   alignSelectedElements,
+  canAddChapterToProject,
   canAddElementToScene,
   canAddSceneToProject,
   compileElementMotion,
+  createBlankChapter,
   createBlankProject,
   constrainElementToCanvas,
   createCopyName,
@@ -46,6 +51,7 @@ import {
   detectImageFormat,
   distributeSelectedElements,
   findSupportedImageFile,
+  findProjectScene,
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
@@ -54,6 +60,7 @@ import {
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
+  getProjectScenes,
   getSceneThumbnailElements,
   getTabIndexForKey,
   hasFileDrag,
@@ -68,11 +75,13 @@ import {
   recordProjectHistory,
   removePublicationRevision,
   replaceMotionEvent,
+  reorderChapters,
   reorderMotionActionBefore,
   reorderScenes,
   resetProjectTimeline,
   resolveDraftConflict,
   resolveEditorSelection,
+  resolveProjectCoverSceneId,
   resolveReaderSource,
   resolveSelectionAfterElementDeletion,
   restoreNewestProject,
@@ -113,6 +122,32 @@ const COMPILED_MOTION_CHANNELS = [
   'clipLeft',
 ] as const;
 
+const DEFAULT_CHAPTER_ID = 'signal-in-the-fog-chapter-1';
+
+function createLegacyProject(
+  schemaVersion: 2 | 3 | 4 | 5 | 6,
+  source = createDefaultProject(),
+) {
+  const project = structuredClone(source);
+  const chapter = project.chapters[0];
+  const publications = project.publications.map((publication) => {
+    const { format: _format, chapters, ...legacyPublication } = publication;
+    return {
+      ...legacyPublication,
+      chapterTitle: chapters[0].title,
+      scenes: chapters[0].scenes,
+    };
+  });
+  const { format: _format, chapters: _chapters, ...legacyProject } = project;
+  return {
+    ...legacyProject,
+    schemaVersion,
+    chapterTitle: chapter.title,
+    scenes: chapter.scenes,
+    publications,
+  };
+}
+
 function compiledMotionChannels(frame: CompiledMotionKeyframe) {
   return Object.fromEntries(
     COMPILED_MOTION_CHANNELS.map((channel) => [channel, frame[channel]]),
@@ -125,13 +160,13 @@ void test('blank projects start private with one editable scene', () => {
   assert.equal(project.id, 'work-123');
   assert.equal(project.title, 'Untitled work');
   assert.equal(project.creatorName, 'New creator');
-  assert.equal(project.chapterTitle, 'Chapter 1');
+  assert.equal(project.chapters[0].title, 'Chapter 1');
   assert.equal(project.visibility, 'private');
   assert.equal(project.updatedAt, '2026-08-29T02:00:00.000Z');
-  assert.equal(project.scenes.length, 1);
-  assert.equal(project.scenes[0].id, 'work-123-scene-1');
+  assert.equal(project.chapters[0].scenes.length, 1);
+  assert.equal(project.chapters[0].scenes[0].id, 'work-123-scene-1');
   assert.equal(project.coverSceneId, 'work-123-scene-1');
-  assert.deepEqual(project.scenes[0].elements, []);
+  assert.deepEqual(project.chapters[0].scenes[0].elements, []);
   assert.deepEqual(project.publications, []);
 });
 
@@ -236,8 +271,8 @@ void test('project tags preserve normal comma-separated entry safely', () => {
 
 void test('comic text is included in concise accessible element labels', () => {
   const project = createDefaultProject();
-  const text = project.scenes[0].elements[0];
-  const shape = project.scenes[0].elements[1];
+  const text = project.chapters[0].scenes[0].elements[0];
+  const shape = project.chapters[0].scenes[0].elements[1];
 
   text.text = '  Something moved\n beyond the fog.  ';
   assert.equal(
@@ -256,7 +291,11 @@ void test('comic text is included in concise accessible element labels', () => {
 
 void test('continuous edit gestures occupy one undo history entry', () => {
   const project = createDefaultProject();
-  const selection = { sceneId: 'scene-2', elementId: 'scene-2-speech' };
+  const selection = {
+    chapterId: DEFAULT_CHAPTER_ID,
+    sceneId: 'scene-2',
+    elementId: 'scene-2-speech',
+  };
   let history: ProjectHistoryState = { undoStack: [], transactionKey: null };
 
   history = recordProjectHistory(history, project, selection, 'project:title');
@@ -285,6 +324,7 @@ void test('continuous edit gestures occupy one undo history entry', () => {
 void test('history entries clone projects and repair stale selection', () => {
   const project = createDefaultProject();
   const entry = createProjectHistoryEntry(project, {
+    chapterId: 'missing-chapter',
     sceneId: 'missing-scene',
     elementId: 'missing-layer',
   });
@@ -292,6 +332,7 @@ void test('history entries clone projects and repair stale selection', () => {
   project.title = 'Changed after capture';
   assert.equal(entry.project.title, 'Signal in the Fog');
   assert.deepEqual(entry.selection, {
+    chapterId: DEFAULT_CHAPTER_ID,
     sceneId: 'scene-1',
     elementId: 'scene-1-speech',
   });
@@ -306,6 +347,7 @@ void test('history pruning keeps the newest contiguous snapshots within budget',
   });
   const entries = projects.map((project) =>
     createProjectHistoryEntry(project, {
+      chapterId: DEFAULT_CHAPTER_ID,
       sceneId: 'scene-1',
       elementId: 'scene-1-orb',
     }),
@@ -331,6 +373,7 @@ void test('history pruning keeps the newest contiguous snapshots within budget',
 void test('external draft adoption clears undo, redo, and open transactions', () => {
   const project = createDefaultProject();
   const entry = createProjectHistoryEntry(project, {
+    chapterId: DEFAULT_CHAPTER_ID,
     sceneId: 'scene-1',
     elementId: 'scene-1-orb',
   });
@@ -350,7 +393,7 @@ void test('external draft adoption clears undo, redo, and open transactions', ()
 });
 
 void test('element geometry is constrained without mutating the source', () => {
-  const source = createDefaultProject().scenes[0].elements[0];
+  const source = createDefaultProject().chapters[0].scenes[0].elements[0];
   source.x = -80;
   source.y = 2_000;
   source.width = CANVAS_WIDTH + 400;
@@ -383,7 +426,7 @@ void test('element geometry is constrained without mutating the source', () => {
 });
 
 void test('pointer transforms use a fixed origin and stay inside the canvas', () => {
-  const source = createDefaultProject().scenes[0].elements[0];
+  const source = createDefaultProject().chapters[0].scenes[0].elements[0];
   const moved = transformElementByPointer(source, 'move', -10_000, 10_000);
   const resized = transformElementByPointer(source, 'resize', 10_000, -10_000);
 
@@ -722,7 +765,7 @@ void test('distribution refuses an unsafe proposal instead of clamping members a
 });
 
 void test('directional resize handles anchor the opposite sides', () => {
-  const source = createDefaultProject().scenes[0].elements[0];
+  const source = createDefaultProject().chapters[0].scenes[0].elements[0];
   Object.assign(source, {
     x: 300,
     y: 400,
@@ -757,7 +800,7 @@ void test('directional resize handles anchor the opposite sides', () => {
 });
 
 void test('directional resize follows a rotated element local axis', () => {
-  const source = createDefaultProject().scenes[0].elements[0];
+  const source = createDefaultProject().chapters[0].scenes[0].elements[0];
   Object.assign(source, {
     x: 300,
     y: 400,
@@ -781,7 +824,7 @@ void test('directional resize follows a rotated element local axis', () => {
 });
 
 void test('corner resize clamps each dimension independently at canvas bounds', () => {
-  const source = createDefaultProject().scenes[0].elements[0];
+  const source = createDefaultProject().chapters[0].scenes[0].elements[0];
   Object.assign(source, {
     x: 950,
     y: 200,
@@ -804,7 +847,7 @@ void test('corner resize clamps each dimension independently at canvas bounds', 
 });
 
 void test('west resize preserves its fixed right edge at the canvas boundary', () => {
-  const source = createDefaultProject().scenes[0].elements[0];
+  const source = createDefaultProject().chapters[0].scenes[0].elements[0];
   Object.assign(source, {
     x: 30,
     y: 200,
@@ -826,7 +869,7 @@ void test('west resize preserves its fixed right edge at the canvas boundary', (
 });
 
 void test('pointer rotation wraps cleanly inside the authored range', () => {
-  const source = createDefaultProject().scenes[0].elements[0];
+  const source = createDefaultProject().chapters[0].scenes[0].elements[0];
   source.rotation = 170;
 
   const clockwise = transformElementByPointer(source, 'rotate', 35, 0);
@@ -851,7 +894,7 @@ void test('keyboard nudges use precise and accelerated canvas steps', () => {
   assert.deepEqual(getKeyboardNudgeDelta('ArrowDown', true), { x: 0, y: 10 });
   assert.equal(getKeyboardNudgeDelta('Enter'), null);
 
-  const source = createDefaultProject().scenes[0].elements[0];
+  const source = createDefaultProject().chapters[0].scenes[0].elements[0];
   source.x = 0;
   source.y = 0;
   const delta = getKeyboardNudgeDelta('ArrowUp', true);
@@ -1016,7 +1059,7 @@ void test('continuous controls close undo transactions after adjustment keys', (
 
 void test('restored drafts normalize invalid element geometry', () => {
   const project = createDefaultProject();
-  const element = project.scenes[0].elements[0];
+  const element = project.chapters[0].scenes[0].elements[0];
   element.x = Number.NaN;
   element.y = -20;
   element.width = MIN_ELEMENT_WIDTH - 1;
@@ -1028,11 +1071,11 @@ void test('restored drafts normalize invalid element geometry', () => {
   assert.ok(restored);
   assert.deepEqual(
     {
-      x: restored.scenes[0].elements[0].x,
-      y: restored.scenes[0].elements[0].y,
-      width: restored.scenes[0].elements[0].width,
-      height: restored.scenes[0].elements[0].height,
-      opacity: restored.scenes[0].elements[0].opacity,
+      x: restored.chapters[0].scenes[0].elements[0].x,
+      y: restored.chapters[0].scenes[0].elements[0].y,
+      width: restored.chapters[0].scenes[0].elements[0].width,
+      height: restored.chapters[0].scenes[0].elements[0].height,
+      opacity: restored.chapters[0].scenes[0].elements[0].opacity,
     },
     { x: 0, y: 0, width: MIN_ELEMENT_WIDTH, height: CANVAS_HEIGHT, opacity: 0 },
   );
@@ -1040,8 +1083,8 @@ void test('restored drafts normalize invalid element geometry', () => {
 
 void test('typography survives project and publication round trips', () => {
   const project = createDefaultProject();
-  const title = project.scenes[0].elements[0];
-  const speech = project.scenes[0].elements[2];
+  const title = project.chapters[0].scenes[0].elements[0];
+  const speech = project.chapters[0].scenes[0].elements[2];
   title.typography = {
     fontPreset: 'condensed',
     fontSize: 72,
@@ -1066,30 +1109,28 @@ void test('typography survives project and publication round trips', () => {
   const restored = restoreProject(JSON.stringify(project));
 
   assert.ok(restored);
-  assert.deepEqual(restored.scenes[0].elements[0].typography, title.typography);
   assert.deepEqual(
-    restored.scenes[0].elements[2].typography,
+    restored.chapters[0].scenes[0].elements[0].typography,
+    title.typography,
+  );
+  assert.deepEqual(
+    restored.chapters[0].scenes[0].elements[2].typography,
     speech.typography,
   );
   assert.deepEqual(
-    restored.publications[0].scenes[0].elements[0].typography,
+    restored.publications[0].chapters[0].scenes[0].elements[0].typography,
     title.typography,
   );
   title.typography.fontSize = 100;
   assert.equal(
-    restored.publications[0].scenes[0].elements[0].typography?.fontSize,
+    restored.publications[0].chapters[0].scenes[0].elements[0].typography
+      ?.fontSize,
     72,
   );
 });
 
 void test('version 5 drafts without typography preserve the legacy appearance', () => {
-  const legacy = structuredClone(createDefaultProject()) as unknown as {
-    schemaVersion: number;
-    scenes: Array<{
-      elements: Array<Record<string, unknown>>;
-    }>;
-  };
-  legacy.schemaVersion = 5;
+  const legacy = createLegacyProject(5);
   for (const scene of legacy.scenes) {
     for (const element of scene.elements) delete element.typography;
   }
@@ -1099,43 +1140,51 @@ void test('version 5 drafts without typography preserve the legacy appearance', 
   assert.ok(restored);
   assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
   assert.deepEqual(
-    restored.scenes[0].elements[0].typography,
+    restored.chapters[0].scenes[0].elements[0].typography,
     getDefaultElementTypography('text'),
   );
-  assert.equal(restored.scenes[0].elements[1].typography, undefined);
+  assert.equal(
+    restored.chapters[0].scenes[0].elements[1].typography,
+    undefined,
+  );
   assert.deepEqual(
-    restored.scenes[0].elements[2].typography,
+    restored.chapters[0].scenes[0].elements[2].typography,
     getDefaultElementTypography('speech'),
   );
 });
 
 void test('restored drafts bound editable names and reject invalid name types', () => {
   const project = createDefaultProject();
-  project.scenes[0].name = `  ${'S'.repeat(MAX_SCENE_NAME_LENGTH + 20)}  `;
-  project.scenes[0].elements[0].name = '   ';
-  project.scenes[0].elements[1].name = 'L'.repeat(MAX_ELEMENT_NAME_LENGTH + 20);
+  project.chapters[0].scenes[0].name = `  ${'S'.repeat(MAX_SCENE_NAME_LENGTH + 20)}  `;
+  project.chapters[0].scenes[0].elements[0].name = '   ';
+  project.chapters[0].scenes[0].elements[1].name = 'L'.repeat(
+    MAX_ELEMENT_NAME_LENGTH + 20,
+  );
 
   const restored = restoreProject(JSON.stringify(project));
 
   assert.ok(restored);
-  assert.equal(restored.scenes[0].name.length, MAX_SCENE_NAME_LENGTH);
-  assert.equal(restored.scenes[0].elements[0].name, 'Text');
   assert.equal(
-    restored.scenes[0].elements[1].name.length,
+    restored.chapters[0].scenes[0].name.length,
+    MAX_SCENE_NAME_LENGTH,
+  );
+  assert.equal(restored.chapters[0].scenes[0].elements[0].name, 'Text');
+  assert.equal(
+    restored.chapters[0].scenes[0].elements[1].name.length,
     MAX_ELEMENT_NAME_LENGTH,
   );
 
   const malformed = JSON.parse(JSON.stringify(project));
-  malformed.scenes[0].elements[0].name = 42;
+  malformed.chapters[0].scenes[0].elements[0].name = 42;
   assert.equal(
     restoreProjectWithError(JSON.stringify(malformed)).error,
-    'Project contains an invalid layer name',
+    'Project chapter 1 contains an invalid layer name',
   );
-  malformed.scenes[0].elements[0].name = 'Layer';
-  malformed.scenes[0].name = 42;
+  malformed.chapters[0].scenes[0].elements[0].name = 'Layer';
+  malformed.chapters[0].scenes[0].name = 42;
   assert.equal(
     restoreProjectWithError(JSON.stringify(malformed)).error,
-    'Project contains an invalid scene name',
+    'Project chapter 1 contains an invalid scene name',
   );
 });
 
@@ -1330,11 +1379,11 @@ void test('replaceMotionEvent preserves one fixed hat and every action', () => {
 void test('all six event triggers survive restore and compile without becoming steps', () => {
   for (const eventKind of MOTION_EVENT_BLOCK_KINDS) {
     const project = createDefaultProject();
-    const element = project.scenes[0].elements[0];
+    const element = project.chapters[0].scenes[0].elements[0];
     element.motion.event = 'scene-enter';
     const eventBlock = createMotionBlock(eventKind, `event-${eventKind}`);
     if (eventKind === 'animation-finish') {
-      eventBlock.sourceElementId = project.scenes[0].elements[1].id;
+      eventBlock.sourceElementId = project.chapters[0].scenes[0].elements[1].id;
     }
     element.motion.blocks = [
       eventBlock,
@@ -1343,7 +1392,7 @@ void test('all six event triggers survive restore and compile without becoming s
 
     const restored = restoreProject(JSON.stringify(project));
     assert.ok(restored);
-    const restoredElement = restored.scenes[0].elements[0];
+    const restoredElement = restored.chapters[0].scenes[0].elements[0];
     assert.equal(restoredElement.motion.event, eventKind);
     assert.equal(restoredElement.motion.blocks[0].kind, eventKind);
     const compiled = compileElementMotion(restoredElement);
@@ -1351,7 +1400,7 @@ void test('all six event triggers survive restore and compile without becoming s
     assert.equal(
       compiled.eventSourceElementId,
       eventKind === 'animation-finish'
-        ? project.scenes[0].elements[1].id
+        ? project.chapters[0].scenes[0].elements[1].id
         : null,
     );
     assert.deepEqual(
@@ -1363,8 +1412,8 @@ void test('all six event triggers survive restore and compile without becoming s
 
 void test('animation-finish source IDs normalize safely and remain recoverable', () => {
   const project = createDefaultProject();
-  const element = project.scenes[0].elements[0];
-  const sourceId = project.scenes[0].elements[1].id;
+  const element = project.chapters[0].scenes[0].elements[0];
+  const sourceId = project.chapters[0].scenes[0].elements[1].id;
   const eventBlock = createMotionBlock('animation-finish', 'event-chain');
   eventBlock.sourceElementId = `  ${sourceId}  `;
   element.motion.blocks = [eventBlock, createMotionBlock('move', 'move')];
@@ -1372,39 +1421,38 @@ void test('animation-finish source IDs normalize safely and remain recoverable',
   const restored = restoreProject(JSON.stringify(project));
   assert.ok(restored);
   assert.equal(
-    restored.scenes[0].elements[0].motion.blocks[0].sourceElementId,
+    restored.chapters[0].scenes[0].elements[0].motion.blocks[0].sourceElementId,
     sourceId,
   );
 
   const missing = structuredClone(project);
-  missing.scenes[0].elements[0].motion.blocks[0].sourceElementId =
+  missing.chapters[0].scenes[0].elements[0].motion.blocks[0].sourceElementId =
     'deleted-layer';
   assert.ok(restoreProject(JSON.stringify(missing)));
 
   const malformed = structuredClone(project);
-  malformed.scenes[0].elements[0].motion.blocks[0].sourceElementId = 'x'.repeat(
-    MAX_MOTION_EVENT_SOURCE_ID_LENGTH + 1,
-  );
+  malformed.chapters[0].scenes[0].elements[0].motion.blocks[0].sourceElementId =
+    'x'.repeat(MAX_MOTION_EVENT_SOURCE_ID_LENGTH + 1);
   assert.equal(
     restoreProjectWithError(JSON.stringify(malformed)).error,
     'Project contains an invalid animation source layer',
   );
 
   const oversizedLayerId = structuredClone(project);
-  oversizedLayerId.scenes[0].elements[1].id = 'x'.repeat(
+  oversizedLayerId.chapters[0].scenes[0].elements[1].id = 'x'.repeat(
     MAX_ELEMENT_ID_LENGTH + 1,
   );
-  oversizedLayerId.scenes[0].elements[0].motion.blocks[0].sourceElementId =
+  oversizedLayerId.chapters[0].scenes[0].elements[0].motion.blocks[0].sourceElementId =
     null;
   assert.equal(
     restoreProjectWithError(JSON.stringify(oversizedLayerId)).error,
-    'Project contains an invalid layer',
+    'Project chapter 1 contains an invalid layer',
   );
 });
 
 void test('animation-finish dependency checks reject self and transitive cycles', () => {
   const project = createDefaultProject();
-  const elements = project.scenes[0].elements.slice(0, 3);
+  const elements = project.chapters[0].scenes[0].elements.slice(0, 3);
   const [first, second, third] = elements;
   assert.ok(first && second && third);
 
@@ -1514,7 +1562,7 @@ void test('bounce numeric fields normalize to preview and restore bounds', () =>
 
 void test('normalized block values survive storage and compile without changing', () => {
   const project = createDefaultProject();
-  const element = project.scenes[0].elements[0];
+  const element = project.chapters[0].scenes[0].elements[0];
   const move = createMotionBlock('move', 'round-trip-move');
   const bounce = createMotionBlock('bounce', 'round-trip-bounce');
   const jump = bounce.jumps[0];
@@ -1535,7 +1583,7 @@ void test('normalized block values survive storage and compile without changing'
   const restored = restoreProject(JSON.stringify(project));
 
   assert.ok(restored);
-  const restoredElement = restored.scenes[0].elements[0];
+  const restoredElement = restored.chapters[0].scenes[0].elements[0];
   const restoredMove = restoredElement.motion.blocks[1];
   const restoredBounce = restoredElement.motion.blocks[2];
   assert.deepEqual(
@@ -1562,7 +1610,7 @@ void test('normalized block values survive storage and compile without changing'
 
 void test('motion restore keeps one event hat and respects the total block limit', () => {
   const eventOnlyProject = createDefaultProject();
-  eventOnlyProject.scenes[0].elements[0].motion.blocks = [
+  eventOnlyProject.chapters[0].scenes[0].elements[0].motion.blocks = [
     createMotionBlock('scene-enter', 'event-only'),
   ];
 
@@ -1570,15 +1618,14 @@ void test('motion restore keeps one event hat and respects the total block limit
 
   assert.ok(restoredEventOnly);
   assert.deepEqual(
-    restoredEventOnly.scenes[0].elements[0].motion.blocks.map((block) => [
-      block.id,
-      block.kind,
-    ]),
+    restoredEventOnly.chapters[0].scenes[0].elements[0].motion.blocks.map(
+      (block) => [block.id, block.kind],
+    ),
     [['event-only', 'scene-enter']],
   );
 
   const duplicateEventProject = createDefaultProject();
-  duplicateEventProject.scenes[0].elements[0].motion.blocks = [
+  duplicateEventProject.chapters[0].scenes[0].elements[0].motion.blocks = [
     createMotionBlock('scene-enter', 'event-first'),
     createMotionBlock('wait', 'wait-between-events'),
     createMotionBlock('scene-enter', 'event-duplicate'),
@@ -1590,7 +1637,7 @@ void test('motion restore keeps one event hat and respects the total block limit
 
   assert.ok(restoredDuplicateEvents);
   const normalizedDuplicateBlocks =
-    restoredDuplicateEvents.scenes[0].elements[0].motion.blocks;
+    restoredDuplicateEvents.chapters[0].scenes[0].elements[0].motion.blocks;
   assert.deepEqual(
     normalizedDuplicateBlocks.map((block) => block.kind),
     ['scene-enter', 'wait'],
@@ -1603,10 +1650,10 @@ void test('motion restore keeps one event hat and respects the total block limit
   );
 
   const maximumProgramProject = createDefaultProject();
-  maximumProgramProject.scenes[0].elements[0].motion.blocks = Array.from(
-    { length: MAX_MOTION_BLOCKS },
-    (_, index) => createMotionBlock('wait', `maximum-wait-${index + 1}`),
-  );
+  maximumProgramProject.chapters[0].scenes[0].elements[0].motion.blocks =
+    Array.from({ length: MAX_MOTION_BLOCKS }, (_, index) =>
+      createMotionBlock('wait', `maximum-wait-${index + 1}`),
+    );
 
   const restoredMaximumProgram = restoreProject(
     JSON.stringify(maximumProgramProject),
@@ -1614,7 +1661,7 @@ void test('motion restore keeps one event hat and respects the total block limit
 
   assert.ok(restoredMaximumProgram);
   const maximumBlocks =
-    restoredMaximumProgram.scenes[0].elements[0].motion.blocks;
+    restoredMaximumProgram.chapters[0].scenes[0].elements[0].motion.blocks;
   assert.equal(maximumBlocks.length, MAX_MOTION_BLOCKS);
   assert.equal(maximumBlocks[0].kind, 'scene-enter');
   assert.equal(
@@ -1777,7 +1824,7 @@ void test('every exposed block control changes its compiled animation', () => {
     kind: (typeof MOTION_BLOCK_KINDS)[number],
     mutate?: (block: ReturnType<typeof createMotionBlock>) => void,
   ) => {
-    const element = createDefaultProject().scenes[0].elements[0];
+    const element = createDefaultProject().chapters[0].scenes[0].elements[0];
     const block = createMotionBlock(kind, `controls-${kind}`);
     block.jumps = block.jumps.map((jump, index) => ({
       ...jump,
@@ -1855,7 +1902,7 @@ void test('every catalog numeric boundary survives restore without playback satu
     field: (typeof entry.parameters)[number]['field'],
     value: number,
   ) => {
-    const element = createDefaultProject().scenes[0].elements[0];
+    const element = createDefaultProject().chapters[0].scenes[0].elements[0];
     const block = createMotionBlock(entry.kind, `boundary-${entry.kind}`);
     block[field] = normalizeMotionBlockNumericField(block, field, value);
     element.motion.blocks = [
@@ -1896,14 +1943,16 @@ void test('every catalog numeric boundary survives restore without playback satu
           `restore-${entry.kind}`,
         );
         boundaryBlock[parameter.field] = boundary;
-        project.scenes[0].elements[0].motion.blocks = [
+        project.chapters[0].scenes[0].elements[0].motion.blocks = [
           createMotionBlock('scene-enter', 'restore-event'),
           boundaryBlock,
         ];
         const restored = restoreProject(JSON.stringify(project));
         assert.ok(restored);
         assert.equal(
-          restored.scenes[0].elements[0].motion.blocks[1][parameter.field],
+          restored.chapters[0].scenes[0].elements[0].motion.blocks[1][
+            parameter.field
+          ],
           boundary,
           `${entry.kind}.${parameter.field} boundary must survive restore`,
         );
@@ -1961,7 +2010,7 @@ void test('every addable default block compiles to a finite visible one-step pro
   for (const entry of MOTION_BLOCK_CATALOG) {
     if (isMotionEventBlockKind(entry.kind)) continue;
 
-    const element = createDefaultProject().scenes[0].elements[0];
+    const element = createDefaultProject().chapters[0].scenes[0].elements[0];
     element.opacity = expectedFinalChannels.opacity;
     element.rotation = expectedFinalChannels.rotation;
     const block = createMotionBlock(entry.kind, `compile-${entry.kind}`);
@@ -2031,7 +2080,7 @@ void test('every addable default block compiles to a finite visible one-step pro
 
 void test('path, filter, flip, and transition blocks retain representative semantics', () => {
   const compileDefault = (kind: (typeof MOTION_BLOCK_KINDS)[number]) => {
-    const element = createDefaultProject().scenes[0].elements[0];
+    const element = createDefaultProject().chapters[0].scenes[0].elements[0];
     element.motion.blocks = [
       createMotionBlock('scene-enter', `representative-${kind}-event`),
       createMotionBlock(kind, `representative-${kind}`),
@@ -2096,7 +2145,7 @@ void test('path, filter, flip, and transition blocks retain representative seman
 });
 
 void test('motion compilation is deterministic and produces a final element state', () => {
-  const element = createDefaultProject().scenes[0].elements[0];
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
   element.rotation = 12;
   element.opacity = 0.8;
   element.motion.blocks = [
@@ -2154,7 +2203,7 @@ void test('motion compilation is deterministic and produces a final element stat
 });
 
 void test('default bounce compiles into four editable jumps and lands exactly on canvas', () => {
-  const element = createDefaultProject().scenes[0].elements[0];
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
   const bounce = createMotionBlock('bounce', 'bounce-default');
   bounce.jumps = bounce.jumps.map((jump, index) => ({
     ...jump,
@@ -2200,7 +2249,7 @@ void test('default bounce compiles into four editable jumps and lands exactly on
 });
 
 void test('bounce honors mixed directions, later taller jumps, and a widest final jump', () => {
-  const element = createDefaultProject().scenes[0].elements[0];
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
   element.rotation = 17;
   element.opacity = 0.72;
   const bounce = createMotionBlock('bounce', 'bounce-custom');
@@ -2263,7 +2312,7 @@ void test('bounce honors mixed directions, later taller jumps, and a widest fina
 });
 
 void test('repeated move blocks preserve their own sequential endpoints', () => {
-  const element = createDefaultProject().scenes[0].elements[0];
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
   element.motion.blocks = [
     createMotionBlock('scene-enter', 'event'),
     { ...createMotionBlock('move', 'move-one'), x: 100, y: 0, durationMs: 200 },
@@ -2342,7 +2391,7 @@ void test('shake, float, pulse, and flash are transient and finish at authored s
   ];
 
   for (const { block, changed } of cases) {
-    const element = createDefaultProject().scenes[0].elements[0];
+    const element = createDefaultProject().chapters[0].scenes[0].elements[0];
     element.rotation = 19;
     element.opacity = 0.73;
     element.motion.blocks = [createMotionBlock('scene-enter', 'event'), block];
@@ -2384,7 +2433,7 @@ void test('shake, float, pulse, and flash are transient and finish at authored s
 });
 
 void test('blur and directional reveal both finish fully visible and in focus', () => {
-  const element = createDefaultProject().scenes[0].elements[0];
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
   const blur = {
     ...createMotionBlock('blur', 'blur'),
     value: 26,
@@ -2426,7 +2475,7 @@ void test('blur and directional reveal both finish fully visible and in focus', 
 });
 
 void test('disabled bounce blocks do not affect timing or the compiled path', () => {
-  const element = createDefaultProject().scenes[0].elements[0];
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
   const disabledBounce = createMotionBlock('bounce', 'bounce-disabled');
   disabledBounce.enabled = false;
   disabledBounce.jumps = disabledBounce.jumps.map((jump, index) => ({
@@ -2457,13 +2506,15 @@ void test('disabled bounce blocks do not affect timing or the compiled path', ()
 
 void test('project restore normalizes new motion fields and legacy bounce jumps', () => {
   const candidate = JSON.parse(JSON.stringify(createDefaultProject())) as {
-    scenes: Array<{
-      elements: Array<{
-        motion: { blocks: Array<Record<string, unknown>> };
+    chapters: Array<{
+      scenes: Array<{
+        elements: Array<{
+          motion: { blocks: Array<Record<string, unknown>> };
+        }>;
       }>;
     }>;
   };
-  candidate.scenes[0].elements[0].motion.blocks = [
+  candidate.chapters[0].scenes[0].elements[0].motion.blocks = [
     { id: 'event', kind: 'scene-enter' },
     {
       id: 'legacy-move',
@@ -2496,7 +2547,7 @@ void test('project restore normalizes new motion fields and legacy bounce jumps'
   const restored = restoreProject(JSON.stringify(candidate));
 
   assert.ok(restored);
-  const blocks = restored.scenes[0].elements[0].motion.blocks;
+  const blocks = restored.chapters[0].scenes[0].elements[0].motion.blocks;
   const move = blocks.find((block) => block.id === 'legacy-move');
   const bounce = blocks.find((block) => block.id === 'legacy-bounce');
   const shake = blocks.find((block) => block.id === 'legacy-shake');
@@ -2546,7 +2597,7 @@ void test('project import rejects bounce sequences beyond the editable jump limi
     durationMs: 200,
     easing: 'ease-out' as const,
   }));
-  candidate.scenes[0].elements[0].motion.blocks = [
+  candidate.chapters[0].scenes[0].elements[0].motion.blocks = [
     createMotionBlock('scene-enter', 'event'),
     bounce,
   ];
@@ -2558,46 +2609,260 @@ void test('project import rejects bounce sequences beyond the editable jump limi
 });
 
 void test('version 2 drafts migrate without losing scenes or element motion', () => {
-  const legacy = structuredClone(createDefaultProject()) as unknown as {
-    schemaVersion: number;
-    title: string;
-    scenes: Array<{
-      elements: Array<{
-        motion: Record<string, unknown>;
-      }>;
-    }>;
-  };
-  legacy.schemaVersion = 2;
+  const legacy = createLegacyProject(2);
   legacy.title = 'Recovered legacy draft';
-  delete legacy.scenes[0].elements[0].motion.delayMs;
-  delete legacy.scenes[0].elements[0].motion.fromScale;
-  delete legacy.scenes[0].elements[0].motion.fromRotation;
-  delete legacy.scenes[0].elements[0].motion.schemaVersion;
-  delete legacy.scenes[0].elements[0].motion.event;
+  const legacyMotion = legacy.scenes[0].elements[0].motion as unknown as Record<
+    string,
+    unknown
+  >;
+  delete legacyMotion.delayMs;
+  delete legacyMotion.fromScale;
+  delete legacyMotion.fromRotation;
+  delete legacyMotion.schemaVersion;
+  delete legacyMotion.event;
 
   const restored = restoreProject(JSON.stringify(legacy));
 
   assert.ok(restored);
   assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
   assert.equal(restored.title, 'Recovered legacy draft');
-  assert.equal(restored.scenes.length, 3);
+  assert.equal(restored.chapters[0].scenes.length, 3);
   assert.equal(
-    restored.scenes[0].elements[0].motion.schemaVersion,
+    restored.chapters[0].scenes[0].elements[0].motion.schemaVersion,
     MOTION_SCHEMA_VERSION,
   );
-  assert.equal(restored.scenes[0].elements[0].motion.event, 'scene-enter');
-  assert.equal(restored.scenes[0].elements[0].motion.delayMs, 0);
-  assert.equal(restored.scenes[0].elements[0].motion.fromScale, 1);
-  assert.equal(restored.scenes[0].elements[0].motion.fromRotation, 0);
   assert.equal(
-    restored.scenes[0].elements[0].motion.blocks[0].kind,
+    restored.chapters[0].scenes[0].elements[0].motion.event,
+    'scene-enter',
+  );
+  assert.equal(restored.chapters[0].scenes[0].elements[0].motion.delayMs, 0);
+  assert.equal(restored.chapters[0].scenes[0].elements[0].motion.fromScale, 1);
+  assert.equal(
+    restored.chapters[0].scenes[0].elements[0].motion.fromRotation,
+    0,
+  );
+  assert.equal(
+    restored.chapters[0].scenes[0].elements[0].motion.blocks[0].kind,
     'scene-enter',
   );
   assert.ok(
-    restored.scenes[0].elements[0].motion.blocks.some(
+    restored.chapters[0].scenes[0].elements[0].motion.blocks.some(
       (block) => block.kind === 'move',
     ),
   );
+});
+
+void test('version 6 drafts and publication revisions migrate losslessly into one chapter', () => {
+  const source = createDefaultProject();
+  const revision = createPublicationRevision(
+    source,
+    '2026-08-30T01:00:00.000Z',
+  );
+  source.publications = [revision];
+  source.publishedRevision = revision.revision;
+  const legacy = createLegacyProject(6, source);
+
+  const restored = restoreProject(JSON.stringify(legacy));
+
+  assert.ok(restored);
+  assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
+  assert.equal(restored.format, 'vertical-scroll');
+  assert.equal(restored.chapters.length, 1);
+  assert.equal(restored.chapters[0].title, source.chapters[0].title);
+  assert.deepEqual(
+    getProjectScenes(restored).map((scene) => scene.id),
+    getProjectScenes(source).map((scene) => scene.id),
+  );
+  assert.equal(restored.publications.length, 1);
+  assert.equal(restored.publications[0].format, 'vertical-scroll');
+  assert.equal(
+    restored.publications[0].chapters[0].title,
+    revision.chapters[0].title,
+  );
+  assert.deepEqual(
+    getProjectScenes(restored.publications[0]).map((scene) => scene.id),
+    getProjectScenes(revision).map((scene) => scene.id),
+  );
+});
+
+void test('nested version 7 projects round-trip chapters, format, cover, and revisions', () => {
+  const project = createDefaultProject();
+  const secondChapter = createBlankChapter({
+    id: 'signal-in-the-fog-chapter-2',
+    sceneId: 'scene-4',
+    title: 'Chapter 2 · The Return',
+  });
+  project.chapters.push(secondChapter);
+  project.format = 'page';
+  project.coverSceneId = 'scene-4';
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-30T02:00:00.000Z',
+  );
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  const restored = restoreProject(JSON.stringify(project));
+
+  assert.ok(restored);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(restored)),
+    JSON.parse(JSON.stringify(project)),
+  );
+  assert.notEqual(restored.chapters, project.chapters);
+  assert.notEqual(restored.publications[0].chapters, project.chapters);
+});
+
+void test('nested project validation rejects malformed hierarchy and aggregate overflow', () => {
+  const unsupportedFormat = createDefaultProject() as unknown as Record<
+    string,
+    unknown
+  >;
+  unsupportedFormat.format = 'spread';
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(unsupportedFormat)).error,
+    'Project uses an unsupported format',
+  );
+
+  const emptyChapter = createDefaultProject();
+  emptyChapter.chapters.push({
+    id: 'empty-chapter',
+    title: 'Empty',
+    scenes: [],
+  });
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(emptyChapter)).error,
+    'Project chapter 2 needs at least one scene',
+  );
+
+  const duplicateChapter = createDefaultProject();
+  duplicateChapter.chapters.push(
+    createBlankChapter({
+      id: DEFAULT_CHAPTER_ID,
+      sceneId: 'unique-scene',
+      title: 'Duplicate ID',
+    }),
+  );
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(duplicateChapter)).error,
+    'Project has duplicate chapter IDs',
+  );
+
+  const duplicateScene = createDefaultProject();
+  duplicateScene.chapters.push({
+    id: 'second-chapter',
+    title: 'Second',
+    scenes: [structuredClone(duplicateScene.chapters[0].scenes[0])],
+  });
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(duplicateScene)).error,
+    'Project chapter 2 has duplicate scene IDs',
+  );
+
+  const tooManyScenes = createBlankProject('many-scenes');
+  const makeScene = (id: string) => ({
+    id,
+    name: id,
+    background: '#111111',
+    elements: [],
+  });
+  tooManyScenes.chapters[0].scenes = Array.from({ length: 60 }, (_, index) =>
+    makeScene(`first-${index}`),
+  );
+  tooManyScenes.chapters.push({
+    id: 'many-scenes-chapter-2',
+    title: 'Second',
+    scenes: Array.from({ length: 41 }, (_, index) =>
+      makeScene(`second-${index}`),
+    ),
+  });
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(tooManyScenes)).error,
+    `Project has more than ${MAX_PROJECT_SCENES} scenes`,
+  );
+
+  const tooManyChapters = createBlankProject('many-chapters');
+  tooManyChapters.chapters = Array.from(
+    { length: MAX_PROJECT_CHAPTERS + 1 },
+    (_, index) =>
+      createBlankChapter({
+        id: `chapter-${index}`,
+        sceneId: `chapter-${index}-scene`,
+        title: `Chapter ${index + 1}`,
+      }),
+  );
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(tooManyChapters)).error,
+    `Project has more than ${MAX_PROJECT_CHAPTERS} chapters`,
+  );
+});
+
+void test('chapter helpers recover cross-chapter scenes, cover, order, and capacity', () => {
+  const project = createDefaultProject();
+  const secondChapter = createBlankChapter({
+    id: 'chapter-2',
+    sceneId: 'scene-4',
+    title: 'Chapter 2',
+  });
+  project.chapters.push(secondChapter);
+
+  assert.equal(findProjectScene(project, 'scene-4')?.chapter.id, 'chapter-2');
+  assert.deepEqual(
+    resolveEditorSelection(
+      project,
+      DEFAULT_CHAPTER_ID,
+      'scene-4',
+      'missing-layer',
+    ),
+    { chapterId: 'chapter-2', sceneId: 'scene-4', elementId: '' },
+  );
+  assert.equal(resolveProjectCoverSceneId(project, 'scene-4'), 'scene-4');
+  assert.equal(resolveProjectCoverSceneId(project, 'missing'), 'scene-1');
+  assert.deepEqual(
+    reorderChapters(project.chapters, 'chapter-2', -1).map(
+      (chapter) => chapter.id,
+    ),
+    ['chapter-2', DEFAULT_CHAPTER_ID],
+  );
+  assert.equal(canAddChapterToProject(project), true);
+
+  project.chapters = Array.from({ length: MAX_PROJECT_CHAPTERS }, (_, index) =>
+    createBlankChapter({
+      id: `capacity-chapter-${index}`,
+      sceneId: `capacity-scene-${index}`,
+      title: `Chapter ${index + 1}`,
+    }),
+  );
+  assert.equal(canAddChapterToProject(project), false);
+});
+
+void test('multi-chapter revisions snapshot, diff, and restore the whole work', () => {
+  const project = createDefaultProject();
+  project.chapters.push(
+    createBlankChapter({
+      id: 'chapter-2',
+      sceneId: 'scene-4',
+      title: 'Second chapter',
+    }),
+  );
+  project.format = 'page';
+  project.coverSceneId = 'scene-4';
+  const revision = createPublicationRevision(project);
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+  assert.equal(hasUnpublishedChanges(project), false);
+
+  project.chapters[1].title = 'Changed second chapter';
+  project.format = 'vertical-scroll';
+  assert.equal(hasUnpublishedChanges(project), true);
+
+  const restored = restorePublicationToDraft(project, revision.id);
+  assert.ok(restored);
+  assert.equal(restored.format, 'page');
+  assert.equal(restored.coverSceneId, 'scene-4');
+  assert.equal(restored.chapters[1].title, 'Second chapter');
+  assert.equal(getPublicationReadiness(restored).chapterCount, 2);
+  assert.equal(getPublicationReadiness(restored).sceneCount, 4);
 });
 
 void test('invalid project data is rejected', () => {
@@ -2620,16 +2885,18 @@ void test('project import reports schema, layer, motion, and asset failures prec
   );
 
   const unsupportedLayer = createDefaultProject() as unknown as {
-    scenes: Array<{ elements: Array<Record<string, unknown>> }>;
+    chapters: Array<{
+      scenes: Array<{ elements: Array<Record<string, unknown>> }>;
+    }>;
   };
-  unsupportedLayer.scenes[0].elements[0].type = 'video';
+  unsupportedLayer.chapters[0].scenes[0].elements[0].type = 'video';
   assert.equal(
     restoreProjectWithError(JSON.stringify(unsupportedLayer)).error,
-    'Project contains an unsupported layer type',
+    'Project chapter 1 contains an unsupported layer type',
   );
 
   const unsupportedMotion = createDefaultProject();
-  unsupportedMotion.scenes[0].elements[0].motion.schemaVersion =
+  unsupportedMotion.chapters[0].scenes[0].elements[0].motion.schemaVersion =
     2 as typeof MOTION_SCHEMA_VERSION;
   assert.equal(
     restoreProjectWithError(JSON.stringify(unsupportedMotion)).error,
@@ -2637,7 +2904,7 @@ void test('project import reports schema, layer, motion, and asset failures prec
   );
 
   const invalidBlocks = createDefaultProject();
-  invalidBlocks.scenes[0].elements[0].motion.blocks.push({
+  invalidBlocks.chapters[0].scenes[0].elements[0].motion.blocks.push({
     ...createMotionBlock('move', 'event'),
   });
   assert.equal(
@@ -2646,15 +2913,15 @@ void test('project import reports schema, layer, motion, and asset failures prec
   );
 
   const unsafeImage = createDefaultProject();
-  unsafeImage.scenes[0].elements.push({
-    ...unsafeImage.scenes[0].elements[0],
+  unsafeImage.chapters[0].scenes[0].elements.push({
+    ...unsafeImage.chapters[0].scenes[0].elements[0],
     id: 'unsafe-image',
     type: 'image',
     src: 'https://tracker.example/private.png',
   });
   assert.equal(
     restoreProjectWithError(JSON.stringify(unsafeImage)).error,
-    'Project contains an unsafe or oversized image source',
+    'Project chapter 1 contains an unsafe or oversized image source',
   );
 });
 
@@ -2695,6 +2962,60 @@ void test('project import normalizes optional metadata without losing history', 
   assert.equal(result.project.updatedAt, '1970-01-01T00:00:00.000Z');
 });
 
+void test('project import rejects unsafe or unsupported publication revisions', () => {
+  const project = createDefaultProject();
+  const revision = createPublicationRevision(project);
+  project.publications = [revision];
+
+  const unsafe = structuredClone(project);
+  unsafe.publications[0].revision = 1e300;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(unsafe)).error,
+    'Project publication history is invalid',
+  );
+
+  const unsupported = structuredClone(project);
+  unsupported.publications[0].revision = MAX_PUBLICATION_REVISION + 1;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(unsupported)).error,
+    'Project publication history is invalid',
+  );
+});
+
+void test('new publication IDs cannot collide with imported history', () => {
+  const project = createDefaultProject();
+  const first = createPublicationRevision(project);
+  first.id = `${project.id}-revision-2`;
+  project.publications = [first];
+  project.publishedRevision = first.revision;
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  const second = createPublicationRevision(restored);
+  assert.equal(second.revision, 2);
+  assert.notEqual(second.id, first.id);
+
+  restored.publications.push(second);
+  restored.publishedRevision = second.revision;
+  assert.ok(restoreProject(JSON.stringify(restored)));
+});
+
+void test('publication readiness blocks exhausted revision history', () => {
+  const project = createDefaultProject();
+  const revision = createPublicationRevision(project);
+  revision.revision = MAX_PUBLICATION_REVISION;
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  assert.deepEqual(getPublicationReadiness(project).issues, [
+    'Publication history has reached its supported limit',
+  ]);
+  assert.throws(
+    () => createPublicationRevision(project),
+    /Publication history has reached its supported limit/,
+  );
+});
+
 void test('project import bounds draft and published descriptions', () => {
   const project = createDefaultProject();
   project.description = 'D'.repeat(MAX_PROJECT_DESCRIPTION_LENGTH + 50);
@@ -2727,7 +3048,7 @@ void test('published revisions remain immutable when the draft changes', () => {
   project.title = 'Changed draft title';
   project.coverSceneId = 'scene-3';
   project.tags.push('new tag');
-  project.scenes[0].elements[0].text = 'Changed draft scene';
+  project.chapters[0].scenes[0].elements[0].text = 'Changed draft scene';
 
   assert.equal(revision.revision, 1);
   assert.equal(revision.createdAt, '2026-08-29T00:00:00.000Z');
@@ -2735,7 +3056,7 @@ void test('published revisions remain immutable when the draft changes', () => {
   assert.equal(revision.coverSceneId, 'scene-2');
   assert.deepEqual(revision.tags, ['science fiction', 'mystery']);
   assert.equal(
-    revision.scenes[0].elements[0].text,
+    revision.chapters[0].scenes[0].elements[0].text,
     'Something moved beyond the fog.',
   );
 });
@@ -2752,10 +3073,11 @@ void test('publication changes are detected against the current revision', () =>
   project.publishedRevision = revision.revision;
   assert.equal(hasUnpublishedChanges(project), false);
 
-  project.scenes[0].elements[0].text = 'A revised opening';
+  project.chapters[0].scenes[0].elements[0].text = 'A revised opening';
   assert.equal(hasUnpublishedChanges(project), true);
 
-  project.scenes[0].elements[0].text = revision.scenes[0].elements[0].text;
+  project.chapters[0].scenes[0].elements[0].text =
+    revision.chapters[0].scenes[0].elements[0].text;
   project.coverSceneId = 'scene-2';
   assert.equal(hasUnpublishedChanges(project), true);
 });
@@ -2770,14 +3092,14 @@ void test('reader source defaults to the edited draft after publication', () => 
   project.publishedRevision = revision.revision;
   project.title = 'Edited draft title';
   project.contentRating = 'mature';
-  project.scenes[0].name = 'Edited draft scene';
+  project.chapters[0].scenes[0].name = 'Edited draft scene';
 
   const draftSource = resolveReaderSource(project);
   assert.equal(draftSource.mode, 'draft');
   assert.equal(draftSource.title, 'Edited draft title');
   assert.equal(draftSource.contentRating, 'mature');
   assert.equal(draftSource.coverSceneId, 'scene-1');
-  assert.equal(draftSource.scenes[0].name, 'Edited draft scene');
+  assert.equal(draftSource.chapters[0].scenes[0].name, 'Edited draft scene');
 
   const revisionSource = resolveReaderSource(project, revision);
   assert.equal(revisionSource.mode, 'revision');
@@ -2785,7 +3107,7 @@ void test('reader source defaults to the edited draft after publication', () => 
   assert.equal(revisionSource.title, 'Signal in the Fog');
   assert.equal(revisionSource.contentRating, 'all-ages');
   assert.equal(revisionSource.coverSceneId, 'scene-1');
-  assert.equal(revisionSource.scenes[0].name, 'The signal');
+  assert.equal(revisionSource.chapters[0].scenes[0].name, 'The signal');
 });
 
 void test('publication readiness blocks untitled or invisible work', () => {
@@ -2802,16 +3124,18 @@ void test('publication readiness blocks untitled or invisible work', () => {
   ]);
 
   blank.title = 'A visible beginning';
-  blank.scenes[0].elements.push(createElement('shape', 1, { visible: false }));
+  blank.chapters[0].scenes[0].elements.push(
+    createElement('shape', 1, { visible: false }),
+  );
   assert.equal(getPublicationReadiness(blank).ready, false);
-  blank.scenes[0].elements[0].visible = true;
+  blank.chapters[0].scenes[0].elements[0].visible = true;
   assert.equal(getPublicationReadiness(blank).ready, true);
 
   blank.coverSceneId = 'missing-scene';
   assert.deepEqual(getPublicationReadiness(blank).issues, [
     'Choose a cover scene',
   ]);
-  blank.coverSceneId = blank.scenes[0].id;
+  blank.coverSceneId = blank.chapters[0].scenes[0].id;
 
   blank.title = 'x'.repeat(161);
   assert.deepEqual(getPublicationReadiness(blank).issues, [
@@ -2830,7 +3154,7 @@ void test('a published revision can be recovered as a new editable draft', () =>
   project.publishedRevision = revision.revision;
   project.title = 'Later draft';
   project.coverSceneId = 'scene-3';
-  project.scenes[0].elements[0].text = 'Later scene copy';
+  project.chapters[0].scenes[0].elements[0].text = 'Later scene copy';
 
   const restored = restorePublicationToDraft(
     project,
@@ -2842,15 +3166,15 @@ void test('a published revision can be recovered as a new editable draft', () =>
   assert.equal(restored.title, revision.title);
   assert.equal(restored.coverSceneId, 'scene-2');
   assert.equal(
-    restored.scenes[0].elements[0].text,
-    revision.scenes[0].elements[0].text,
+    restored.chapters[0].scenes[0].elements[0].text,
+    revision.chapters[0].scenes[0].elements[0].text,
   );
   assert.equal(restored.updatedAt, '2026-08-29T01:00:00.000Z');
   assert.equal(restored.publishedRevision, 1);
   assert.equal(restored.publications.length, 1);
-  restored.scenes[0].elements[0].text = 'Editable restored scene';
+  restored.chapters[0].scenes[0].elements[0].text = 'Editable restored scene';
   assert.equal(
-    revision.scenes[0].elements[0].text,
+    revision.chapters[0].scenes[0].elements[0].text,
     'Something moved beyond the fog.',
   );
   assert.equal(restorePublicationToDraft(project, 'missing-revision'), null);
@@ -2894,11 +3218,7 @@ void test('adults-only ratings survive project and publication round trips', () 
 });
 
 void test('version 3 drafts receive safe publication defaults', () => {
-  const legacy = structuredClone(createDefaultProject()) as unknown as Record<
-    string,
-    unknown
-  >;
-  legacy.schemaVersion = 3;
+  const legacy = createLegacyProject(3) as unknown as Record<string, unknown>;
   delete legacy.description;
   delete legacy.tags;
   delete legacy.language;
@@ -2966,20 +3286,42 @@ void test('draft recovery returns null when every candidate is invalid', () => {
 
 void test('editor selection resolves stale scene and layer references', () => {
   const project = createDefaultProject();
-  assert.deepEqual(resolveEditorSelection(project, 'scene-2', 'scene-2-orb'), {
-    sceneId: 'scene-2',
-    elementId: 'scene-2-orb',
-  });
   assert.deepEqual(
-    resolveEditorSelection(project, 'deleted-scene', 'deleted-layer'),
-    { sceneId: 'scene-1', elementId: 'scene-1-speech' },
+    resolveEditorSelection(
+      project,
+      DEFAULT_CHAPTER_ID,
+      'scene-2',
+      'scene-2-orb',
+    ),
+    {
+      chapterId: DEFAULT_CHAPTER_ID,
+      sceneId: 'scene-2',
+      elementId: 'scene-2-orb',
+    },
+  );
+  assert.deepEqual(
+    resolveEditorSelection(
+      project,
+      'deleted-chapter',
+      'deleted-scene',
+      'deleted-layer',
+    ),
+    {
+      chapterId: DEFAULT_CHAPTER_ID,
+      sceneId: 'scene-1',
+      elementId: 'scene-1-speech',
+    },
   );
 
   const blank = createBlankProject('blank');
-  assert.deepEqual(resolveEditorSelection(blank, 'missing', 'missing'), {
-    sceneId: 'blank-scene-1',
-    elementId: '',
-  });
+  assert.deepEqual(
+    resolveEditorSelection(blank, 'missing', 'missing', 'missing'),
+    {
+      chapterId: 'blank-chapter-1',
+      sceneId: 'blank-scene-1',
+      elementId: '',
+    },
+  );
 });
 
 void test('draft conflict resolution preserves the selected source', () => {
@@ -3102,7 +3444,7 @@ void test('draft save status prioritizes conflicts and failures', () => {
 });
 
 void test('scene ordering moves one scene without mutating the source list', () => {
-  const scenes = createDefaultProject().scenes;
+  const scenes = createDefaultProject().chapters[0].scenes;
   const originalOrder = scenes.map((scene) => scene.id);
   const reordered = reorderScenes(scenes, 'scene-2', -1);
 
@@ -3115,7 +3457,7 @@ void test('scene ordering moves one scene without mutating the source list', () 
 });
 
 void test('scene ordering keeps boundary scenes in place', () => {
-  const scenes = createDefaultProject().scenes;
+  const scenes = createDefaultProject().chapters[0].scenes;
   assert.deepEqual(
     reorderScenes(scenes, 'scene-1', -1).map((scene) => scene.id),
     ['scene-1', 'scene-2', 'scene-3'],
@@ -3139,12 +3481,12 @@ void test('horizontal tab navigation wraps and supports boundaries', () => {
 
 void test('editor capacity matches project validation limits', () => {
   const project = createDefaultProject();
-  const scene = project.scenes[0];
+  const scene = project.chapters[0].scenes[0];
 
   assert.equal(canAddSceneToProject(project), true);
   assert.equal(canAddElementToScene(scene), true);
 
-  project.scenes = Array.from({ length: 100 }, () => scene);
+  project.chapters[0].scenes = Array.from({ length: 100 }, () => scene);
   scene.elements = Array.from({ length: 500 }, () => scene.elements[0]);
 
   assert.equal(canAddSceneToProject(project), false);
@@ -3152,7 +3494,7 @@ void test('editor capacity matches project validation limits', () => {
 });
 
 void test('layer deletion selects the adjacent layer without mutating the list', () => {
-  const elements = createDefaultProject().scenes[0].elements;
+  const elements = createDefaultProject().chapters[0].scenes[0].elements;
   const ids = elements.map((element) => element.id);
 
   assert.equal(resolveSelectionAfterElementDeletion(elements, ids[1]), ids[2]);
@@ -3186,7 +3528,7 @@ void test('file drags are distinguished from internal text drags', () => {
 });
 
 void test('scene thumbnails sample visible layers without mutating the scene', () => {
-  const scene = createDefaultProject().scenes[0];
+  const scene = createDefaultProject().chapters[0].scenes[0];
   scene.elements = Array.from({ length: 20 }, (_, index) => ({
     ...createElement('shape', index + 1),
     id: `layer-${index}`,

@@ -1,5 +1,7 @@
-export const PROJECT_SCHEMA_VERSION = 6 as const;
+export const PROJECT_SCHEMA_VERSION = 7 as const;
 export const MOTION_SCHEMA_VERSION = 1 as const;
+export const MOTUS_PROJECT_FORMATS = ['vertical-scroll', 'page'] as const;
+export type MotusProjectFormat = (typeof MOTUS_PROJECT_FORMATS)[number];
 export const CANVAS_WIDTH = 1_080;
 export const CANVAS_HEIGHT = 1_440;
 export const MIN_ELEMENT_WIDTH = 60;
@@ -257,7 +259,9 @@ export const MAX_PROJECT_FILE_BYTES = 12_000_000;
 export const MAX_PROJECT_TITLE_LENGTH = 160;
 export const MAX_PROJECT_TAGS = 8;
 export const MAX_PROJECT_TAG_LENGTH = 40;
+export const MAX_PROJECT_CHAPTERS = 100;
 export const MAX_PROJECT_SCENES = 100;
+export const MAX_PUBLICATION_REVISION = 1_000_000;
 export const MAX_SCENE_ELEMENTS = 500;
 export const MAX_SCENE_NAME_LENGTH = 160;
 export const MAX_SCENE_THUMBNAIL_ELEMENTS = 12;
@@ -2292,6 +2296,12 @@ export type MotusScene = {
   elements: MotusElement[];
 };
 
+export type MotusChapter = {
+  id: string;
+  title: string;
+  scenes: MotusScene[];
+};
+
 export function getSceneThumbnailElements(
   scene: Pick<MotusScene, 'elements'>,
   limit = MAX_SCENE_THUMBNAIL_ELEMENTS,
@@ -2316,14 +2326,14 @@ export type MotusPublicationRevision = {
   createdAt: string;
   title: string;
   creatorName: string;
-  chapterTitle: string;
   description: string;
   tags: string[];
   language: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  format: MotusProjectFormat;
   coverSceneId: string;
-  scenes: MotusScene[];
+  chapters: MotusChapter[];
 };
 
 export type MotusProject = {
@@ -2331,16 +2341,16 @@ export type MotusProject = {
   id: string;
   title: string;
   creatorName: string;
-  chapterTitle: string;
   description: string;
   tags: string[];
   language: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  format: MotusProjectFormat;
   coverSceneId: string;
   publishedRevision: number;
   publications: MotusPublicationRevision[];
-  scenes: MotusScene[];
+  chapters: MotusChapter[];
   updatedAt: string;
 };
 
@@ -2404,12 +2414,42 @@ export type MotusReaderSource = {
   revision: number | null;
   title: string;
   creatorName: string;
-  chapterTitle: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  format: MotusProjectFormat;
   coverSceneId: string;
-  scenes: MotusScene[];
+  chapters: MotusChapter[];
 };
+
+export function getProjectScenes(source: {
+  chapters: MotusChapter[];
+}): MotusScene[] {
+  return source.chapters.flatMap((chapter) => chapter.scenes);
+}
+
+export function findProjectScene(
+  source: { chapters: MotusChapter[] },
+  sceneId: string,
+): { chapter: MotusChapter; scene: MotusScene } | null {
+  for (const chapter of source.chapters) {
+    const scene = chapter.scenes.find((item) => item.id === sceneId);
+    if (scene) return { chapter, scene };
+  }
+  return null;
+}
+
+export function resolveChapterId(
+  chapters: MotusChapter[],
+  candidate: unknown,
+): string {
+  if (
+    typeof candidate === 'string' &&
+    chapters.some((chapter) => chapter.id === candidate)
+  ) {
+    return candidate;
+  }
+  return chapters[0]?.id ?? '';
+}
 
 export function resolveCoverSceneId(
   scenes: Array<Pick<MotusScene, 'id'>>,
@@ -2424,6 +2464,13 @@ export function resolveCoverSceneId(
   return scenes[0]?.id ?? '';
 }
 
+export function resolveProjectCoverSceneId(
+  source: { chapters: MotusChapter[] },
+  candidate: unknown,
+): string {
+  return resolveCoverSceneId(getProjectScenes(source), candidate);
+}
+
 export function resolveReaderSource(
   project: MotusProject,
   revision: MotusPublicationRevision | null = null,
@@ -2434,31 +2481,32 @@ export function resolveReaderSource(
         revision: revision.revision,
         title: revision.title,
         creatorName: revision.creatorName,
-        chapterTitle: revision.chapterTitle,
         contentRating: revision.contentRating,
         visibility: revision.visibility,
-        coverSceneId: resolveCoverSceneId(
-          revision.scenes,
+        format: revision.format,
+        coverSceneId: resolveProjectCoverSceneId(
+          revision,
           revision.coverSceneId,
         ),
-        scenes: revision.scenes,
+        chapters: revision.chapters,
       }
     : {
         mode: 'draft',
         revision: null,
         title: project.title,
         creatorName: project.creatorName,
-        chapterTitle: project.chapterTitle,
         contentRating: project.contentRating,
         visibility: project.visibility,
-        coverSceneId: resolveCoverSceneId(project.scenes, project.coverSceneId),
-        scenes: project.scenes,
+        format: project.format,
+        coverSceneId: resolveProjectCoverSceneId(project, project.coverSceneId),
+        chapters: project.chapters,
       };
 }
 
 export type PublicationReadiness = {
   ready: boolean;
   issues: string[];
+  chapterCount: number;
   sceneCount: number;
   visibleLayerCount: number;
 };
@@ -2467,7 +2515,8 @@ export function getPublicationReadiness(
   project: MotusProject,
 ): PublicationReadiness {
   const issues: string[] = [];
-  const visibleLayerCount = project.scenes.reduce(
+  const scenes = getProjectScenes(project);
+  const visibleLayerCount = scenes.reduce(
     (count, scene) =>
       count + scene.elements.filter((element) => element.visible).length,
     0,
@@ -2478,16 +2527,30 @@ export function getPublicationReadiness(
     issues.push(`Shorten the title to ${MAX_PROJECT_TITLE_LENGTH} characters`);
   }
   if (!project.creatorName.trim()) issues.push('Add the creator name');
-  if (!project.chapterTitle.trim()) issues.push('Name the chapter');
+  if (project.chapters.some((chapter) => !chapter.title.trim())) {
+    issues.push('Name every chapter');
+  }
+  if (project.chapters.some((chapter) => chapter.scenes.length === 0)) {
+    issues.push('Give every chapter at least one scene');
+  }
   if (visibleLayerCount === 0) issues.push('Add at least one visible layer');
-  if (!project.scenes.some((scene) => scene.id === project.coverSceneId)) {
+  if (!scenes.some((scene) => scene.id === project.coverSceneId)) {
     issues.push('Choose a cover scene');
+  }
+  if (
+    project.publishedRevision >= MAX_PUBLICATION_REVISION ||
+    project.publications.some(
+      (revision) => revision.revision >= MAX_PUBLICATION_REVISION,
+    )
+  ) {
+    issues.push('Publication history has reached its supported limit');
   }
 
   return {
     ready: issues.length === 0,
     issues,
-    sceneCount: project.scenes.length,
+    chapterCount: project.chapters.length,
+    sceneCount: scenes.length,
     visibleLayerCount,
   };
 }
@@ -4599,47 +4662,72 @@ const scene = (
   ],
 });
 
+export function createBlankChapter(input: {
+  id: string;
+  sceneId: string;
+  title: string;
+}): MotusChapter {
+  return {
+    id: input.id,
+    title: input.title,
+    scenes: [
+      {
+        id: input.sceneId,
+        name: 'Opening scene',
+        background: defaultSceneBackground,
+        elements: [],
+      },
+    ],
+  };
+}
+
 export const createDefaultProject = (): MotusProject => ({
   schemaVersion: PROJECT_SCHEMA_VERSION,
   id: 'signal-in-the-fog',
   title: 'Signal in the Fog',
   creatorName: 'Bahar Yüksel',
-  chapterTitle: 'Chapter 1 · The Answering Light',
   description:
     'Three signals answer one another across a silent, shifting landscape.',
   tags: ['science fiction', 'mystery'],
   language: 'en',
   contentRating: 'all-ages',
   visibility: 'private',
+  format: 'vertical-scroll',
   coverSceneId: 'scene-1',
   publishedRevision: 0,
   publications: [],
   updatedAt: new Date().toISOString(),
-  scenes: [
-    scene(
-      'scene-1',
-      'The signal',
-      'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
-      'Something moved beyond the fog.',
-      'Did you see that?',
-      '#8d71ff',
-    ),
-    scene(
-      'scene-2',
-      'The crossing',
-      'linear-gradient(155deg, #38284c 0%, #1c1729 54%, #7d4e61 100%)',
-      'The light waited on the other side.',
-      'It knows we are here.',
-      '#ff8ca6',
-    ),
-    scene(
-      'scene-3',
-      'The answer',
-      'linear-gradient(155deg, #22293b 0%, #101d28 54%, #315a63 100%)',
-      'A second pulse answered from below.',
-      'That was not an echo.',
-      '#67d6df',
-    ),
+  chapters: [
+    {
+      id: 'signal-in-the-fog-chapter-1',
+      title: 'Chapter 1 · The Answering Light',
+      scenes: [
+        scene(
+          'scene-1',
+          'The signal',
+          'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
+          'Something moved beyond the fog.',
+          'Did you see that?',
+          '#8d71ff',
+        ),
+        scene(
+          'scene-2',
+          'The crossing',
+          'linear-gradient(155deg, #38284c 0%, #1c1729 54%, #7d4e61 100%)',
+          'The light waited on the other side.',
+          'It knows we are here.',
+          '#ff8ca6',
+        ),
+        scene(
+          'scene-3',
+          'The answer',
+          'linear-gradient(155deg, #22293b 0%, #101d28 54%, #315a63 100%)',
+          'A second pulse answered from below.',
+          'That was not an echo.',
+          '#67d6df',
+        ),
+      ],
+    },
   ],
 });
 
@@ -4648,30 +4736,29 @@ export function createBlankProject(
   updatedAt = new Date().toISOString(),
 ): MotusProject {
   const projectId = id.trim() || 'untitled-work';
+  const openingChapterId = `${projectId}-chapter-1`;
   const openingSceneId = `${projectId}-scene-1`;
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: projectId,
     title: 'Untitled work',
     creatorName: 'New creator',
-    chapterTitle: 'Chapter 1',
     description: '',
     tags: [],
     language: 'en',
     contentRating: 'all-ages',
     visibility: 'private',
+    format: 'vertical-scroll',
     coverSceneId: openingSceneId,
     publishedRevision: 0,
     publications: [],
     updatedAt,
-    scenes: [
-      {
-        id: openingSceneId,
-        name: 'Opening scene',
-        background:
-          'linear-gradient(155deg, #24203b 0%, #151626 54%, #332b46 100%)',
-        elements: [],
-      },
+    chapters: [
+      createBlankChapter({
+        id: openingChapterId,
+        sceneId: openingSceneId,
+        title: 'Chapter 1',
+      }),
     ],
   };
 }
@@ -4695,6 +4782,7 @@ export function cloneProject(project: MotusProject): MotusProject {
 }
 
 export type EditorSelection = {
+  chapterId: string;
   sceneId: string;
   elementId: string;
 };
@@ -4723,6 +4811,7 @@ export function createProjectHistoryEntry(
     project: snapshot,
     selection: resolveEditorSelection(
       project,
+      selection.chapterId,
       selection.sceneId,
       selection.elementId,
     ),
@@ -4794,6 +4883,19 @@ export function reorderScenes(
   return ordered;
 }
 
+export function reorderChapters(
+  chapters: MotusChapter[],
+  chapterId: string,
+  direction: -1 | 1,
+): MotusChapter[] {
+  const ordered = [...chapters];
+  const index = ordered.findIndex((chapter) => chapter.id === chapterId);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= ordered.length) return ordered;
+  [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+  return ordered;
+}
+
 export function getTabIndexForKey(
   currentIndex: number,
   sceneCount: number,
@@ -4808,9 +4910,18 @@ export function getTabIndexForKey(
 }
 
 export function canAddSceneToProject(
-  project: Pick<MotusProject, 'scenes'>,
+  project: Pick<MotusProject, 'chapters'>,
 ): boolean {
-  return project.scenes.length < MAX_PROJECT_SCENES;
+  return getProjectScenes(project).length < MAX_PROJECT_SCENES;
+}
+
+export function canAddChapterToProject(
+  project: Pick<MotusProject, 'chapters'>,
+): boolean {
+  return (
+    project.chapters.length < MAX_PROJECT_CHAPTERS &&
+    getProjectScenes(project).length < MAX_PROJECT_SCENES
+  );
 }
 
 export function canAddElementToScene(
@@ -4860,18 +4971,27 @@ export function restoreNewestProject(
 
 export function resolveEditorSelection(
   project: MotusProject,
+  requestedChapterId: string,
   requestedSceneId: string,
   requestedElementId: string,
 ): EditorSelection {
-  const scene =
-    project.scenes.find((item) => item.id === requestedSceneId) ??
-    project.scenes[0];
+  const requestedChapter = project.chapters.find(
+    (chapter) => chapter.id === requestedChapterId,
+  );
+  const exactScene = requestedChapter?.scenes.find(
+    (scene) => scene.id === requestedSceneId,
+  );
+  const recovered = exactScene
+    ? { chapter: requestedChapter!, scene: exactScene }
+    : findProjectScene(project, requestedSceneId);
+  const chapter = recovered?.chapter ?? project.chapters[0];
+  const scene = recovered?.scene ?? chapter.scenes[0];
   const elementId = scene.elements.some(
     (item) => item.id === requestedElementId,
   )
     ? requestedElementId
     : (scene.elements.at(-1)?.id ?? '');
-  return { sceneId: scene.id, elementId };
+  return { chapterId: chapter.id, sceneId: scene.id, elementId };
 }
 
 export type DraftConflictChoice = 'keep-current' | 'load-saved';
@@ -4926,21 +5046,40 @@ export function createPublicationRevision(
   project: MotusProject,
   createdAt = new Date().toISOString(),
 ): MotusPublicationRevision {
-  const revision = project.publishedRevision + 1;
+  const highestRevision = project.publications.reduce(
+    (highest, publication) => Math.max(highest, publication.revision),
+    Math.max(project.publishedRevision, 0),
+  );
+  if (
+    !Number.isSafeInteger(highestRevision) ||
+    highestRevision < 0 ||
+    highestRevision >= MAX_PUBLICATION_REVISION
+  ) {
+    throw new RangeError('Publication history has reached its supported limit');
+  }
+  const revision = highestRevision + 1;
+  const occupiedIds = new Set(
+    project.publications.map((publication) => publication.id),
+  );
+  const baseId = `${project.id}-revision-${revision}`;
+  let id = baseId;
+  for (let suffix = 2; occupiedIds.has(id); suffix += 1) {
+    id = `${baseId}-${suffix}`;
+  }
   return {
-    id: `${project.id}-revision-${revision}`,
+    id,
     revision,
     createdAt,
     title: project.title,
     creatorName: project.creatorName,
-    chapterTitle: project.chapterTitle,
     description: project.description,
     tags: [...project.tags],
     language: project.language,
     contentRating: project.contentRating,
     visibility: project.visibility,
-    coverSceneId: resolveCoverSceneId(project.scenes, project.coverSceneId),
-    scenes: structuredClone(project.scenes),
+    format: project.format,
+    coverSceneId: resolveProjectCoverSceneId(project, project.coverSceneId),
+    chapters: structuredClone(project.chapters),
   };
 }
 
@@ -4954,14 +5093,14 @@ export function hasUnpublishedChanges(project: MotusProject): boolean {
   return (
     published.title !== project.title ||
     published.creatorName !== project.creatorName ||
-    published.chapterTitle !== project.chapterTitle ||
     published.description !== project.description ||
     JSON.stringify(published.tags) !== JSON.stringify(project.tags) ||
     published.language !== project.language ||
     published.contentRating !== project.contentRating ||
     published.visibility !== project.visibility ||
+    published.format !== project.format ||
     published.coverSceneId !== project.coverSceneId ||
-    JSON.stringify(published.scenes) !== JSON.stringify(project.scenes)
+    JSON.stringify(published.chapters) !== JSON.stringify(project.chapters)
   );
 }
 
@@ -4976,14 +5115,14 @@ export function restorePublicationToDraft(
   const restored = cloneProject(project);
   restored.title = revision.title;
   restored.creatorName = revision.creatorName;
-  restored.chapterTitle = revision.chapterTitle;
   restored.description = revision.description;
   restored.tags = [...revision.tags];
   restored.language = revision.language;
   restored.contentRating = revision.contentRating;
   restored.visibility = revision.visibility;
+  restored.format = revision.format;
   restored.coverSceneId = revision.coverSceneId;
-  restored.scenes = structuredClone(revision.scenes);
+  restored.chapters = structuredClone(revision.chapters);
   restored.updatedAt = updatedAt;
   return restored;
 }
@@ -5100,7 +5239,11 @@ function validateMotion(value: unknown): string | null {
   return null;
 }
 
-function validateScenes(value: unknown, context: string): string | null {
+function validateScenes(
+  value: unknown,
+  context: string,
+  projectSceneIds = new Set<string>(),
+): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one scene`;
   }
@@ -5108,18 +5251,19 @@ function validateScenes(value: unknown, context: string): string | null {
     return `${context} has more than ${MAX_PROJECT_SCENES} scenes`;
   }
 
-  const sceneIds = new Set<string>();
   for (const sceneValue of value) {
     if (
       !isRecord(sceneValue) ||
       typeof sceneValue.id !== 'string' ||
-      !sceneValue.id
+      !sceneValue.id ||
+      sceneValue.id !== sceneValue.id.trim() ||
+      sceneValue.id.length > MAX_ELEMENT_ID_LENGTH
     ) {
       return `${context} contains an invalid scene`;
     }
-    if (sceneIds.has(sceneValue.id))
+    if (projectSceneIds.has(sceneValue.id))
       return `${context} has duplicate scene IDs`;
-    sceneIds.add(sceneValue.id);
+    projectSceneIds.add(sceneValue.id);
     if (sceneValue.name !== undefined && typeof sceneValue.name !== 'string') {
       return `${context} contains an invalid scene name`;
     }
@@ -5169,6 +5313,46 @@ function validateScenes(value: unknown, context: string): string | null {
       ) {
         return `${context} contains an unsafe or oversized image source`;
       }
+    }
+  }
+  return null;
+}
+
+function validateChapters(value: unknown, context: string): string | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return `${context} needs at least one chapter`;
+  }
+  if (value.length > MAX_PROJECT_CHAPTERS) {
+    return `${context} has more than ${MAX_PROJECT_CHAPTERS} chapters`;
+  }
+
+  const chapterIds = new Set<string>();
+  const projectSceneIds = new Set<string>();
+  let sceneCount = 0;
+  for (const [index, chapterValue] of value.entries()) {
+    if (
+      !isRecord(chapterValue) ||
+      typeof chapterValue.id !== 'string' ||
+      !chapterValue.id ||
+      chapterValue.id !== chapterValue.id.trim() ||
+      chapterValue.id.length > MAX_ELEMENT_ID_LENGTH ||
+      typeof chapterValue.title !== 'string'
+    ) {
+      return `${context} contains an invalid chapter`;
+    }
+    if (chapterIds.has(chapterValue.id)) {
+      return `${context} has duplicate chapter IDs`;
+    }
+    chapterIds.add(chapterValue.id);
+    const sceneError = validateScenes(
+      chapterValue.scenes,
+      `${context} chapter ${index + 1}`,
+      projectSceneIds,
+    );
+    if (sceneError) return sceneError;
+    sceneCount += (chapterValue.scenes as unknown[]).length;
+    if (sceneCount > MAX_PROJECT_SCENES) {
+      return `${context} has more than ${MAX_PROJECT_SCENES} scenes`;
     }
   }
   return null;
@@ -5243,6 +5427,21 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
   });
 }
 
+function normalizeChapters(value: unknown[]): MotusChapter[] {
+  return value.map((chapterValue) => {
+    const chapter = chapterValue as UnknownRecord;
+    return {
+      id: chapter.id as string,
+      title: normalizeEditableName(
+        chapter.title,
+        'Untitled chapter',
+        MAX_PROJECT_TITLE_LENGTH,
+      ),
+      scenes: normalizeScenes(chapter.scenes as unknown[]),
+    };
+  });
+}
+
 function normalizeTags(value: unknown): string[] {
   return Array.isArray(value) ? sanitizeProjectTags(value) : [];
 }
@@ -5257,10 +5456,20 @@ function normalizeVisibility(value: unknown): PublicationVisibility {
   return value === 'public' ? 'public' : 'private';
 }
 
+function isProjectFormat(value: unknown): value is MotusProjectFormat {
+  return value === 'vertical-scroll' || value === 'page';
+}
+
 export function restoreProjectWithError(
   value: string | null,
 ): ProjectRestoreResult {
   if (!value) return { project: null, error: 'Project file is empty' };
+  if (new TextEncoder().encode(value).byteLength > MAX_PROJECT_FILE_BYTES) {
+    return {
+      project: null,
+      error: `Project file is larger than ${Math.round(MAX_PROJECT_FILE_BYTES / 1_000_000)} MB`,
+    };
+  }
 
   let candidate: UnknownRecord;
   try {
@@ -5281,6 +5490,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 3 &&
     candidate.schemaVersion !== 4 &&
     candidate.schemaVersion !== 5 &&
+    candidate.schemaVersion !== 6 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {
@@ -5295,8 +5505,24 @@ export function restoreProjectWithError(
     return { project: null, error: 'Project title is too long' };
   }
 
-  const sceneError = validateScenes(candidate.scenes, 'Project');
-  if (sceneError) return { project: null, error: sceneError };
+  const legacySchema = candidate.schemaVersion !== PROJECT_SCHEMA_VERSION;
+  if (!legacySchema && !isProjectFormat(candidate.format)) {
+    return { project: null, error: 'Project uses an unsupported format' };
+  }
+
+  const fallbackId = createProjectBackupFileName({
+    id: 'imported-work',
+    title: candidate.title,
+  }).replace(/\.motus\.json$/, '');
+  const projectId =
+    typeof candidate.id === 'string' && candidate.id.trim()
+      ? candidate.id.trim()
+      : fallbackId;
+  const legacyChapterId = `${projectId.slice(0, MAX_ELEMENT_ID_LENGTH - 10)}-chapter-1`;
+  const hierarchyError = legacySchema
+    ? validateScenes(candidate.scenes, 'Project')
+    : validateChapters(candidate.chapters, 'Project');
+  if (hierarchyError) return { project: null, error: hierarchyError };
 
   const publicationValues = candidate.publications ?? [];
   if (!Array.isArray(publicationValues)) {
@@ -5309,12 +5535,16 @@ export function restoreProjectWithError(
       !isRecord(publicationValue) ||
       typeof publicationValue.id !== 'string' ||
       !publicationValue.id ||
-      !Number.isInteger(publicationValue.revision) ||
+      !Number.isSafeInteger(publicationValue.revision) ||
       (publicationValue.revision as number) <= 0 ||
+      (publicationValue.revision as number) > MAX_PUBLICATION_REVISION ||
       typeof publicationValue.createdAt !== 'string' ||
       typeof publicationValue.title !== 'string'
     ) {
       return { project: null, error: 'Project publication history is invalid' };
+    }
+    if (!legacySchema && !isProjectFormat(publicationValue.format)) {
+      return { project: null, error: 'Project publication format is invalid' };
     }
     const revision = publicationValue.revision as number;
     if (
@@ -5328,17 +5558,37 @@ export function restoreProjectWithError(
     }
     publicationIds.add(publicationValue.id);
     publicationNumbers.add(revision);
-    const revisionError = validateScenes(
-      publicationValue.scenes,
-      `Publication revision ${revision}`,
-    );
+    const revisionError = legacySchema
+      ? validateScenes(
+          publicationValue.scenes,
+          `Publication revision ${revision}`,
+        )
+      : validateChapters(
+          publicationValue.chapters,
+          `Publication revision ${revision}`,
+        );
     if (revisionError) return { project: null, error: revisionError };
   }
 
   const publications: MotusPublicationRevision[] = publicationValues.map(
     (publicationValue) => {
       const revision = publicationValue as UnknownRecord;
-      const scenes = normalizeScenes(revision.scenes as unknown[]);
+      const chapters = legacySchema
+        ? [
+            {
+              id: legacyChapterId,
+              title: normalizeEditableName(
+                revision.chapterTitle,
+                'Chapter 1',
+                MAX_PROJECT_TITLE_LENGTH,
+              ),
+              scenes: normalizeScenes(revision.scenes as unknown[]),
+            },
+          ]
+        : normalizeChapters(revision.chapters as unknown[]);
+      const format: MotusProjectFormat = legacySchema
+        ? 'vertical-scroll'
+        : (revision.format as MotusProjectFormat);
       return {
         id: revision.id as string,
         revision: revision.revision as number,
@@ -5347,11 +5597,6 @@ export function restoreProjectWithError(
         creatorName: normalizeEditableName(
           revision.creatorName,
           'Unknown creator',
-          MAX_PROJECT_TITLE_LENGTH,
-        ),
-        chapterTitle: normalizeEditableName(
-          revision.chapterTitle,
-          'Chapter 1',
           MAX_PROJECT_TITLE_LENGTH,
         ),
         description:
@@ -5363,43 +5608,50 @@ export function restoreProjectWithError(
           typeof revision.language === 'string' ? revision.language : 'en',
         contentRating: normalizeContentRating(revision.contentRating),
         visibility: normalizeVisibility(revision.visibility),
-        coverSceneId: resolveCoverSceneId(scenes, revision.coverSceneId),
-        scenes,
+        format,
+        coverSceneId: resolveProjectCoverSceneId(
+          { chapters },
+          revision.coverSceneId,
+        ),
+        chapters,
       };
     },
   );
-  const publishedRevision = Math.max(
+  const publishedRevision = publications.reduce(
+    (highest, revision) => Math.max(highest, revision.revision),
     0,
-    ...publications.map((revision) => revision.revision),
   );
   const updatedAt =
     typeof candidate.updatedAt === 'string' &&
     Number.isFinite(Date.parse(candidate.updatedAt))
       ? candidate.updatedAt
       : new Date(0).toISOString();
-  const fallbackId = createProjectBackupFileName({
-    id: 'imported-work',
-    title: candidate.title,
-  }).replace(/\.motus\.json$/, '');
-  const scenes = normalizeScenes(candidate.scenes as unknown[]);
+  const chapters = legacySchema
+    ? [
+        {
+          id: legacyChapterId,
+          title: normalizeEditableName(
+            candidate.chapterTitle,
+            'Chapter 1',
+            MAX_PROJECT_TITLE_LENGTH,
+          ),
+          scenes: normalizeScenes(candidate.scenes as unknown[]),
+        },
+      ]
+    : normalizeChapters(candidate.chapters as unknown[]);
+  const format: MotusProjectFormat = legacySchema
+    ? 'vertical-scroll'
+    : (candidate.format as MotusProjectFormat);
 
   return {
     error: null,
     project: {
       schemaVersion: PROJECT_SCHEMA_VERSION,
-      id:
-        typeof candidate.id === 'string' && candidate.id.trim()
-          ? candidate.id
-          : fallbackId,
+      id: projectId,
       title: candidate.title,
       creatorName: normalizeEditableName(
         candidate.creatorName,
         'Unknown creator',
-        MAX_PROJECT_TITLE_LENGTH,
-      ),
-      chapterTitle: normalizeEditableName(
-        candidate.chapterTitle,
-        'Chapter 1',
         MAX_PROJECT_TITLE_LENGTH,
       ),
       description:
@@ -5411,10 +5663,14 @@ export function restoreProjectWithError(
         typeof candidate.language === 'string' ? candidate.language : 'en',
       contentRating: normalizeContentRating(candidate.contentRating),
       visibility: normalizeVisibility(candidate.visibility),
-      coverSceneId: resolveCoverSceneId(scenes, candidate.coverSceneId),
+      format,
+      coverSceneId: resolveProjectCoverSceneId(
+        { chapters },
+        candidate.coverSceneId,
+      ),
       publishedRevision,
       publications,
-      scenes,
+      chapters,
       updatedAt,
     },
   };

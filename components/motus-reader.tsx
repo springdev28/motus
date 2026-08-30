@@ -23,6 +23,7 @@ import {
   LIBRARY_CONTENT_WARNING_LABELS,
   MOTUS_LIBRARY_WORKS,
   createCatalogPreviewProject,
+  getCatalogPreviewLayout,
   getLibraryCreatorById,
   getLibraryWork,
   parseStoredReadingProgress,
@@ -45,36 +46,81 @@ export function MotusReader({ slug }: { slug: string }) {
     [work, workIndex],
   );
   const creator = work ? getLibraryCreatorById(work.creatorId) : null;
+  const previewLayout = work ? getCatalogPreviewLayout(work.format) : null;
   const requiresRatingGate =
     work?.rating === 'Mature' || work?.rating === 'Adults only';
   const [mode, setMode] = useState<ReaderMode>(() =>
-    work?.format === 'Page' || work?.format === 'Spread' ? 'page' : 'scroll',
+    project?.format === 'page' ? 'page' : 'scroll',
+  );
+  const [activeChapterId, setActiveChapterId] = useState(
+    () => project?.chapters[0]?.id ?? '',
   );
   const [pageIndex, setPageIndex] = useState(0);
   const [playSession, setPlaySession] = useState(1);
   const [followed, setFollowed] = useState(false);
+  const [followStorageAvailable, setFollowStorageAvailable] = useState(true);
   const [matureConfirmed, setMatureConfirmed] = useState(false);
   const [hydrated, setHydrated] = useState(false);
-  const [resumeTarget, setResumeTarget] = useState<number | null>(null);
+  const [resumeTarget, setResumeTarget] = useState<{
+    chapterId: string;
+    sceneIndex: number;
+  } | null>(null);
+
+  const activeChapter = useMemo(
+    () =>
+      project?.chapters.find((chapter) => chapter.id === activeChapterId) ??
+      project?.chapters[0] ??
+      null,
+    [activeChapterId, project],
+  );
+  const chapterIndex =
+    project && activeChapter
+      ? Math.max(
+          0,
+          project.chapters.findIndex(
+            (chapter) => chapter.id === activeChapter.id,
+          ),
+        )
+      : 0;
 
   useEffect(() => {
     if (!project || !work) return;
     let active = true;
     queueMicrotask(() => {
       if (!active) return;
-      const followedWorks = parseStoredSlugSet(
-        window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
-      );
-      const savedProgress = parseStoredReadingProgress(
-        window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
-      )[work.slug];
-      const resumedIndex = Math.min(
-        Math.max(Math.floor(savedProgress?.sceneIndex ?? 0), 0),
-        project.scenes.length - 1,
+      let followedWorks = new Set<string>();
+      let savedProgress:
+        | ReturnType<typeof parseStoredReadingProgress>[string]
+        | undefined;
+      try {
+        followedWorks = parseStoredSlugSet(
+          window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
+        );
+        savedProgress = parseStoredReadingProgress(
+          window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
+        )[work.slug];
+      } catch {
+        // Reading remains available when browser storage is unavailable.
+        setFollowStorageAvailable(false);
+      }
+      const resumedChapter =
+        project.chapters.find(
+          (chapter) => chapter.id === savedProgress?.chapterId,
+        ) ?? project.chapters[0];
+      const resumedIndex = Math.max(
+        0,
+        resumedChapter.scenes.findIndex(
+          (scene) => scene.id === savedProgress?.sceneId,
+        ),
       );
       setFollowed(followedWorks.has(work.slug));
+      setActiveChapterId(resumedChapter.id);
       setPageIndex(resumedIndex);
-      setResumeTarget(resumedIndex > 0 ? resumedIndex : null);
+      setResumeTarget(
+        resumedIndex > 0 || resumedChapter.id !== project.chapters[0].id
+          ? { chapterId: resumedChapter.id, sceneIndex: resumedIndex }
+          : null,
+      );
       setHydrated(true);
     });
     return () => {
@@ -91,7 +137,9 @@ export function MotusReader({ slug }: { slug: string }) {
       return;
     const frame = window.requestAnimationFrame(() => {
       document
-        .getElementById(`published-reader-scene-${resumeTarget + 1}`)
+        .getElementById(
+          `published-reader-scene-${resumeTarget.chapterId}-${resumeTarget.sceneIndex + 1}`,
+        )
         ?.scrollIntoView({ block: 'start' });
       setResumeTarget(null);
     });
@@ -99,19 +147,31 @@ export function MotusReader({ slug }: { slug: string }) {
   }, [matureConfirmed, mode, requiresRatingGate, resumeTarget]);
 
   const recordProgress = useCallback(
-    (nextSceneIndex: number) => {
+    (chapterId: string, nextSceneIndex: number) => {
       if (!work || !project || !hydrated) return;
+      const chapter =
+        project.chapters.find((item) => item.id === chapterId) ??
+        project.chapters[0];
       const sceneIndex = Math.min(
         Math.max(Math.floor(nextSceneIndex), 0),
-        project.scenes.length - 1,
+        chapter.scenes.length - 1,
       );
-      const progress = parseStoredReadingProgress(
-        window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
-      );
+      let progress = {} as ReturnType<typeof parseStoredReadingProgress>;
+      let storageReadable = true;
+      try {
+        progress = parseStoredReadingProgress(
+          window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
+        );
+      } catch {
+        // A blocked read still allows the current reading session to continue.
+        storageReadable = false;
+      }
       progress[work.slug] = {
-        sceneIndex,
+        chapterId: chapter.id,
+        sceneId: chapter.scenes[sceneIndex].id,
         updatedAt: new Date().toISOString(),
       };
+      if (!storageReadable) return;
       try {
         window.localStorage.setItem(
           READING_PROGRESS_STORAGE_KEY,
@@ -125,35 +185,85 @@ export function MotusReader({ slug }: { slug: string }) {
   );
 
   const selectPage = (nextPageIndex: number) => {
-    if (!project) return;
+    if (!project || !activeChapter) return;
     const resolved = Math.min(
       Math.max(nextPageIndex, 0),
-      project.scenes.length - 1,
+      activeChapter.scenes.length - 1,
     );
     setPageIndex(resolved);
     setPlaySession((session) => session + 1);
-    recordProgress(resolved);
+    recordProgress(activeChapter.id, resolved);
+  };
+
+  const selectChapter = (nextChapterIndex: number, targetSceneIndex = 0) => {
+    if (!project) return;
+    const resolvedChapterIndex = Math.min(
+      Math.max(nextChapterIndex, 0),
+      project.chapters.length - 1,
+    );
+    const chapter = project.chapters[resolvedChapterIndex];
+    const resolvedSceneIndex = Math.min(
+      Math.max(targetSceneIndex, 0),
+      chapter.scenes.length - 1,
+    );
+    setActiveChapterId(chapter.id);
+    setPageIndex(resolvedSceneIndex);
+    setResumeTarget({
+      chapterId: chapter.id,
+      sceneIndex: resolvedSceneIndex,
+    });
+    setPlaySession((session) => session + 1);
+    recordProgress(chapter.id, resolvedSceneIndex);
+  };
+
+  const selectPreviousPage = () => {
+    if (!activeChapter) return;
+    if (pageIndex > 0) selectPage(pageIndex - 1);
+    else if (chapterIndex > 0) {
+      const previous = project!.chapters[chapterIndex - 1];
+      selectChapter(chapterIndex - 1, previous.scenes.length - 1);
+    }
+  };
+
+  const selectNextPage = () => {
+    if (!activeChapter || !project) return;
+    if (pageIndex < activeChapter.scenes.length - 1) {
+      selectPage(pageIndex + 1);
+    } else if (chapterIndex < project.chapters.length - 1) {
+      selectChapter(chapterIndex + 1);
+    }
   };
 
   const toggleFollow = () => {
     if (!work) return;
-    const followedWorks = parseStoredSlugSet(
-      window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
-    );
+    let followedWorks = new Set(followed ? [work.slug] : []);
+    let storageReadable = followStorageAvailable;
+    if (storageReadable) {
+      try {
+        followedWorks = parseStoredSlugSet(
+          window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
+        );
+      } catch {
+        storageReadable = false;
+        setFollowStorageAvailable(false);
+      }
+    }
     if (followedWorks.has(work.slug)) followedWorks.delete(work.slug);
     else followedWorks.add(work.slug);
-    try {
-      window.localStorage.setItem(
-        FOLLOWED_WORKS_STORAGE_KEY,
-        JSON.stringify([...followedWorks]),
-      );
-    } catch {
-      return;
+    if (storageReadable) {
+      try {
+        window.localStorage.setItem(
+          FOLLOWED_WORKS_STORAGE_KEY,
+          JSON.stringify([...followedWorks]),
+        );
+      } catch {
+        setFollowStorageAvailable(false);
+      }
     }
     setFollowed(followedWorks.has(work.slug));
   };
 
-  if (!work || !project) {
+  if (!work || !project || !activeChapter) {
     return (
       <main className="published-reader-missing">
         <MotusLogo />
@@ -164,8 +274,15 @@ export function MotusReader({ slug }: { slug: string }) {
     );
   }
 
+  const scenesBeforeChapter = project.chapters
+    .slice(0, chapterIndex)
+    .reduce((total, chapter) => total + chapter.scenes.length, 0);
+  const totalScenes = project.chapters.reduce(
+    (total, chapter) => total + chapter.scenes.length,
+    0,
+  );
   const progressPercent =
-    ((pageIndex + 1) / Math.max(project.scenes.length, 1)) * 100;
+    ((scenesBeforeChapter + pageIndex + 1) / Math.max(totalScenes, 1)) * 100;
 
   return (
     <div className="published-reader-shell">
@@ -178,16 +295,19 @@ export function MotusReader({ slug }: { slug: string }) {
           <MotusLogo />
           <span>MOTUS</span>
         </a>
-        <Button
-          aria-pressed={followed}
-          className="published-reader-follow"
-          onClick={toggleFollow}
-          size="sm"
-          variant={followed ? 'secondary' : 'default'}
-        >
-          {followed ? <Check /> : <Heart />}
-          {followed ? 'Following' : 'Follow work'}
-        </Button>
+        <div className="published-reader-follow-wrap">
+          <Button
+            aria-pressed={followed}
+            className="published-reader-follow"
+            onClick={toggleFollow}
+            size="sm"
+            variant={followed ? 'secondary' : 'default'}
+          >
+            {followed ? <Check /> : <Heart />}
+            {followed ? 'Following' : 'Follow work'}
+          </Button>
+          {!followStorageAvailable ? <small>Session only</small> : null}
+        </div>
       </header>
 
       <main className="published-reader-main">
@@ -205,6 +325,11 @@ export function MotusReader({ slug }: { slug: string }) {
             <span className="published-reader-eyebrow">
               {work.format} · {work.status}
             </span>
+            {previewLayout && !previewLayout.native ? (
+              <span className="published-reader-prototype">
+                Prototype preview · {previewLayout.label} layout
+              </span>
+            ) : null}
             <h1>{work.title}</h1>
             <a
               href={`/creator/${creator?.routeHandle ?? work.creatorHandle.replace(/^@/, '')}`}
@@ -237,7 +362,9 @@ export function MotusReader({ slug }: { slug: string }) {
           <dl className="published-reader-facts">
             <div>
               <dt>Chapter</dt>
-              <dd>1 / {work.chapterCount}</dd>
+              <dd>
+                {chapterIndex + 1} / {project.chapters.length}
+              </dd>
             </div>
             <div>
               <dt>Language</dt>
@@ -291,12 +418,41 @@ export function MotusReader({ slug }: { slug: string }) {
           >
             <header className="published-reader-toolbar">
               <div>
-                <span>CHAPTER 01</span>
-                <h2 id="chapter-title">{project.chapterTitle}</h2>
+                <span>
+                  CHAPTER {String(chapterIndex + 1).padStart(2, '0')} OF{' '}
+                  {String(project.chapters.length).padStart(2, '0')}
+                </span>
+                <h2 id="chapter-title">{activeChapter.title}</h2>
               </div>
               <div className="published-reader-controls">
+                <nav
+                  aria-label="Chapter navigation"
+                  className="published-reader-chapter-nav"
+                >
+                  <Button
+                    aria-label="Previous chapter"
+                    disabled={chapterIndex === 0}
+                    onClick={() => selectChapter(chapterIndex - 1)}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    <ChevronLeft />
+                  </Button>
+                  <span>
+                    {chapterIndex + 1} / {project.chapters.length}
+                  </span>
+                  <Button
+                    aria-label="Next chapter"
+                    disabled={chapterIndex === project.chapters.length - 1}
+                    onClick={() => selectChapter(chapterIndex + 1)}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    <ChevronRight />
+                  </Button>
+                </nav>
                 <fieldset>
-                  <legend className="sr-only">Reader layout</legend>
+                  <legend className="sr-only">Preview layout</legend>
                   <button
                     aria-pressed={mode === 'scroll'}
                     onClick={() => setMode('scroll')}
@@ -332,14 +488,14 @@ export function MotusReader({ slug }: { slug: string }) {
 
             {mode === 'scroll' ? (
               <div className="published-reader-scroll">
-                {project.scenes.map((scene, index) => (
+                {activeChapter.scenes.map((scene, index) => (
                   <ReaderScene
-                    anchorId={`published-reader-scene-${index + 1}`}
+                    anchorId={`published-reader-scene-${activeChapter.id}-${index + 1}`}
                     index={index}
                     key={`${scene.id}-${playSession}`}
                     onEnter={(enteredIndex) => {
                       setPageIndex(enteredIndex);
-                      recordProgress(enteredIndex);
+                      recordProgress(activeChapter.id, enteredIndex);
                     }}
                     scene={scene}
                     sessionKey={playSession}
@@ -350,26 +506,32 @@ export function MotusReader({ slug }: { slug: string }) {
               <div className="published-reader-paged">
                 <ReaderScene
                   index={pageIndex}
-                  key={`${project.scenes[pageIndex].id}-${playSession}`}
-                  onEnter={recordProgress}
-                  scene={project.scenes[pageIndex]}
+                  key={`${activeChapter.scenes[pageIndex].id}-${playSession}`}
+                  onEnter={(enteredIndex) =>
+                    recordProgress(activeChapter.id, enteredIndex)
+                  }
+                  scene={activeChapter.scenes[pageIndex]}
                   sessionKey={playSession}
                 />
                 <div className="published-reader-page-controls">
                   <Button
-                    disabled={pageIndex === 0}
-                    onClick={() => selectPage(pageIndex - 1)}
+                    disabled={pageIndex === 0 && chapterIndex === 0}
+                    onClick={selectPreviousPage}
                     variant="secondary"
                   >
                     <ChevronLeft />
                     Previous
                   </Button>
                   <span>
-                    Page {pageIndex + 1} of {project.scenes.length}
+                    {project.format === 'page' ? 'Page' : 'Scene'}{' '}
+                    {pageIndex + 1} of {activeChapter.scenes.length}
                   </span>
                   <Button
-                    disabled={pageIndex === project.scenes.length - 1}
-                    onClick={() => selectPage(pageIndex + 1)}
+                    disabled={
+                      pageIndex === activeChapter.scenes.length - 1 &&
+                      chapterIndex === project.chapters.length - 1
+                    }
+                    onClick={selectNextPage}
                   >
                     Next
                     <ChevronRight />

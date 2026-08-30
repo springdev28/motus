@@ -115,7 +115,9 @@ import { Input } from '@/components/ui/input';
 import {
   MOTUS_LIBRARY_WORKS as workCatalog,
   createCatalogPreviewProject,
+  getCatalogPreviewLayout,
   type LibraryWork as WorkCatalogEntry,
+  type LibraryWorkFormat,
 } from '@/lib/motus-library';
 import {
   NativeSelect,
@@ -145,6 +147,7 @@ import {
   MAX_ELEMENT_TEXT_LENGTH,
   MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_PROJECT_FILE_BYTES,
+  MAX_PROJECT_CHAPTERS,
   MAX_PROJECT_SCENES,
   MAX_PROJECT_TITLE_LENGTH,
   MAX_SCENE_ELEMENTS,
@@ -156,11 +159,13 @@ import {
   MIN_ELEMENT_LINE_HEIGHT,
   MIN_ELEMENT_WIDTH,
   alignSelectedElements,
+  canAddChapterToProject,
   canAddElementToScene,
   canAddSceneToProject,
   cloneProject,
   compileElementMotion,
   constrainElementToCanvas,
+  createBlankChapter,
   createBlankProject,
   createBounceJump,
   createCopyName,
@@ -174,6 +179,7 @@ import {
   describeElementForAccessibility,
   detectImageFormat,
   distributeSelectedElements,
+  findProjectScene,
   findSupportedImageFile,
   getPublicationReadiness,
   getDraftSaveStatus,
@@ -183,6 +189,7 @@ import {
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
   getProjectStorageBytes,
+  getProjectScenes,
   getSceneThumbnailElements,
   getTabIndexForKey,
   hasFileDrag,
@@ -197,12 +204,13 @@ import {
   recordProjectHistory,
   removePublicationRevision,
   replaceMotionEvent,
+  reorderChapters,
   reorderMotionActionBefore,
   reorderScenes,
   resetProjectTimeline,
   resolveDraftConflict,
-  resolveCoverSceneId,
   resolveEditorSelection,
+  resolveProjectCoverSceneId,
   resolveReaderSource,
   resolveSelectionAfterElementDeletion,
   restorePublicationToDraft,
@@ -227,6 +235,7 @@ import {
   type ElementTextAlignment,
   type ElementTypography,
   type ElementType,
+  type MotusChapter,
   type MotusElement,
   type MotionBlock,
   type MotionBlockCategory,
@@ -234,6 +243,7 @@ import {
   type MotionBlockKind,
   type MotionEventBlockKind,
   type MotusProject,
+  type MotusProjectFormat,
   type MotusPublicationRevision,
   type MotusScene,
   type ProjectHistoryEntry,
@@ -405,6 +415,7 @@ function getBlockWorkspaceGridTemplate(layout: BlockWorkspaceLayout) {
 
 type DeletionUndo = {
   message: string;
+  chapterId: string;
   sceneId: string;
   elementId: string;
   elementIds?: string[];
@@ -928,9 +939,9 @@ function findElement(
   sceneId: string,
   elementId: string,
 ) {
-  return project.scenes
-    .find((scene) => scene.id === sceneId)
-    ?.elements.find((element) => element.id === elementId);
+  return findProjectScene(project, sceneId)?.scene.elements.find(
+    (element) => element.id === elementId,
+  );
 }
 
 function elementIcon(type: ElementType) {
@@ -1688,6 +1699,9 @@ export function ReaderScene({
 
 export function MotusStudio() {
   const [project, setProject] = useState<MotusProject>(createDefaultProject);
+  const [activeChapterId, setActiveChapterId] = useState(
+    'signal-in-the-fog-chapter-1',
+  );
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
   const [selectedElementId, setPrimarySelectedElementId] =
     useState('scene-1-orb');
@@ -1724,6 +1738,9 @@ export function MotusStudio() {
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
   const [readerMode, setReaderMode] = useState<ReaderMode>('scroll');
+  const [readerChapterId, setReaderChapterId] = useState(
+    'signal-in-the-fog-chapter-1',
+  );
   const [readerPageIndex, setReaderPageIndex] = useState(0);
   const [publishOpen, setPublishOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
@@ -1755,6 +1772,8 @@ export function MotusStudio() {
     useState<MotusPublicationRevision | null>(null);
   const [readerCatalogProject, setReaderCatalogProject] =
     useState<MotusProject | null>(null);
+  const [readerCatalogFormat, setReaderCatalogFormat] =
+    useState<LibraryWorkFormat | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [notice, setNotice] = useState('Ready');
@@ -1772,6 +1791,7 @@ export function MotusStudio() {
   const motionProperties = useRef<HTMLDivElement>(null);
   const readerScroll = useRef<HTMLDivElement>(null);
   const canvasElementRefs = useRef(new Map<string, HTMLDivElement>());
+  const chapterButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
@@ -1784,6 +1804,13 @@ export function MotusStudio() {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
+
+  const resetTransientCanvasState = useCallback(() => {
+    activePointerCleanup.current?.();
+    setPreviewRunning(false);
+    setCanvasPreviewKey(0);
+    setEditingTextElementId(null);
+  }, []);
 
   const resetEditorHistory = useCallback(() => {
     const reset = resetProjectTimeline({
@@ -1862,13 +1889,23 @@ export function MotusStudio() {
     });
   };
 
+  const activeChapter =
+    project.chapters.find((chapter) => chapter.id === activeChapterId) ??
+    project.chapters[0];
   const activeScene =
-    project.scenes.find((scene) => scene.id === activeSceneId) ??
-    project.scenes[0];
-  const sceneIndex = Math.max(
-    project.scenes.findIndex((scene) => scene.id === activeScene.id),
+    activeChapter.scenes.find((scene) => scene.id === activeSceneId) ??
+    activeChapter.scenes[0];
+  const chapterIndex = Math.max(
+    project.chapters.findIndex((chapter) => chapter.id === activeChapter.id),
     0,
   );
+  const sceneIndex = Math.max(
+    activeChapter.scenes.findIndex((scene) => scene.id === activeScene.id),
+    0,
+  );
+  const allScenes = useMemo(() => getProjectScenes(project), [project]);
+  const projectCoverScene =
+    findProjectScene(project, project.coverSceneId)?.scene ?? allScenes[0];
   const selectedElement = useMemo(
     () =>
       activeScene.elements.find((element) => element.id === selectedElementId),
@@ -1954,7 +1991,7 @@ export function MotusStudio() {
     : undefined;
   const projectImageAssets = useMemo(() => {
     const assets = new Map<string, ProjectImageAsset>();
-    for (const scene of project.scenes) {
+    for (const scene of allScenes) {
       for (const element of scene.elements) {
         if (element.type !== 'image' || !element.src) continue;
         const existing = assets.get(element.src);
@@ -1973,7 +2010,7 @@ export function MotusStudio() {
       }
     }
     return [...assets.values()];
-  }, [project.scenes]);
+  }, [allScenes]);
   const normalizedBlockPaletteSearch = blockPaletteSearch
     .trim()
     .toLocaleLowerCase();
@@ -2124,9 +2161,10 @@ export function MotusStudio() {
         resetEditorHistory();
         setProject(restored.project);
         setIsDirty(false);
-        setActiveSceneId(restored.project.scenes[0].id);
+        setActiveChapterId(restored.project.chapters[0].id);
+        setActiveSceneId(restored.project.chapters[0].scenes[0].id);
         setSelectedElementId(
-          restored.project.scenes[0].elements.at(-1)?.id ?? '',
+          restored.project.chapters[0].scenes[0].elements.at(-1)?.id ?? '',
         );
         setNotice(
           restored.source === 'legacy'
@@ -2211,11 +2249,14 @@ export function MotusStudio() {
       if (!isDirty) {
         const saved = readSavedDraft();
         if (saved) {
+          resetTransientCanvasState();
           const selection = resolveEditorSelection(
             saved.project,
+            activeChapterId,
             activeSceneId,
             selectedElementId,
           );
+          setActiveChapterId(selection.chapterId);
           setActiveSceneId(selection.sceneId);
           setSelectedElementId(selection.elementId);
           clearDeletionUndo();
@@ -2238,11 +2279,13 @@ export function MotusStudio() {
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, [
+    activeChapterId,
     activeSceneId,
     clearDeletionUndo,
     hydrated,
     isDirty,
     resetEditorHistory,
+    resetTransientCanvasState,
     selectedElementId,
     setSelectedElementId,
   ]);
@@ -2262,7 +2305,11 @@ export function MotusStudio() {
         transactionKey: historyTransaction.current,
       },
       project,
-      { sceneId: activeScene.id, elementId: selectedElementId },
+      {
+        chapterId: activeChapter.id,
+        sceneId: activeScene.id,
+        elementId: selectedElementId,
+      },
       transactionKey,
     );
     undoStack.current = history.undoStack;
@@ -2314,7 +2361,11 @@ export function MotusStudio() {
         transactionKey: historyTransaction.current,
       },
       project,
-      { sceneId: activeScene.id, elementId: selectedElementId },
+      {
+        chapterId: activeChapter.id,
+        sceneId: activeScene.id,
+        elementId: selectedElementId,
+      },
       null,
     );
     undoStack.current = history.undoStack;
@@ -2367,27 +2418,36 @@ export function MotusStudio() {
   };
 
   const reconcileSelection = (candidate: MotusProject) => {
+    resetTransientCanvasState();
     const selection = resolveEditorSelection(
       candidate,
+      activeChapterId,
       activeSceneId,
       selectedElementId,
     );
+    setActiveChapterId(selection.chapterId);
     setActiveSceneId(selection.sceneId);
     setSelectedElementId(selection.elementId);
   };
 
   const restoreHistorySelection = (
     candidate: MotusProject,
+    chapterId: string,
     sceneId: string,
     elementId: string,
   ) => {
-    const selection = resolveEditorSelection(candidate, sceneId, elementId);
-    const scene = candidate.scenes.find(
-      (item) => item.id === selection.sceneId,
+    resetTransientCanvasState();
+    const selection = resolveEditorSelection(
+      candidate,
+      chapterId,
+      sceneId,
+      elementId,
     );
+    const scene = findProjectScene(candidate, selection.sceneId)?.scene;
     const preservedSelection = selectedElementIds.filter((id) =>
       scene?.elements.some((element) => element.id === id),
     );
+    setActiveChapterId(selection.chapterId);
     setActiveSceneId(selection.sceneId);
     if (preservedSelection.length > 1) {
       setSelectedElementIds(preservedSelection);
@@ -2410,6 +2470,7 @@ export function MotusStudio() {
     redoStack.current = trimProjectHistory([
       ...redoStack.current,
       createProjectHistoryEntry(project, {
+        chapterId: activeChapter.id,
         sceneId: activeScene.id,
         elementId: selectedElementId,
       }),
@@ -2419,6 +2480,7 @@ export function MotusStudio() {
     setIsDirty(true);
     restoreHistorySelection(
       previous.project,
+      previous.selection.chapterId,
       previous.selection.sceneId,
       previous.selection.elementId,
     );
@@ -2435,6 +2497,7 @@ export function MotusStudio() {
     undoStack.current = trimProjectHistory([
       ...undoStack.current,
       createProjectHistoryEntry(project, {
+        chapterId: activeChapter.id,
         sceneId: activeScene.id,
         elementId: selectedElementId,
       }),
@@ -2444,6 +2507,7 @@ export function MotusStudio() {
     setIsDirty(true);
     restoreHistorySelection(
       next.project,
+      next.selection.chapterId,
       next.selection.sceneId,
       next.selection.elementId,
     );
@@ -2455,6 +2519,7 @@ export function MotusStudio() {
     if (!deletionUndo) return;
     const recovery = deletionUndo;
     undo();
+    setActiveChapterId(recovery.chapterId);
     setActiveSceneId(recovery.sceneId);
     if (recovery.elementIds && recovery.elementIds.length > 1) {
       setSelectedElementIds(recovery.elementIds);
@@ -2477,9 +2542,7 @@ export function MotusStudio() {
     const index = activeScene.elements.length + 1;
     const element = createElement(type, index, overrides);
     const addToDraft = (draft: MotusProject) => {
-      draft.scenes
-        .find((scene) => scene.id === activeScene.id)
-        ?.elements.push(element);
+      findProjectScene(draft, activeScene.id)?.scene.elements.push(element);
     };
     if (requireStoragePreflight) {
       if (
@@ -2515,7 +2578,7 @@ export function MotusStudio() {
       elementId,
     );
     commitProject((draft) => {
-      const scene = draft.scenes.find((item) => item.id === activeScene.id);
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
       if (!scene) return;
       scene.elements = scene.elements.filter(
         (element) => element.id !== elementId,
@@ -2529,6 +2592,7 @@ export function MotusStudio() {
     );
     showDeletionUndo({
       message: `${deletedElement.name} ${action === 'cut' ? 'cut' : 'deleted'}`,
+      chapterId: activeChapter.id,
       sceneId: activeScene.id,
       elementId,
     });
@@ -2548,7 +2612,7 @@ export function MotusStudio() {
     const nextSelectedElementId = remainingElements.at(-1)?.id ?? '';
     const primaryElementId = selectedElementId || deletedIds.at(-1)!;
     commitProject((draft) => {
-      const scene = draft.scenes.find((item) => item.id === activeScene.id);
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
       if (!scene) return;
       scene.elements = scene.elements.filter(
         (element) => !deletedIdSet.has(element.id),
@@ -2562,6 +2626,7 @@ export function MotusStudio() {
     );
     showDeletionUndo({
       message: `${deletedIds.length} layers ${action === 'cut' ? 'cut' : 'deleted'}`,
+      chapterId: activeChapter.id,
       sceneId: activeScene.id,
       elementId: primaryElementId,
       elementIds: deletedIds,
@@ -2571,9 +2636,7 @@ export function MotusStudio() {
 
   const moveLayer = (elementId: string, direction: -1 | 1) => {
     commitProject((draft) => {
-      const elements = draft.scenes.find(
-        (scene) => scene.id === activeScene.id,
-      )?.elements;
+      const elements = findProjectScene(draft, activeScene.id)?.scene.elements;
       if (!elements) return;
       const index = elements.findIndex((element) => element.id === elementId);
       const target = index + direction;
@@ -2598,7 +2661,7 @@ export function MotusStudio() {
       const selectionIds = [...unlockedSelectedElementIds];
       commitProject(
         (draft) => {
-          const scene = draft.scenes.find((item) => item.id === activeScene.id);
+          const scene = findProjectScene(draft, activeScene.id)?.scene;
           if (!scene) return;
           scene.elements = translateSelectedElements(
             scene.elements,
@@ -2651,7 +2714,7 @@ export function MotusStudio() {
     }
     endHistoryTransaction();
     commitProject((draft) => {
-      const scene = draft.scenes.find((item) => item.id === activeScene.id);
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
       if (!scene) return;
       scene.elements = alignSelectedElements(
         scene.elements,
@@ -2686,7 +2749,7 @@ export function MotusStudio() {
     }
     endHistoryTransaction();
     commitProject((draft) => {
-      const scene = draft.scenes.find((item) => item.id === activeScene.id);
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
       if (!scene) return;
       scene.elements = distributeSelectedElements(
         scene.elements,
@@ -2701,14 +2764,110 @@ export function MotusStudio() {
 
   const moveScene = (direction: -1 | 1) => {
     const targetIndex = sceneIndex + direction;
-    if (targetIndex < 0 || targetIndex >= project.scenes.length) {
+    if (targetIndex < 0 || targetIndex >= activeChapter.scenes.length) {
       setNotice('Scene is already at the edge');
       return;
     }
     commitProject((draft) => {
-      draft.scenes = reorderScenes(draft.scenes, activeScene.id, direction);
+      const chapter = draft.chapters.find(
+        (item) => item.id === activeChapter.id,
+      );
+      if (chapter) {
+        chapter.scenes = reorderScenes(
+          chapter.scenes,
+          activeScene.id,
+          direction,
+        );
+      }
     });
     setNotice(direction < 0 ? 'Scene moved earlier' : 'Scene moved later');
+  };
+
+  const selectChapter = (chapter: MotusChapter) => {
+    resetTransientCanvasState();
+    endHistoryTransaction();
+    const firstScene = chapter.scenes[0];
+    setActiveChapterId(chapter.id);
+    setActiveSceneId(firstScene.id);
+    setSelectedElementId(firstScene.elements.at(-1)?.id ?? '');
+    setNotice(`${chapter.title} selected`);
+  };
+
+  const addChapter = () => {
+    if (!canAddChapterToProject(project)) {
+      setNotice(
+        project.chapters.length >= MAX_PROJECT_CHAPTERS
+          ? `This work has reached the ${MAX_PROJECT_CHAPTERS}-chapter limit`
+          : `This work has reached the ${MAX_PROJECT_SCENES}-scene limit`,
+      );
+      return;
+    }
+    resetTransientCanvasState();
+    endHistoryTransaction();
+    const id = uniqueId('chapter');
+    const sceneId = uniqueId('scene');
+    const chapter = createBlankChapter({
+      id,
+      sceneId,
+      title: `Chapter ${project.chapters.length + 1}`,
+    });
+    commitProject((draft) => draft.chapters.push(chapter));
+    setActiveChapterId(id);
+    setActiveSceneId(sceneId);
+    setSelectedElementId('');
+    setNotice(`${chapter.title} added`);
+    window.requestAnimationFrame(() => {
+      chapterButtonRefs.current.get(id)?.focus();
+    });
+  };
+
+  const moveChapter = (direction: -1 | 1) => {
+    const targetIndex = chapterIndex + direction;
+    if (targetIndex < 0 || targetIndex >= project.chapters.length) {
+      setNotice('Chapter is already at the edge');
+      return;
+    }
+    commitProject((draft) => {
+      draft.chapters = reorderChapters(
+        draft.chapters,
+        activeChapter.id,
+        direction,
+      );
+    });
+    setNotice(direction < 0 ? 'Chapter moved earlier' : 'Chapter moved later');
+  };
+
+  const deleteChapter = () => {
+    if (project.chapters.length === 1) {
+      setNotice('A work needs at least one chapter');
+      return;
+    }
+    resetTransientCanvasState();
+    endHistoryTransaction();
+    const nextChapter =
+      project.chapters[chapterIndex === 0 ? 1 : chapterIndex - 1];
+    const nextScene = nextChapter.scenes[0];
+    commitProject((draft) => {
+      draft.chapters = draft.chapters.filter(
+        (chapter) => chapter.id !== activeChapter.id,
+      );
+      draft.coverSceneId = resolveProjectCoverSceneId(
+        draft,
+        draft.coverSceneId,
+      );
+    });
+    setActiveChapterId(nextChapter.id);
+    setActiveSceneId(nextScene.id);
+    const nextElementId = nextScene.elements.at(-1)?.id ?? '';
+    setSelectedElementId(nextElementId);
+    showDeletionUndo({
+      message: `${activeChapter.title} deleted`,
+      chapterId: activeChapter.id,
+      sceneId: activeScene.id,
+      elementId: selectedElementId,
+    });
+    setNotice(`${activeChapter.title} deleted`);
+    focusEditorTarget(nextScene.id, nextElementId);
   };
 
   const addMotionBlock = (
@@ -3066,6 +3225,8 @@ export function MotusStudio() {
       (candidate) => candidate.id === templateId,
     );
     if (!template) return;
+    resetTransientCanvasState();
+    endHistoryTransaction();
     const id = uniqueId('scene');
     const nextScene: MotusScene = {
       id,
@@ -3102,7 +3263,11 @@ export function MotusStudio() {
         }),
       ],
     };
-    commitProject((draft) => draft.scenes.push(nextScene));
+    commitProject((draft) => {
+      draft.chapters
+        .find((chapter) => chapter.id === activeChapter.id)
+        ?.scenes.push(nextScene);
+    });
     setActiveSceneId(id);
     setSelectedElementId(nextScene.elements[0].id);
     setCatalogOpen(false);
@@ -3244,9 +3409,7 @@ export function MotusStudio() {
     }
     const copy = createElementCopy(source, uniqueId(source.type));
     const addCopyToDraft = (draft: MotusProject) => {
-      draft.scenes
-        .find((scene) => scene.id === activeScene.id)
-        ?.elements.push(copy);
+      findProjectScene(draft, activeScene.id)?.scene.elements.push(copy);
     };
     if (
       !commitProjectWithStoragePreflight(
@@ -3306,9 +3469,7 @@ export function MotusStudio() {
     );
     if (
       !commitProjectWithStoragePreflight((draft) => {
-        draft.scenes
-          .find((scene) => scene.id === activeScene.id)
-          ?.elements.push(...copies);
+        findProjectScene(draft, activeScene.id)?.scene.elements.push(...copies);
       }, 'Layer copies cannot fit in device storage')
     ) {
       return false;
@@ -3337,15 +3498,21 @@ export function MotusStudio() {
       setNotice(`This work has reached the ${MAX_PROJECT_SCENES}-scene limit`);
       return;
     }
+    resetTransientCanvasState();
+    endHistoryTransaction();
     const id = uniqueId('scene');
     const nextScene: MotusScene = {
       id,
-      name: `Scene ${project.scenes.length + 1}`,
+      name: `Scene ${allScenes.length + 1}`,
       background:
         'linear-gradient(155deg, #28213d 0%, #12131e 54%, #3c3350 100%)',
       elements: [],
     };
-    commitProject((draft) => draft.scenes.push(nextScene));
+    commitProject((draft) => {
+      draft.chapters
+        .find((chapter) => chapter.id === activeChapter.id)
+        ?.scenes.push(nextScene);
+    });
     setActiveSceneId(id);
     setSelectedElementId('');
     setNotice('Blank scene added');
@@ -3357,6 +3524,8 @@ export function MotusStudio() {
       setNotice(`This work has reached the ${MAX_PROJECT_SCENES}-scene limit`);
       return;
     }
+    resetTransientCanvasState();
+    endHistoryTransaction();
     const copy = structuredClone(activeScene);
     copy.id = uniqueId('scene');
     copy.name = createCopyName(activeScene.name, MAX_SCENE_NAME_LENGTH);
@@ -3381,10 +3550,11 @@ export function MotusStudio() {
       };
     });
     if (
-      !commitProjectWithStoragePreflight(
-        (draft) => draft.scenes.splice(sceneIndex + 1, 0, copy),
-        'Scene copy cannot fit in device storage',
-      )
+      !commitProjectWithStoragePreflight((draft) => {
+        draft.chapters
+          .find((chapter) => chapter.id === activeChapter.id)
+          ?.scenes.splice(sceneIndex + 1, 0, copy);
+      }, 'Scene copy cannot fit in device storage')
     ) {
       return;
     }
@@ -3396,17 +3566,24 @@ export function MotusStudio() {
   };
 
   const deleteScene = () => {
-    if (project.scenes.length === 1) {
-      setNotice('A project needs at least one scene');
+    if (activeChapter.scenes.length === 1) {
+      setNotice('Each chapter needs at least one scene');
       return;
     }
-    const nextScene = project.scenes[sceneIndex === 0 ? 1 : sceneIndex - 1];
+    resetTransientCanvasState();
+    endHistoryTransaction();
+    const nextScene =
+      activeChapter.scenes[sceneIndex === 0 ? 1 : sceneIndex - 1];
     commitProject((draft) => {
-      draft.scenes = draft.scenes.filter(
+      const chapter = draft.chapters.find(
+        (item) => item.id === activeChapter.id,
+      );
+      if (!chapter) return;
+      chapter.scenes = chapter.scenes.filter(
         (scene) => scene.id !== activeScene.id,
       );
-      draft.coverSceneId = resolveCoverSceneId(
-        draft.scenes,
+      draft.coverSceneId = resolveProjectCoverSceneId(
+        draft,
         draft.coverSceneId,
       );
     });
@@ -3416,6 +3593,7 @@ export function MotusStudio() {
     setNotice('Scene deleted');
     showDeletionUndo({
       message: `${activeScene.name} deleted`,
+      chapterId: activeChapter.id,
       sceneId: activeScene.id,
       elementId: selectedElementId,
     });
@@ -3442,6 +3620,7 @@ export function MotusStudio() {
       return;
     }
 
+    resetTransientCanvasState();
     downloadProject(project);
     const restored = cloneProject(pendingProjectImport.project);
     restored.updatedAt = nowIso();
@@ -3455,6 +3634,7 @@ export function MotusStudio() {
 
     undoStack.current = [
       createProjectHistoryEntry(project, {
+        chapterId: activeChapter.id,
         sceneId: activeScene.id,
         elementId: selectedElementId,
       }),
@@ -3466,8 +3646,11 @@ export function MotusStudio() {
     clearDeletionUndo();
     setProject(restored);
     setIsDirty(false);
-    setActiveSceneId(restored.scenes[0].id);
-    setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
+    setActiveChapterId(restored.chapters[0].id);
+    setActiveSceneId(restored.chapters[0].scenes[0].id);
+    setSelectedElementId(
+      restored.chapters[0].scenes[0].elements.at(-1)?.id ?? '',
+    );
     setPendingProjectImport(null);
     setNotice('Project imported · previous draft downloaded');
   };
@@ -3556,6 +3739,7 @@ export function MotusStudio() {
   };
 
   const startNewWork = () => {
+    resetTransientCanvasState();
     downloadProject(project);
     const blank = createBlankProject(uniqueId('work'), nowIso());
     if (!persistProject(blank, false, false)) {
@@ -3565,6 +3749,7 @@ export function MotusStudio() {
 
     undoStack.current = [
       createProjectHistoryEntry(project, {
+        chapterId: activeChapter.id,
         sceneId: activeScene.id,
         elementId: selectedElementId,
       }),
@@ -3576,7 +3761,8 @@ export function MotusStudio() {
     clearDeletionUndo();
     setProject(blank);
     setIsDirty(false);
-    setActiveSceneId(blank.scenes[0].id);
+    setActiveChapterId(blank.chapters[0].id);
+    setActiveSceneId(blank.chapters[0].scenes[0].id);
     setSelectedElementId('');
     setInspectorTab('design');
     setNewWorkOpen(false);
@@ -3587,8 +3773,12 @@ export function MotusStudio() {
     activePointerCleanup.current?.();
     endHistoryTransaction();
     setReaderCatalogProject(null);
+    setReaderCatalogFormat(null);
     setReaderRevision(revision ? structuredClone(revision) : null);
     setReaderMatureConfirmed(false);
+    const source = resolveReaderSource(project, revision);
+    setReaderMode(source.format === 'page' ? 'page' : 'scroll');
+    setReaderChapterId(source.chapters[0].id);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
@@ -3598,10 +3788,14 @@ export function MotusStudio() {
   };
 
   const openCatalogWork = (work: WorkCatalogEntry, catalogIndex: number) => {
+    const catalogProject = createCatalogPreviewProject(work, catalogIndex);
     setCatalogOpen(false);
-    setReaderCatalogProject(createCatalogPreviewProject(work, catalogIndex));
+    setReaderCatalogProject(catalogProject);
+    setReaderCatalogFormat(work.format);
     setReaderRevision(null);
     setReaderMatureConfirmed(false);
+    setReaderMode(catalogProject.format === 'page' ? 'page' : 'scroll');
+    setReaderChapterId(catalogProject.chapters[0].id);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
@@ -3628,10 +3822,12 @@ export function MotusStudio() {
         } else {
           const blank = createBlankProject(uniqueId('work'), nowIso());
           if (persistProject(blank, false, false)) {
+            resetTransientCanvasState();
             resetEditorHistory();
             setProject(blank);
             setIsDirty(false);
-            setActiveSceneId(blank.scenes[0].id);
+            setActiveChapterId(blank.chapters[0].id);
+            setActiveSceneId(blank.chapters[0].scenes[0].id);
             setSelectedElementId('');
             setInspectorTab('design');
             setMobileStudioPane('stage');
@@ -3639,14 +3835,35 @@ export function MotusStudio() {
           }
         }
       } else if (readerTarget === 'draft') {
-        openReader();
+        setReaderCatalogProject(null);
+        setReaderCatalogFormat(null);
+        setReaderRevision(null);
+        setReaderMatureConfirmed(false);
+        setReaderMode(project.format === 'page' ? 'page' : 'scroll');
+        setReaderChapterId(project.chapters[0].id);
+        setReaderPageIndex(0);
+        setReaderPreviewKey((key) => key + 1);
+        setReaderOpen(true);
+        setNotice('Previewing draft');
       } else if (
         catalogTarget === 'works' &&
         Number.isInteger(requestedWork) &&
         requestedWork >= 0 &&
         requestedWork < workCatalog.length
       ) {
-        openCatalogWork(workCatalog[requestedWork], requestedWork);
+        const work = workCatalog[requestedWork];
+        const catalogProject = createCatalogPreviewProject(work, requestedWork);
+        setCatalogOpen(false);
+        setReaderCatalogProject(catalogProject);
+        setReaderCatalogFormat(work.format);
+        setReaderRevision(null);
+        setReaderMatureConfirmed(false);
+        setReaderMode(catalogProject.format === 'page' ? 'page' : 'scroll');
+        setReaderChapterId(catalogProject.chapters[0].id);
+        setReaderPageIndex(0);
+        setReaderPreviewKey((key) => key + 1);
+        setReaderOpen(true);
+        setNotice(`Previewing ${work.title}`);
       } else if (catalogTarget === 'works' || catalogTarget === 'motion') {
         setCatalogTab(catalogTarget);
         setCatalogOpen(true);
@@ -3668,7 +3885,13 @@ export function MotusStudio() {
     return () => {
       active = false;
     };
-  }, [hydrated, resetEditorHistory, setSelectedElementId]);
+  }, [
+    hydrated,
+    project,
+    resetEditorHistory,
+    resetTransientCanvasState,
+    setSelectedElementId,
+  ]);
 
   const publishRevision = () => {
     if (externalDraftChange) {
@@ -3701,8 +3924,11 @@ export function MotusStudio() {
     }
     setPublishOpen(false);
     setReaderCatalogProject(null);
+    setReaderCatalogFormat(null);
     setReaderRevision(revision);
     setReaderMatureConfirmed(false);
+    setReaderMode(revision.format === 'page' ? 'page' : 'scroll');
+    setReaderChapterId(revision.chapters[0].id);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
@@ -3710,7 +3936,7 @@ export function MotusStudio() {
   };
 
   const restoreRevision = (revision: MotusPublicationRevision) => {
-    activePointerCleanup.current?.();
+    resetTransientCanvasState();
     const restored = restorePublicationToDraft(project, revision.id, nowIso());
     if (!restored) {
       setNotice('Revision could not be restored');
@@ -3719,6 +3945,7 @@ export function MotusStudio() {
     undoStack.current = trimProjectHistory([
       ...undoStack.current,
       createProjectHistoryEntry(project, {
+        chapterId: activeChapter.id,
         sceneId: activeScene.id,
         elementId: selectedElementId,
       }),
@@ -3730,8 +3957,11 @@ export function MotusStudio() {
     clearDeletionUndo();
     setProject(restored);
     setIsDirty(true);
-    setActiveSceneId(restored.scenes[0].id);
-    setSelectedElementId(restored.scenes[0].elements.at(-1)?.id ?? '');
+    setActiveChapterId(restored.chapters[0].id);
+    setActiveSceneId(restored.chapters[0].scenes[0].id);
+    setSelectedElementId(
+      restored.chapters[0].scenes[0].elements.at(-1)?.id ?? '',
+    );
     setPublishOpen(false);
     setNotice(`Revision ${revision.revision} restored to draft`);
   };
@@ -3826,6 +4056,7 @@ export function MotusStudio() {
         undoStack.current = trimProjectHistory([
           ...undoStack.current,
           createProjectHistoryEntry(project, {
+            chapterId: activeChapter.id,
             sceneId: activeScene.id,
             elementId,
           }),
@@ -3864,7 +4095,7 @@ export function MotusStudio() {
       setProject((current) => {
         const next = cloneProject(current);
         if (groupMove) {
-          const scene = next.scenes.find((item) => item.id === activeScene.id);
+          const scene = findProjectScene(next, activeScene.id)?.scene;
           if (!scene) return current;
           const originElements = scene.elements.map((item) => {
             const geometry = originGeometry.get(item.id);
@@ -4196,12 +4427,20 @@ export function MotusStudio() {
     externalChange: externalDraftChange,
     saveFailed,
   });
+  const pendingImportSceneCount = pendingProjectImport
+    ? getProjectScenes(pendingProjectImport.project).length
+    : 0;
   const readerSource = resolveReaderSource(
     readerCatalogProject ?? project,
     readerCatalogProject ? null : readerRevision,
   );
+  const readerCatalogPreviewLayout = readerCatalogFormat
+    ? getCatalogPreviewLayout(readerCatalogFormat)
+    : null;
   const readerPublicationState = readerCatalogProject
-    ? 'Curated catalog preview'
+    ? readerCatalogPreviewLayout && !readerCatalogPreviewLayout.native
+      ? `Curated catalog preview · Prototype ${readerCatalogPreviewLayout.label.toLowerCase()} layout`
+      : 'Curated catalog preview'
     : readerSource.mode === 'revision'
       ? `Published revision ${readerSource.revision} · ${readerSource.visibility}`
       : project.publishedRevision === 0
@@ -4209,10 +4448,20 @@ export function MotusStudio() {
         : publicationHasChanges
           ? `Draft preview · changes since published revision ${project.publishedRevision}`
           : `Draft preview · matches published revision ${project.publishedRevision}`;
-  const readerDescription = `${readerSource.chapterTitle} · by ${readerSource.creatorName} · ${readerPublicationState}`;
+  const readerChapter =
+    readerSource.chapters.find((chapter) => chapter.id === readerChapterId) ??
+    readerSource.chapters[0];
+  const readerChapterIndex = Math.max(
+    readerSource.chapters.findIndex(
+      (chapter) => chapter.id === readerChapter.id,
+    ),
+    0,
+  );
+  const readerScenes = readerChapter.scenes;
+  const readerDescription = `${readerSource.chapters.length} ${readerSource.chapters.length === 1 ? 'chapter' : 'chapters'} · by ${readerSource.creatorName} · ${readerPublicationState}`;
   const resolvedReaderPageIndex = Math.min(
     Math.max(readerPageIndex, 0),
-    Math.max(readerSource.scenes.length - 1, 0),
+    Math.max(readerScenes.length - 1, 0),
   );
   const selectedPreviewDurationMs = useMemo(() => {
     if (!selectedElement?.visible) return 0;
@@ -4272,10 +4521,36 @@ export function MotusStudio() {
     );
   };
   const replayReader = () => {
+    setReaderChapterId(readerSource.chapters[0].id);
     if (readerMode === 'page') setReaderPageIndex(0);
     readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
     setReaderPreviewKey((key) => key + 1);
     setNotice('Reader replayed from the first scene');
+  };
+
+  const selectReaderChapter = (chapter: MotusChapter) => {
+    setReaderChapterId(chapter.id);
+    setReaderPageIndex(0);
+    readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
+    setReaderPreviewKey((key) => key + 1);
+  };
+
+  const moveReaderPage = (direction: -1 | 1) => {
+    if (direction < 0 && resolvedReaderPageIndex > 0) {
+      setReaderPageIndex(resolvedReaderPageIndex - 1);
+    } else if (
+      direction > 0 &&
+      resolvedReaderPageIndex < readerScenes.length - 1
+    ) {
+      setReaderPageIndex(resolvedReaderPageIndex + 1);
+    } else {
+      const targetChapterIndex = readerChapterIndex + direction;
+      const targetChapter = readerSource.chapters[targetChapterIndex];
+      if (!targetChapter) return;
+      setReaderChapterId(targetChapter.id);
+      setReaderPageIndex(direction < 0 ? targetChapter.scenes.length - 1 : 0);
+    }
+    readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
   };
   const requestNewWork = () => {
     activePointerCleanup.current?.();
@@ -4957,9 +5232,10 @@ export function MotusStudio() {
                 maxLength={MAX_SCENE_NAME_LENGTH}
                 onChange={(event) =>
                   commitProject((draft) => {
-                    const scene = draft.scenes.find(
-                      (item) => item.id === activeScene.id,
-                    );
+                    const scene = findProjectScene(
+                      draft,
+                      activeScene.id,
+                    )?.scene;
                     if (scene) scene.name = event.target.value;
                   }, `scene:${activeScene.id}:name`)
                 }
@@ -4978,9 +5254,10 @@ export function MotusStudio() {
                   key={background.name}
                   onClick={() =>
                     commitProject((draft) => {
-                      const scene = draft.scenes.find(
-                        (item) => item.id === activeScene.id,
-                      );
+                      const scene = findProjectScene(
+                        draft,
+                        activeScene.id,
+                      )?.scene;
                       if (scene) scene.background = background.value;
                     })
                   }
@@ -5342,15 +5619,102 @@ export function MotusStudio() {
             </section>
           ) : null}
 
-          <footer className="scene-strip">
-            <div className="scene-strip-copy" title={project.chapterTitle}>
-              <span>Chapter 1</span>
+          <nav aria-label="Chapters" className="chapter-strip">
+            <div className="chapter-strip-copy">
+              <span>WORK STRUCTURE</span>
               <strong>
-                Scene {sceneIndex + 1} / {project.scenes.length}
+                Chapter {chapterIndex + 1} / {project.chapters.length}
+              </strong>
+            </div>
+            <div aria-label="Chapters" className="chapter-tabs" role="tablist">
+              {project.chapters.map((chapter, index) => (
+                <button
+                  aria-label={`Chapter ${index + 1}: ${chapter.title}`}
+                  aria-selected={chapter.id === activeChapter.id}
+                  className="chapter-tab"
+                  data-active={chapter.id === activeChapter.id || undefined}
+                  key={chapter.id}
+                  onClick={() => selectChapter(chapter)}
+                  onKeyDown={(event) => {
+                    const nextIndex = getTabIndexForKey(
+                      index,
+                      project.chapters.length,
+                      event.key,
+                    );
+                    if (nextIndex === null) return;
+                    event.preventDefault();
+                    const nextChapter = project.chapters[nextIndex];
+                    selectChapter(nextChapter);
+                    window.requestAnimationFrame(() =>
+                      chapterButtonRefs.current.get(nextChapter.id)?.focus(),
+                    );
+                  }}
+                  ref={(node) => {
+                    if (node) chapterButtonRefs.current.set(chapter.id, node);
+                    else chapterButtonRefs.current.delete(chapter.id);
+                  }}
+                  role="tab"
+                  tabIndex={chapter.id === activeChapter.id ? 0 : -1}
+                  type="button"
+                >
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <strong>{chapter.title}</strong>
+                  <small>
+                    {chapter.scenes.length}{' '}
+                    {chapter.scenes.length === 1 ? 'scene' : 'scenes'}
+                  </small>
+                </button>
+              ))}
+            </div>
+            <Button
+              className="chapter-action"
+              onClick={addChapter}
+              variant="outline"
+            >
+              <Plus />
+              Chapter
+            </Button>
+            <Button
+              aria-label="Move chapter earlier"
+              className="chapter-icon-action"
+              disabled={chapterIndex === 0}
+              onClick={() => moveChapter(-1)}
+              size="icon"
+              variant="outline"
+            >
+              <ArrowLeft />
+            </Button>
+            <Button
+              aria-label="Move chapter later"
+              className="chapter-icon-action"
+              disabled={chapterIndex === project.chapters.length - 1}
+              onClick={() => moveChapter(1)}
+              size="icon"
+              variant="outline"
+            >
+              <ArrowRight />
+            </Button>
+            <Button
+              aria-label="Delete chapter"
+              className="chapter-icon-action"
+              disabled={project.chapters.length === 1}
+              onClick={deleteChapter}
+              size="icon"
+              variant="destructive"
+            >
+              <Trash2 />
+            </Button>
+          </nav>
+
+          <footer className="scene-strip">
+            <div className="scene-strip-copy" title={activeChapter.title}>
+              <span>{activeChapter.title}</span>
+              <strong>
+                Scene {sceneIndex + 1} / {activeChapter.scenes.length}
               </strong>
             </div>
             <div aria-label="Scenes" className="scene-tabs" role="tablist">
-              {project.scenes.map((scene, index) => (
+              {activeChapter.scenes.map((scene, index) => (
                 <button
                   aria-controls="scene-canvas"
                   aria-label={`Scene ${index + 1}: ${scene.name}`}
@@ -5359,18 +5723,22 @@ export function MotusStudio() {
                   data-active={scene.id === activeScene.id || undefined}
                   key={scene.id}
                   onClick={() => {
+                    resetTransientCanvasState();
+                    endHistoryTransaction();
                     setActiveSceneId(scene.id);
                     setSelectedElementId(scene.elements.at(-1)?.id ?? '');
                   }}
                   onKeyDown={(event) => {
                     const nextIndex = getTabIndexForKey(
                       index,
-                      project.scenes.length,
+                      activeChapter.scenes.length,
                       event.key,
                     );
                     if (nextIndex === null) return;
                     event.preventDefault();
-                    const nextScene = project.scenes[nextIndex];
+                    const nextScene = activeChapter.scenes[nextIndex];
+                    resetTransientCanvasState();
+                    endHistoryTransaction();
                     setActiveSceneId(nextScene.id);
                     setSelectedElementId(nextScene.elements.at(-1)?.id ?? '');
                     window.requestAnimationFrame(() =>
@@ -5418,7 +5786,7 @@ export function MotusStudio() {
             <Button
               aria-label="Move scene later"
               className="scene-icon-action"
-              disabled={sceneIndex === project.scenes.length - 1}
+              disabled={sceneIndex === activeChapter.scenes.length - 1}
               onClick={() => moveScene(1)}
               size="icon"
               variant="outline"
@@ -5437,6 +5805,7 @@ export function MotusStudio() {
             <Button
               aria-label="Delete scene"
               className="scene-icon-action"
+              disabled={activeChapter.scenes.length === 1}
               onClick={deleteScene}
               size="icon"
               variant="destructive"
@@ -7205,7 +7574,8 @@ export function MotusStudio() {
                   <strong>Continue creating</strong>
                 </div>
                 <small>
-                  {project.scenes.length} scenes ·{' '}
+                  {project.chapters.length} chapters · {allScenes.length} scenes
+                  ·{' '}
                   {project.publishedRevision
                     ? `revision ${project.publishedRevision}`
                     : 'draft'}
@@ -7214,13 +7584,13 @@ export function MotusStudio() {
               <article className="library-work-card">
                 <div
                   className="library-work-cover"
-                  style={{ background: activeScene.background }}
+                  style={{ background: projectCoverScene.background }}
                 >
                   <span>M</span>
                 </div>
                 <div>
                   <small>
-                    {project.chapterTitle.toUpperCase()} ·{' '}
+                    {project.format.replace('-', ' ').toUpperCase()} ·{' '}
                     {project.visibility.toUpperCase()}
                   </small>
                   <h3>{project.title}</h3>
@@ -7277,6 +7647,12 @@ export function MotusStudio() {
                           ))}
                         </div>
                         <strong>{work.rating}</strong>
+                        {!getCatalogPreviewLayout(work.format).native ? (
+                          <small className="work-catalog-prototype">
+                            Prototype preview ·{' '}
+                            {getCatalogPreviewLayout(work.format).label} layout
+                          </small>
+                        ) : null}
                         <Button
                           onClick={() => openCatalogWork(work, catalogIndex)}
                           size="sm"
@@ -7586,11 +7962,13 @@ export function MotusStudio() {
             </DialogTitle>
             <DialogDescription>
               {pendingProjectImport?.fileName} contains{' '}
-              {pendingProjectImport?.project.scenes.length} scene
-              {pendingProjectImport?.project.scenes.length === 1
+              {pendingProjectImport?.project.chapters.length} chapter
+              {pendingProjectImport?.project.chapters.length === 1
                 ? ''
-                : 's'} and
-              will replace the draft currently open in the editor.
+                : 's'}{' '}
+              and {pendingImportSceneCount} scene
+              {pendingImportSceneCount === 1 ? '' : 's'} and will replace the
+              draft currently open in the editor.
             </DialogDescription>
           </DialogHeader>
           <div className="new-work-backup">
@@ -7746,13 +8124,35 @@ export function MotusStudio() {
                   maxLength={MAX_PROJECT_TITLE_LENGTH}
                   onChange={(event) =>
                     commitProject((draft) => {
-                      draft.chapterTitle = event.target.value;
-                    }, 'project:chapter')
+                      const chapter = draft.chapters.find(
+                        (item) => item.id === activeChapter.id,
+                      );
+                      if (chapter) chapter.title = event.target.value;
+                    }, `chapter:${activeChapter.id}:title`)
                   }
-                  value={project.chapterTitle}
+                  value={activeChapter.title}
                 />
               </label>
             </div>
+            <label className="publish-field" htmlFor="project-details-format">
+              <span>Reading format</span>
+              <NativeSelect
+                id="project-details-format"
+                onChange={(event) =>
+                  commitProject((draft) => {
+                    draft.format = event.target.value as MotusProjectFormat;
+                  })
+                }
+                value={project.format}
+              >
+                <NativeSelectOption value="vertical-scroll">
+                  Vertical scroll
+                </NativeSelectOption>
+                <NativeSelectOption value="page">
+                  Page by page
+                </NativeSelectOption>
+              </NativeSelect>
+            </label>
             <label
               className="publish-field"
               htmlFor="project-details-description"
@@ -7851,10 +8251,29 @@ export function MotusStudio() {
               <div className="reader-toolbar">
                 <span>
                   {readerMode === 'scroll'
-                    ? 'Scroll mode · motion plays as each scene enters view.'
-                    : `Page mode · scene ${resolvedReaderPageIndex + 1} of ${readerSource.scenes.length}.`}
+                    ? `${readerChapter.title} · motion plays as each scene enters view.`
+                    : `${readerChapter.title} · scene ${resolvedReaderPageIndex + 1} of ${readerScenes.length}.`}
                 </span>
                 <div className="reader-toolbar-actions">
+                  <label className="reader-chapter-picker">
+                    <span className="sr-only">Reader chapter</span>
+                    <NativeSelect
+                      aria-label="Reader chapter"
+                      onChange={(event) => {
+                        const chapter = readerSource.chapters.find(
+                          (item) => item.id === event.target.value,
+                        );
+                        if (chapter) selectReaderChapter(chapter);
+                      }}
+                      value={readerChapter.id}
+                    >
+                      {readerSource.chapters.map((chapter, index) => (
+                        <NativeSelectOption key={chapter.id} value={chapter.id}>
+                          {index + 1}. {chapter.title}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </label>
                   <fieldset className="reader-mode-toggle">
                     <legend className="sr-only">Reader layout</legend>
                     <button
@@ -7892,7 +8311,7 @@ export function MotusStudio() {
                 ref={readerScroll}
               >
                 {readerMode === 'scroll' ? (
-                  readerSource.scenes.map((scene, index) => (
+                  readerScenes.map((scene, index) => (
                     <ReaderScene
                       index={index}
                       key={`${scene.id}-${readerPreviewKey}`}
@@ -7904,8 +8323,8 @@ export function MotusStudio() {
                   <div className="reader-page-mode">
                     <ReaderScene
                       index={resolvedReaderPageIndex}
-                      key={`${readerSource.scenes[resolvedReaderPageIndex].id}-${readerPreviewKey}-${resolvedReaderPageIndex}`}
-                      scene={readerSource.scenes[resolvedReaderPageIndex]}
+                      key={`${readerScenes[resolvedReaderPageIndex].id}-${readerPreviewKey}-${resolvedReaderPageIndex}`}
+                      scene={readerScenes[resolvedReaderPageIndex]}
                       sessionKey={
                         readerPreviewKey + resolvedReaderPageIndex + 1
                       }
@@ -7915,37 +8334,27 @@ export function MotusStudio() {
                       className="reader-page-navigation"
                     >
                       <Button
-                        disabled={resolvedReaderPageIndex === 0}
-                        onClick={() => {
-                          setReaderPageIndex((index) => Math.max(index - 1, 0));
-                          readerScroll.current?.scrollTo({
-                            top: 0,
-                            behavior: 'auto',
-                          });
-                        }}
+                        disabled={
+                          readerChapterIndex === 0 &&
+                          resolvedReaderPageIndex === 0
+                        }
+                        onClick={() => moveReaderPage(-1)}
                         variant="secondary"
                       >
                         <ArrowLeft />
                         Previous
                       </Button>
                       <span>
-                        {resolvedReaderPageIndex + 1} /{' '}
-                        {readerSource.scenes.length}
+                        Chapter {readerChapterIndex + 1} ·{' '}
+                        {resolvedReaderPageIndex + 1} / {readerScenes.length}
                       </span>
                       <Button
                         disabled={
-                          resolvedReaderPageIndex ===
-                          readerSource.scenes.length - 1
+                          readerChapterIndex ===
+                            readerSource.chapters.length - 1 &&
+                          resolvedReaderPageIndex === readerScenes.length - 1
                         }
-                        onClick={() => {
-                          setReaderPageIndex((index) =>
-                            Math.min(index + 1, readerSource.scenes.length - 1),
-                          );
-                          readerScroll.current?.scrollTo({
-                            top: 0,
-                            behavior: 'auto',
-                          });
-                        }}
+                        onClick={() => moveReaderPage(1)}
                         variant="secondary"
                       >
                         Next
@@ -8009,13 +8418,35 @@ export function MotusStudio() {
                   maxLength={MAX_PROJECT_TITLE_LENGTH}
                   onChange={(event) =>
                     commitProject((draft) => {
-                      draft.chapterTitle = event.target.value;
-                    }, 'project:chapter')
+                      const chapter = draft.chapters.find(
+                        (item) => item.id === activeChapter.id,
+                      );
+                      if (chapter) chapter.title = event.target.value;
+                    }, `chapter:${activeChapter.id}:title`)
                   }
-                  value={project.chapterTitle}
+                  value={activeChapter.title}
                 />
               </label>
             </div>
+            <label className="publish-field" htmlFor="publish-format">
+              <span>Reading format</span>
+              <NativeSelect
+                id="publish-format"
+                onChange={(event) =>
+                  commitProject((draft) => {
+                    draft.format = event.target.value as MotusProjectFormat;
+                  })
+                }
+                value={project.format}
+              >
+                <NativeSelectOption value="vertical-scroll">
+                  Vertical scroll
+                </NativeSelectOption>
+                <NativeSelectOption value="page">
+                  Page by page
+                </NativeSelectOption>
+              </NativeSelect>
+            </label>
             <label className="publish-field" htmlFor="publish-description">
               <span>Description</span>
               <Textarea
@@ -8068,14 +8499,17 @@ export function MotusStudio() {
                 }
                 value={project.coverSceneId}
               >
-                {project.scenes.map((scene, index) => (
-                  <NativeSelectOption key={scene.id} value={scene.id}>
-                    {String(index + 1).padStart(2, '0')} · {scene.name}
-                  </NativeSelectOption>
-                ))}
+                {project.chapters.flatMap((chapter, chapterNumber) =>
+                  chapter.scenes.map((scene, sceneNumber) => (
+                    <NativeSelectOption key={scene.id} value={scene.id}>
+                      C{chapterNumber + 1} ·{' '}
+                      {String(sceneNumber + 1).padStart(2, '0')} · {scene.name}
+                    </NativeSelectOption>
+                  )),
+                )}
               </NativeSelect>
               <small className="publish-field-hint">
-                Used as this alpha revision’s cover metadata
+                Used for the work cover and next revision
               </small>
             </label>
 
@@ -8162,6 +8596,7 @@ export function MotusStudio() {
                     : 'Finish before publishing'}
                 </strong>
                 <small>
+                  {publicationReadiness.chapterCount} chapters ·{' '}
                   {publicationReadiness.sceneCount} scenes ·{' '}
                   {publicationReadiness.visibleLayerCount} visible layers
                 </small>
@@ -8191,7 +8626,8 @@ export function MotusStudio() {
                         <strong>Revision {revision.revision}</strong>
                         <small>
                           {revision.createdAt.slice(0, 16).replace('T', ' ')} ·{' '}
-                          {revision.scenes.length} scenes
+                          {revision.chapters.length} chapters ·{' '}
+                          {getProjectScenes(revision).length} scenes
                           {revision.revision === project.publishedRevision
                             ? ' · Current'
                             : ''}

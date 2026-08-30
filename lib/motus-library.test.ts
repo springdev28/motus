@@ -12,6 +12,9 @@ import {
   MOTUS_LIBRARY_WORKS,
   createCatalogPreviewProject,
   filterLibraryWorks,
+  getCatalogPreviewLayout,
+  getCatalogChapterId,
+  getCatalogSceneId,
   getLibraryCreatorByHandle,
   getLibraryCreatorById,
   getLibraryCreatorProfile,
@@ -22,9 +25,9 @@ import {
   parseStoredReadingProgress,
   parseStoredSlugSet,
 } from './motus-library.ts';
-import { isMotionEventBlockKind } from './motus-model.ts';
+import { getProjectScenes, isMotionEventBlockKind } from './motus-model.ts';
 
-void test('library represents every specified reading format', () => {
+void test('library preserves every specified format as catalog metadata', () => {
   assert.deepEqual(LIBRARY_WORK_FORMATS, [
     'Vertical scroll',
     'Page',
@@ -34,6 +37,28 @@ void test('library represents every specified reading format', () => {
   ]);
   for (const format of LIBRARY_WORK_FORMATS) {
     assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.format === format));
+  }
+  assert.deepEqual(getCatalogPreviewLayout('Vertical scroll'), {
+    projectFormat: 'vertical-scroll',
+    label: 'Vertical',
+    native: true,
+  });
+  assert.deepEqual(getCatalogPreviewLayout('Page'), {
+    projectFormat: 'page',
+    label: 'Page',
+    native: true,
+  });
+  assert.deepEqual(getCatalogPreviewLayout('Spread'), {
+    projectFormat: 'page',
+    label: 'Page',
+    native: false,
+  });
+  for (const format of ['Motion comic', 'Hybrid'] as const) {
+    assert.deepEqual(getCatalogPreviewLayout(format), {
+      projectFormat: 'vertical-scroll',
+      label: 'Vertical',
+      native: false,
+    });
   }
 });
 
@@ -140,7 +165,8 @@ void test('stored reading progress keeps only safe finite entries for known work
   );
   assert.deepEqual(parsed, {
     'the-last-signal': {
-      sceneIndex: 2,
+      chapterId: getCatalogChapterId('the-last-signal', 0),
+      sceneId: getCatalogSceneId('the-last-signal', 0, 2),
       updatedAt: '2026-08-29T08:00:00.000Z',
     },
   });
@@ -156,12 +182,15 @@ void test('stable reader projects preserve work metadata and editable motion', (
   assert.equal(project.title, work.title);
   assert.equal(project.creatorName, work.creator);
   assert.equal(project.visibility, 'public');
-  assert.equal(project.scenes.length, 3);
-  assert.equal(project.coverSceneId, project.scenes[0].id);
+  assert.equal(project.publishedRevision, 0);
+  assert.equal(project.chapters.length, work.chapterCount);
+  assert.equal(project.chapters[0].scenes.length, 3);
+  assert.equal(getProjectScenes(project).length, work.chapterCount * 3);
+  assert.equal(project.coverSceneId, project.chapters[0].scenes[0].id);
   assert.deepEqual(rebuiltAtAnotherCatalogPosition, project);
   assert.equal(project.id, `catalog-preview-${work.slug}`);
   assert.ok(
-    project.scenes.every((scene) =>
+    getProjectScenes(project).every((scene) =>
       scene.elements.every(
         (element) =>
           isMotionEventBlockKind(element.motion.blocks[0]?.kind) &&
@@ -169,6 +198,49 @@ void test('stable reader projects preserve work metadata and editable motion', (
       ),
     ),
   );
+});
+
+void test('reading progress rejects cross-chapter scene pairs', () => {
+  const slug = 'the-last-signal';
+  const updatedAt = '2026-08-29T08:00:00.000Z';
+  const valid = parseStoredReadingProgress(
+    JSON.stringify({
+      [slug]: {
+        chapterId: getCatalogChapterId(slug, 1),
+        sceneId: getCatalogSceneId(slug, 1, 2),
+        updatedAt,
+      },
+    }),
+  );
+  assert.deepEqual(valid[slug], {
+    chapterId: getCatalogChapterId(slug, 1),
+    sceneId: getCatalogSceneId(slug, 1, 2),
+    updatedAt,
+  });
+
+  const mismatched = parseStoredReadingProgress(
+    JSON.stringify({
+      [slug]: {
+        chapterId: getCatalogChapterId(slug, 0),
+        sceneId: getCatalogSceneId(slug, 1, 2),
+        updatedAt,
+      },
+    }),
+  );
+  assert.deepEqual(mismatched, {});
+});
+
+void test('catalog preview chapters do not share mutable motion graphs', () => {
+  const work = getLibraryWork('the-last-signal');
+  assert.ok(work);
+  const project = createCatalogPreviewProject(work);
+  const firstBlock = project.chapters[0].scenes[0].elements[0].motion.blocks[1];
+  const secondBlock =
+    project.chapters[1].scenes[0].elements[0].motion.blocks[1];
+  assert.notEqual(firstBlock, secondBlock);
+  const originalSecondDuration = secondBlock.durationMs;
+  firstBlock.durationMs = 9_999;
+  assert.equal(secondBlock.durationMs, originalSecondDuration);
 });
 
 void test('creator records and routes are unique and resolve every work', () => {

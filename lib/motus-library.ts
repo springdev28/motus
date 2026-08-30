@@ -72,6 +72,28 @@ export type LibraryWorkOrigin = 'original' | 'fanwork';
 export type LibraryContentWarningId =
   (typeof LIBRARY_CONTENT_WARNING_IDS)[number];
 
+export type CatalogPreviewLayout = {
+  projectFormat: MotusProject['format'];
+  label: 'Page' | 'Vertical';
+  native: boolean;
+};
+
+export function getCatalogPreviewLayout(
+  format: LibraryWorkFormat,
+): CatalogPreviewLayout {
+  if (format === 'Page') {
+    return { projectFormat: 'page', label: 'Page', native: true };
+  }
+  if (format === 'Spread') {
+    return { projectFormat: 'page', label: 'Page', native: false };
+  }
+  return {
+    projectFormat: 'vertical-scroll',
+    label: 'Vertical',
+    native: format === 'Vertical scroll',
+  };
+}
+
 export type LibraryCreator = {
   id: LibraryCreatorId;
   routeHandle: string;
@@ -625,10 +647,23 @@ export function parseStoredSlugSet(value: string | null): Set<string> {
 export type LibraryReadingProgress = Record<
   string,
   {
-    sceneIndex: number;
+    chapterId: string;
+    sceneId: string;
     updatedAt: string;
   }
 >;
+
+export function getCatalogChapterId(slug: string, chapterIndex: number) {
+  return `catalog-preview-${slug}-chapter-${chapterIndex + 1}`;
+}
+
+export function getCatalogSceneId(
+  slug: string,
+  chapterIndex: number,
+  sceneIndex: number,
+) {
+  return `${getCatalogChapterId(slug, chapterIndex)}-scene-${sceneIndex + 1}`;
+}
 
 export function parseStoredReadingProgress(
   value: string | null,
@@ -651,19 +686,47 @@ export function parseStoredReadingProgress(
         continue;
       }
       const entry = candidate as Record<string, unknown>;
+      const work = MOTUS_LIBRARY_WORKS.find((item) => item.slug === slug)!;
+      const updatedAtValid =
+        typeof entry.updatedAt === 'string' &&
+        Number.isFinite(Date.parse(entry.updatedAt));
+      if (!updatedAtValid) continue;
+      if (
+        typeof entry.chapterId === 'string' &&
+        typeof entry.sceneId === 'string'
+      ) {
+        const chapterIndex = Array.from(
+          { length: work.chapterCount },
+          (_, index) => getCatalogChapterId(slug, index),
+        ).indexOf(entry.chapterId);
+        const validSceneIds =
+          chapterIndex < 0
+            ? []
+            : Array.from({ length: 3 }, (_, sceneIndex) =>
+                getCatalogSceneId(slug, chapterIndex, sceneIndex),
+              );
+        if (chapterIndex < 0 || !validSceneIds.includes(entry.sceneId)) {
+          continue;
+        }
+        progress[slug] = {
+          chapterId: entry.chapterId,
+          sceneId: entry.sceneId,
+          updatedAt: entry.updatedAt as string,
+        };
+        continue;
+      }
       if (
         typeof entry.sceneIndex !== 'number' ||
         !Number.isFinite(entry.sceneIndex) ||
         !Number.isInteger(entry.sceneIndex) ||
-        entry.sceneIndex < 0 ||
-        typeof entry.updatedAt !== 'string' ||
-        !Number.isFinite(Date.parse(entry.updatedAt))
+        entry.sceneIndex < 0
       ) {
         continue;
       }
       progress[slug] = {
-        sceneIndex: entry.sceneIndex,
-        updatedAt: entry.updatedAt,
+        chapterId: getCatalogChapterId(slug, 0),
+        sceneId: getCatalogSceneId(slug, 0, Math.min(entry.sceneIndex, 2)),
+        updatedAt: entry.updatedAt as string,
       };
     }
     return progress;
@@ -680,7 +743,6 @@ export function createCatalogPreviewProject(
   preview.id = `catalog-preview-${work.slug}`;
   preview.title = work.title;
   preview.creatorName = work.creator;
-  preview.chapterTitle = `Chapter 1 of ${work.chapterCount}`;
   preview.description = work.description;
   preview.tags = [...work.tags];
   preview.visibility = 'public';
@@ -691,7 +753,8 @@ export function createCatalogPreviewProject(
     'Adults only': 'adults-only',
   };
   preview.contentRating = ratings[work.rating];
-  preview.publishedRevision = 1;
+  preview.format = getCatalogPreviewLayout(work.format).projectFormat;
+  preview.publishedRevision = 0;
   preview.publications = [];
   preview.updatedAt = '2026-08-29T00:00:00.000Z';
   const previewEvents: readonly (readonly MotionEventBlockKind[])[] = [
@@ -699,54 +762,66 @@ export function createCatalogPreviewProject(
     ['element-appear', 'element-hover', 'scene-enter'],
     ['scene-enter', 'element-tap', 'element-hover'],
   ];
-  preview.scenes = preview.scenes.slice(0, 3).map((scene, sceneIndex) => ({
-    ...scene,
-    id: `${preview.id}-scene-${sceneIndex + 1}`,
-    name:
-      sceneIndex === 0
-        ? 'Opening beat'
-        : sceneIndex === 1
-          ? 'Turning point'
-          : 'Last signal',
-    background: work.palette,
-    elements: scene.elements.map((element, elementIndex) => {
-      const eventKind =
-        previewEvents[sceneIndex]?.[elementIndex] ?? 'scene-enter';
-      const blocks = replaceMotionEvent(element.motion.blocks, eventKind);
-      if (eventKind === 'animation-finish' && blocks[0]) {
-        blocks[0].sourceElementId = `${preview.id}-scene-${sceneIndex + 1}-${Math.max(elementIndex, 1)}`;
-      }
-      return {
-        ...element,
-        id: `${preview.id}-scene-${sceneIndex + 1}-${elementIndex + 1}`,
-        motion: {
-          ...element.motion,
-          event: eventKind,
-          blocks,
-        },
-        ...(element.type === 'text'
-          ? {
-              text:
-                sceneIndex === 0
-                  ? work.title
-                  : sceneIndex === 1
-                    ? work.description
-                    : `${work.genre} in motion`,
+  const sourceScenes = preview.chapters[0].scenes.slice(0, 3);
+  preview.chapters = Array.from(
+    { length: work.chapterCount },
+    (_, chapterIndex) => ({
+      id: getCatalogChapterId(work.slug, chapterIndex),
+      title: `Chapter ${chapterIndex + 1} of ${work.chapterCount}`,
+      scenes: sourceScenes.map((scene, sceneIndex) => {
+        const sceneCopy = structuredClone(scene);
+        const sceneId = getCatalogSceneId(work.slug, chapterIndex, sceneIndex);
+        return {
+          ...sceneCopy,
+          id: sceneId,
+          name:
+            sceneIndex === 0
+              ? 'Opening beat'
+              : sceneIndex === 1
+                ? 'Turning point'
+                : 'Last signal',
+          background: work.palette,
+          elements: sceneCopy.elements.map((element, elementIndex) => {
+            const eventKind =
+              previewEvents[sceneIndex]?.[elementIndex] ?? 'scene-enter';
+            const blocks = replaceMotionEvent(element.motion.blocks, eventKind);
+            if (eventKind === 'animation-finish' && blocks[0]) {
+              blocks[0].sourceElementId = `${sceneId}-${Math.max(elementIndex, 1)}`;
             }
-          : {}),
-        ...(element.type === 'speech'
-          ? {
-              text:
-                sceneIndex === 0
-                  ? `A Motus work by ${work.creator}.`
-                  : sceneIndex === 1
-                    ? work.tags.map((tag) => `#${tag}`).join('  ')
-                    : `Continue with ${work.chapterCount} chapters.`,
-            }
-          : {}),
-      };
+            return {
+              ...element,
+              id: `${sceneId}-${elementIndex + 1}`,
+              motion: {
+                ...element.motion,
+                event: eventKind,
+                blocks,
+              },
+              ...(element.type === 'text'
+                ? {
+                    text:
+                      sceneIndex === 0
+                        ? work.title
+                        : sceneIndex === 1
+                          ? work.description
+                          : `${work.genre} in motion`,
+                  }
+                : {}),
+              ...(element.type === 'speech'
+                ? {
+                    text:
+                      sceneIndex === 0
+                        ? `A Motus work by ${work.creator}.`
+                        : sceneIndex === 1
+                          ? work.tags.map((tag) => `#${tag}`).join('  ')
+                          : `Chapter ${chapterIndex + 1} of ${work.chapterCount}.`,
+                  }
+                : {}),
+            };
+          }),
+        };
+      }),
     }),
-  }));
-  preview.coverSceneId = preview.scenes[0].id;
+  );
+  preview.coverSceneId = preview.chapters[0].scenes[0].id;
   return preview;
 }
