@@ -26,9 +26,14 @@ import {
   LIBRARY_WORK_RATINGS,
   LIBRARY_WORK_STATUSES,
   MOTUS_LIBRARY_COMMUNITIES,
+  MOTUS_LIBRARY_CREATORS,
   MOTUS_LIBRARY_WORKS,
   filterLibraryWorks,
+  getLibraryWorksForCreator,
+  migrateStoredCreatorHandles,
+  parseStoredCreatorIdSet,
   parseStoredSlugSet,
+  type LibraryCreatorId,
   type LibraryEntityType,
   type LibraryWorkFormat,
   type LibraryWorkRating,
@@ -36,27 +41,15 @@ import {
 } from '@/lib/motus-library';
 
 const FOLLOWED_WORKS_STORAGE_KEY = 'motus:followed-works:v1';
-const FOLLOWED_CREATORS_STORAGE_KEY = 'motus:followed-creators:v1';
+const FOLLOWED_CREATORS_STORAGE_KEY_V1 = 'motus:followed-creators:v1';
+const FOLLOWED_CREATORS_STORAGE_KEY_V2 = 'motus:followed-creators:v2';
 
 type FilterValue<T extends string> = T | 'All';
 
-function readStoredStrings(key: string): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(
-      window.localStorage.getItem(key) ?? '[]',
-    );
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(
-      parsed
-        .filter((value): value is string => typeof value === 'string')
-        .slice(0, 100),
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-function writeStoredStrings(key: string, values: ReadonlySet<string>) {
+function writeStoredStrings<T extends string>(
+  key: string,
+  values: ReadonlySet<T>,
+) {
   try {
     window.localStorage.setItem(key, JSON.stringify([...values]));
     return true;
@@ -82,9 +75,9 @@ export function MotusDiscover() {
   const [rating, setRating] = useState<FilterValue<LibraryWorkRating>>('All');
   const [followedOnly, setFollowedOnly] = useState(false);
   const [followedWorks, setFollowedWorks] = useState<Set<string>>(new Set());
-  const [followedCreators, setFollowedCreators] = useState<Set<string>>(
-    new Set(),
-  );
+  const [followedCreators, setFollowedCreators] = useState<
+    Set<LibraryCreatorId>
+  >(new Set());
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -108,7 +101,24 @@ export function MotusDiscover() {
           window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
         ),
       );
-      setFollowedCreators(readStoredStrings(FOLLOWED_CREATORS_STORAGE_KEY));
+      const storedCreatorValue = window.localStorage.getItem(
+        FOLLOWED_CREATORS_STORAGE_KEY_V2,
+      );
+      const storedCreatorIds = parseStoredCreatorIdSet(storedCreatorValue);
+      const migratedCreatorIds =
+        storedCreatorValue === null
+          ? migrateStoredCreatorHandles(
+              window.localStorage.getItem(FOLLOWED_CREATORS_STORAGE_KEY_V1),
+            )
+          : new Set<LibraryCreatorId>();
+      const creatorIds = new Set<LibraryCreatorId>([
+        ...storedCreatorIds,
+        ...migratedCreatorIds,
+      ]);
+      if (storedCreatorValue === null) {
+        writeStoredStrings(FOLLOWED_CREATORS_STORAGE_KEY_V2, creatorIds);
+      }
+      setFollowedCreators(creatorIds);
       setHydrated(true);
     });
     return () => {
@@ -131,32 +141,17 @@ export function MotusDiscover() {
 
   const creators = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
-    const grouped = new Map<
-      string,
-      {
-        name: string;
-        handle: string;
-        genres: Set<string>;
-        workCount: number;
-        palette: string;
-      }
-    >();
-    for (const work of MOTUS_LIBRARY_WORKS) {
-      const current = grouped.get(work.creatorHandle) ?? {
-        name: work.creator,
-        handle: work.creatorHandle,
-        genres: new Set<string>(),
-        workCount: 0,
-        palette: work.palette,
+    return MOTUS_LIBRARY_CREATORS.map((creator) => {
+      const creatorWorks = getLibraryWorksForCreator(creator.id);
+      return {
+        ...creator,
+        genres: [...new Set(creatorWorks.map((work) => work.genre))],
+        workCount: creatorWorks.length,
       };
-      current.genres.add(work.genre);
-      current.workCount += 1;
-      grouped.set(work.creatorHandle, current);
-    }
-    return [...grouped.values()].filter((creator) => {
-      if (followedOnly && !followedCreators.has(creator.handle)) return false;
+    }).filter((creator) => {
+      if (followedOnly && !followedCreators.has(creator.id)) return false;
       if (!normalizedQuery) return true;
-      return `${creator.name} ${creator.handle} ${[...creator.genres].join(' ')}`
+      return `${creator.name} ${creator.displayHandle} ${creator.genres.join(' ')} ${creator.bio}`
         .toLocaleLowerCase()
         .includes(normalizedQuery);
     });
@@ -218,11 +213,11 @@ export function MotusDiscover() {
     }
   };
 
-  const toggleCreatorFollow = (handle: string) => {
+  const toggleCreatorFollow = (creatorId: LibraryCreatorId) => {
     const next = new Set(followedCreators);
-    if (next.has(handle)) next.delete(handle);
-    else next.add(handle);
-    if (writeStoredStrings(FOLLOWED_CREATORS_STORAGE_KEY, next)) {
+    if (next.has(creatorId)) next.delete(creatorId);
+    else next.add(creatorId);
+    if (writeStoredStrings(FOLLOWED_CREATORS_STORAGE_KEY_V2, next)) {
       setFollowedCreators(next);
     }
   };
@@ -484,46 +479,42 @@ export function MotusDiscover() {
             </header>
             <div className="discover-creator-grid">
               {creators.map((creator) => (
-                <article key={creator.handle}>
-                  <button
-                    aria-label={`Show works by ${creator.name}`}
+                <article key={creator.id}>
+                  <a
+                    aria-label={`Open ${creator.name}'s profile`}
                     className="discover-creator-avatar"
-                    onClick={() => searchFor(creator.name)}
-                    style={{ background: creator.palette }}
-                    type="button"
+                    href={`/creator/${creator.routeHandle}`}
+                    style={{ background: creator.banner }}
                   >
                     {creator.name
                       .split(' ')
                       .map((part) => part[0])
                       .join('')}
-                  </button>
+                  </a>
                   <div>
-                    <strong>{creator.name}</strong>
-                    <span>{creator.handle}</span>
-                    <p>{[...creator.genres].join(' · ')}</p>
+                    <strong>
+                      <a href={`/creator/${creator.routeHandle}`}>
+                        {creator.name}
+                      </a>
+                    </strong>
+                    <span>{creator.displayHandle}</span>
+                    <p>{creator.genres.join(' · ')}</p>
                     <small>
                       {creator.workCount} published work
                       {creator.workCount === 1 ? '' : 's'}
                     </small>
                   </div>
                   <Button
-                    aria-pressed={followedCreators.has(creator.handle)}
-                    onClick={() => toggleCreatorFollow(creator.handle)}
+                    aria-pressed={followedCreators.has(creator.id)}
+                    disabled={!hydrated}
+                    onClick={() => toggleCreatorFollow(creator.id)}
                     size="sm"
                     variant={
-                      followedCreators.has(creator.handle)
-                        ? 'secondary'
-                        : 'outline'
+                      followedCreators.has(creator.id) ? 'secondary' : 'outline'
                     }
                   >
-                    {followedCreators.has(creator.handle) ? (
-                      <Check />
-                    ) : (
-                      <Heart />
-                    )}
-                    {followedCreators.has(creator.handle)
-                      ? 'Following'
-                      : 'Follow'}
+                    {followedCreators.has(creator.id) ? <Check /> : <Heart />}
+                    {followedCreators.has(creator.id) ? 'Following' : 'Follow'}
                   </Button>
                 </article>
               ))}

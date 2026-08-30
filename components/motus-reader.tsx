@@ -13,14 +13,17 @@ import {
   Heart,
   Play,
   RotateCcw,
+  ShieldAlert,
 } from 'lucide-react';
 
 import { MotusLogo } from '@/components/motus-logo';
 import { ReaderScene } from '@/components/motus-studio';
 import { Button } from '@/components/ui/button';
 import {
+  LIBRARY_CONTENT_WARNING_LABELS,
   MOTUS_LIBRARY_WORKS,
   createCatalogPreviewProject,
+  getLibraryCreatorById,
   getLibraryWork,
   parseStoredReadingProgress,
   parseStoredSlugSet,
@@ -41,6 +44,7 @@ export function MotusReader({ slug }: { slug: string }) {
       work ? createCatalogPreviewProject(work, Math.max(workIndex, 0)) : null,
     [work, workIndex],
   );
+  const creator = work ? getLibraryCreatorById(work.creatorId) : null;
   const requiresRatingGate =
     work?.rating === 'Mature' || work?.rating === 'Adults only';
   const [mode, setMode] = useState<ReaderMode>(() =>
@@ -202,7 +206,9 @@ export function MotusReader({ slug }: { slug: string }) {
               {work.format} · {work.status}
             </span>
             <h1>{work.title}</h1>
-            <a href={`/discover?creator=${encodeURIComponent(work.creator)}`}>
+            <a
+              href={`/creator/${creator?.routeHandle ?? work.creatorHandle.replace(/^@/, '')}`}
+            >
               {work.creator} <small>{work.creatorHandle}</small>
             </a>
             <p>{work.description}</p>
@@ -213,6 +219,20 @@ export function MotusReader({ slug }: { slug: string }) {
                 </a>
               ))}
             </div>
+            {work.contentWarningIds.length ? (
+              <div
+                className="published-reader-warnings"
+                aria-label="Content warnings"
+              >
+                <ShieldAlert aria-hidden="true" />
+                <span>
+                  Content warnings:{' '}
+                  {work.contentWarningIds
+                    .map((warning) => LIBRARY_CONTENT_WARNING_LABELS[warning])
+                    .join(' · ')}
+                </span>
+              </div>
+            ) : null}
           </div>
           <dl className="published-reader-facts">
             <div>
@@ -226,6 +246,14 @@ export function MotusReader({ slug }: { slug: string }) {
             <div>
               <dt>Rating</dt>
               <dd>{work.rating}</dd>
+            </div>
+            <div>
+              <dt>Origin</dt>
+              <dd>
+                {work.origin === 'fanwork'
+                  ? `Fanwork · ${work.fandom}`
+                  : 'Original'}
+              </dd>
             </div>
           </dl>
         </section>

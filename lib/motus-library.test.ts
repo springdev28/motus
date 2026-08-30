@@ -2,13 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  LIBRARY_CONTENT_WARNING_IDS,
+  LIBRARY_CREATOR_IDS,
   LIBRARY_WORK_FORMATS,
   LIBRARY_WORK_RATINGS,
   LIBRARY_WORK_STATUSES,
+  MOTUS_LIBRARY_COMMUNITIES,
+  MOTUS_LIBRARY_CREATORS,
   MOTUS_LIBRARY_WORKS,
   createCatalogPreviewProject,
   filterLibraryWorks,
+  getLibraryCreatorByHandle,
+  getLibraryCreatorById,
+  getLibraryCreatorProfile,
+  getLibraryWorksForCreator,
   getLibraryWork,
+  migrateStoredCreatorHandles,
+  parseStoredCreatorIdSet,
   parseStoredReadingProgress,
   parseStoredSlugSet,
 } from './motus-library.ts';
@@ -158,5 +168,100 @@ void test('stable reader projects preserve work metadata and editable motion', (
           element.motion.blocks.length > 1,
       ),
     ),
+  );
+});
+
+void test('creator records and routes are unique and resolve every work', () => {
+  assert.equal(MOTUS_LIBRARY_CREATORS.length, LIBRARY_CREATOR_IDS.length);
+  assert.equal(
+    new Set(MOTUS_LIBRARY_CREATORS.map((creator) => creator.id)).size,
+    MOTUS_LIBRARY_CREATORS.length,
+  );
+  assert.equal(
+    new Set(MOTUS_LIBRARY_CREATORS.map((creator) => creator.routeHandle)).size,
+    MOTUS_LIBRARY_CREATORS.length,
+  );
+  assert.equal(
+    new Set(MOTUS_LIBRARY_CREATORS.map((creator) => creator.displayHandle))
+      .size,
+    MOTUS_LIBRARY_CREATORS.length,
+  );
+  for (const work of MOTUS_LIBRARY_WORKS) {
+    const creator = getLibraryCreatorById(work.creatorId);
+    assert.ok(creator);
+    assert.equal(creator.name, work.creator);
+    assert.equal(creator.displayHandle, work.creatorHandle);
+    assert.equal(
+      getLibraryCreatorByHandle(creator.routeHandle)?.id,
+      creator.id,
+    );
+    assert.equal(
+      getLibraryCreatorByHandle(creator.displayHandle)?.id,
+      creator.id,
+    );
+  }
+  assert.equal(getLibraryCreatorByHandle('unknown'), null);
+});
+
+void test('creator profiles derive deterministic portfolios and affiliations', () => {
+  const communitySlugs = new Set(
+    MOTUS_LIBRARY_COMMUNITIES.map((community) => community.slug),
+  );
+  for (const creator of MOTUS_LIBRARY_CREATORS) {
+    const works = getLibraryWorksForCreator(creator.id);
+    const profile = getLibraryCreatorProfile(creator.routeHandle);
+    assert.ok(profile);
+    assert.deepEqual(profile.works, works);
+    assert.equal(profile.featuredWork.slug, creator.featuredWorkSlug);
+    assert.equal(profile.featuredWork.creatorId, creator.id);
+    assert.equal(
+      profile.totalChapters,
+      works.reduce((total, work) => total + work.chapterCount, 0),
+    );
+    assert.deepEqual(
+      profile.genres,
+      [...new Set(works.map((work) => work.genre))].sort(),
+    );
+    for (const slug of creator.communitySlugs) {
+      assert.ok(communitySlugs.has(slug));
+    }
+  }
+  assert.equal(getLibraryCreatorProfile('unknown'), null);
+});
+
+void test('work origin and warning metadata use the supported taxonomy', () => {
+  const supportedWarnings = new Set<string>(LIBRARY_CONTENT_WARNING_IDS);
+  for (const work of MOTUS_LIBRARY_WORKS) {
+    assert.equal(
+      new Set(work.contentWarningIds).size,
+      work.contentWarningIds.length,
+    );
+    for (const warning of work.contentWarningIds) {
+      assert.ok(supportedWarnings.has(warning));
+    }
+    if (work.origin === 'fanwork') assert.ok(work.fandom);
+    else assert.equal(work.origin, 'original');
+  }
+  assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.origin === 'fanwork'));
+  assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.contentWarningIds.length));
+});
+
+void test('creator follow data migrates handles to stable IDs safely', () => {
+  assert.deepEqual(
+    [...parseStoredCreatorIdSet('["creator-miravale", "unknown", 4]')],
+    ['creator-miravale'],
+  );
+  assert.deepEqual([...parseStoredCreatorIdSet('not json')], []);
+  assert.deepEqual(
+    [
+      ...migrateStoredCreatorHandles(
+        '["@miravale", "junipermoss", "UNKNOWN", null]',
+      ),
+    ],
+    ['creator-miravale', 'creator-junipermoss'],
+  );
+  assert.deepEqual(
+    [...migrateStoredCreatorHandles('{"handle":"@miravale"}')],
+    [],
   );
 });
