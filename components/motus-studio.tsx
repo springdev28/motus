@@ -214,6 +214,7 @@ import {
   transformElementByPointer,
   translateSelectedElements,
   validateImageAsset,
+  wouldCreateAnimationFinishCycle,
   writeDraftJournal,
   type BounceJump,
   type ContentRating,
@@ -1107,6 +1108,12 @@ type SceneViewProps = {
   ) => void;
 };
 
+type ReaderTriggerElement = (
+  elementId: string,
+  restart?: boolean,
+  visited?: ReadonlySet<string>,
+) => void;
+
 function SceneView({
   scene,
   elementLimit,
@@ -1130,6 +1137,7 @@ function SceneView({
   const elementNodes = useRef(new Map<string, HTMLDivElement>());
   const runningAnimations = useRef<Animation[]>([]);
   const readerAnimations = useRef(new Map<string, Animation>());
+  const triggerReaderElementRef = useRef<ReaderTriggerElement>(() => undefined);
   const onPlaybackCompleteRef = useRef(onPlaybackComplete);
   const renderedElements = useMemo(
     () =>
@@ -1191,9 +1199,10 @@ function SceneView({
     return cleanup;
   }, [playingElementId, playingKey, readerTriggers, renderedElements]);
 
-  const triggerReaderElement = useCallback(
-    (elementId: string, restart = false) => {
+  const triggerReaderElement = useCallback<ReaderTriggerElement>(
+    (elementId, restart = false, visited = new Set()) => {
       if (!readerTriggers) return;
+      if (visited.has(elementId)) return;
       const element = renderedElements.find(
         (candidate) => candidate.id === elementId,
       );
@@ -1207,17 +1216,41 @@ function SceneView({
       }
       const animation = animateElementProgram(element, node);
       if (!animation) return;
+      const nextVisited = new Set(visited);
+      nextVisited.add(elementId);
       readerAnimations.current.set(elementId, animation);
-      void animation.finished
-        .catch(() => undefined)
-        .then(() => {
+      void animation.finished.then(
+        () => {
+          if (readerAnimations.current.get(elementId) === animation) {
+            readerAnimations.current.delete(elementId);
+            for (const dependent of renderedElements) {
+              const compiled = compileElementMotion(dependent);
+              if (
+                compiled.event === 'animation-finish' &&
+                compiled.eventSourceElementId === elementId
+              ) {
+                triggerReaderElementRef.current(
+                  dependent.id,
+                  false,
+                  nextVisited,
+                );
+              }
+            }
+          }
+        },
+        () => {
           if (readerAnimations.current.get(elementId) === animation) {
             readerAnimations.current.delete(elementId);
           }
-        });
+        },
+      );
     },
     [readerTriggers, renderedElements],
   );
+
+  useEffect(() => {
+    triggerReaderElementRef.current = triggerReaderElement;
+  }, [triggerReaderElement]);
 
   useEffect(() => {
     if (!readerTriggers) return;
@@ -2820,6 +2853,23 @@ export function MotusStudio() {
     setNotice(`${catalogEntry?.label ?? 'Event'} trigger selected`);
   };
 
+  const changeMotionEventSource = (sourceElementId: string) => {
+    if (!selectedElement) return;
+    updateElement(selectedElement.id, (item) => {
+      const eventBlock = item.motion.blocks[0];
+      if (eventBlock?.kind !== 'animation-finish') return;
+      eventBlock.sourceElementId = sourceElementId || null;
+    });
+    const source = activeScene.elements.find(
+      (element) => element.id === sourceElementId,
+    );
+    setNotice(
+      source
+        ? `${selectedElement.name} now starts after ${source.name}`
+        : 'Choose a source layer for this trigger',
+    );
+  };
+
   const duplicateMotionBlock = (blockId: string) => {
     if (!selectedElement) return;
     if (selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS) {
@@ -3295,10 +3345,26 @@ export function MotusStudio() {
     const copy = structuredClone(activeScene);
     copy.id = uniqueId('scene');
     copy.name = createCopyName(activeScene.name, MAX_SCENE_NAME_LENGTH);
-    copy.elements = copy.elements.map((element, index) => ({
-      ...element,
-      id: `${copy.id}-${element.type}-${index}`,
-    }));
+    const duplicatedElementIds = new Map(
+      copy.elements.map((element, index) => [
+        element.id,
+        `${copy.id}-${element.type}-${index}`,
+      ]),
+    );
+    copy.elements = copy.elements.map((element) => {
+      const eventBlock = element.motion.blocks[0];
+      if (
+        eventBlock?.kind === 'animation-finish' &&
+        eventBlock.sourceElementId
+      ) {
+        eventBlock.sourceElementId =
+          duplicatedElementIds.get(eventBlock.sourceElementId) ?? null;
+      }
+      return {
+        ...element,
+        id: duplicatedElementIds.get(element.id) ?? uniqueId(element.type),
+      };
+    });
     if (
       !commitProjectWithStoragePreflight(
         (draft) => draft.scenes.splice(sceneIndex + 1, 0, copy),
@@ -6232,6 +6298,29 @@ export function MotusStudio() {
                             const catalogEntry = MOTION_BLOCK_CATALOG.find(
                               (entry) => entry.kind === block.kind,
                             );
+                            const animationSourceCandidates =
+                              block.kind === 'animation-finish'
+                                ? activeScene.elements.filter(
+                                    (candidate) =>
+                                      candidate.id !== selectedElement.id &&
+                                      candidate.motion.blocks.some(
+                                        (candidateBlock) =>
+                                          candidateBlock.enabled &&
+                                          !isMotionEventBlockKind(
+                                            candidateBlock.kind,
+                                          ) &&
+                                          candidateBlock.kind !== 'wait',
+                                      ),
+                                  )
+                                : [];
+                            const storedAnimationSourceUnavailable = Boolean(
+                              block.kind === 'animation-finish' &&
+                              block.sourceElementId &&
+                              !animationSourceCandidates.some(
+                                (candidate) =>
+                                  candidate.id === block.sourceElementId,
+                              ),
+                            );
                             const renderBlock = (
                               dragHandle: MotionBlockDragHandle | null,
                             ) => {
@@ -6281,37 +6370,97 @@ export function MotusStudio() {
 
                                     <div className="motion-block-inline-fields">
                                       {isEvent ? (
-                                        <label className="motion-inline-field motion-inline-trigger">
-                                          <span>Trigger</span>
-                                          <NativeSelect
-                                            aria-label={`${selectedElement.name} animation trigger`}
-                                            onChange={(event) =>
-                                              changeMotionEvent(
-                                                event.target
-                                                  .value as MotionEventBlockKind,
-                                              )
-                                            }
-                                            size="sm"
-                                            value={block.kind}
-                                          >
-                                            {MOTION_EVENT_BLOCK_KINDS.map(
-                                              (eventKind) => (
+                                        <>
+                                          <label className="motion-inline-field motion-inline-trigger">
+                                            <span>Trigger</span>
+                                            <NativeSelect
+                                              aria-label={`${selectedElement.name} animation trigger`}
+                                              onChange={(event) =>
+                                                changeMotionEvent(
+                                                  event.target
+                                                    .value as MotionEventBlockKind,
+                                                )
+                                              }
+                                              size="sm"
+                                              value={block.kind}
+                                            >
+                                              {MOTION_EVENT_BLOCK_KINDS.map(
+                                                (eventKind) => (
+                                                  <NativeSelectOption
+                                                    key={eventKind}
+                                                    value={eventKind}
+                                                  >
+                                                    {
+                                                      MOTION_BLOCK_CATALOG.find(
+                                                        (entry) =>
+                                                          entry.kind ===
+                                                          eventKind,
+                                                      )?.label
+                                                    }
+                                                  </NativeSelectOption>
+                                                ),
+                                              )}
+                                            </NativeSelect>
+                                          </label>
+                                          {block.kind === 'animation-finish' ? (
+                                            <label className="motion-inline-field motion-inline-source">
+                                              <span>Source layer</span>
+                                              <NativeSelect
+                                                aria-label={`${selectedElement.name} source animation`}
+                                                onChange={(event) =>
+                                                  changeMotionEventSource(
+                                                    event.target.value,
+                                                  )
+                                                }
+                                                size="sm"
+                                                value={
+                                                  block.sourceElementId ?? ''
+                                                }
+                                              >
                                                 <NativeSelectOption
-                                                  key={eventKind}
-                                                  value={eventKind}
+                                                  disabled
+                                                  value=""
                                                 >
-                                                  {
-                                                    MOTION_BLOCK_CATALOG.find(
-                                                      (entry) =>
-                                                        entry.kind ===
-                                                        eventKind,
-                                                    )?.label
-                                                  }
+                                                  Choose a source layer
                                                 </NativeSelectOption>
-                                              ),
-                                            )}
-                                          </NativeSelect>
-                                        </label>
+                                                {storedAnimationSourceUnavailable ? (
+                                                  <NativeSelectOption
+                                                    disabled
+                                                    value={
+                                                      block.sourceElementId ??
+                                                      ''
+                                                    }
+                                                  >
+                                                    Source unavailable — choose
+                                                    again
+                                                  </NativeSelectOption>
+                                                ) : null}
+                                                {animationSourceCandidates.map(
+                                                  (candidate) => {
+                                                    const createsCycle =
+                                                      wouldCreateAnimationFinishCycle(
+                                                        activeScene.elements,
+                                                        selectedElement.id,
+                                                        candidate.id,
+                                                      );
+                                                    return (
+                                                      <NativeSelectOption
+                                                        disabled={createsCycle}
+                                                        key={candidate.id}
+                                                        value={candidate.id}
+                                                      >
+                                                        {candidate.name}
+                                                        {createsCycle
+                                                          ? ' — creates a cycle'
+                                                          : ''}
+                                                      </NativeSelectOption>
+                                                    );
+                                                  },
+                                                )}
+                                              </NativeSelect>
+                                            </label>
+                                          ) : null}
+                                        </>
                                       ) : isBounce ? (
                                         <>
                                           <span className="motion-inline-token">

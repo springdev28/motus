@@ -12,6 +12,7 @@ import {
   MAX_ELEMENT_LETTER_SPACING,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_MOTION_BLOCKS,
+  MAX_MOTION_EVENT_SOURCE_ID_LENGTH,
   MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_SCENE_NAME_LENGTH,
   MIN_ELEMENT_FONT_SIZE,
@@ -85,6 +86,7 @@ import {
   type CompiledMotionKeyframe,
   type ProjectHistoryState,
   validateImageAsset,
+  wouldCreateAnimationFinishCycle,
   writeDraftJournal,
 } from './motus-model.ts';
 
@@ -1145,11 +1147,11 @@ void test('motion registry is exhaustive, categorized, and has bounded finite de
     MOTION_BLOCK_CATALOG.map((entry) => entry.category),
   );
 
-  assert.equal(MOTION_BLOCK_CATALOG.length, 167);
-  assert.equal(new Set(catalogKinds).size, 167);
+  assert.equal(MOTION_BLOCK_CATALOG.length, 168);
+  assert.equal(new Set(catalogKinds).size, 168);
   assert.equal(addableEntries.length, 162);
-  assert.equal(MOTION_BLOCK_KINDS.length, 167);
-  assert.equal(new Set(MOTION_BLOCK_KINDS).size, 167);
+  assert.equal(MOTION_BLOCK_KINDS.length, 168);
+  assert.equal(new Set(MOTION_BLOCK_KINDS).size, 168);
   assert.deepEqual(
     [...catalogKinds].sort(),
     [...MOTION_BLOCK_KINDS].sort(),
@@ -1253,12 +1255,13 @@ void test('motion registry is exhaustive, categorized, and has bounded finite de
   }
 });
 
-void test('motion event registry exposes five fixed zero-duration hats', () => {
+void test('motion event registry exposes six fixed zero-duration hats', () => {
   assert.deepEqual(MOTION_EVENT_BLOCK_KINDS, [
     'page-open',
     'element-appear',
     'element-tap',
     'element-hover',
+    'animation-finish',
     'scene-enter',
   ]);
   assert.equal(isMotionEventBlockKind('page-open'), true);
@@ -1271,6 +1274,7 @@ void test('motion event registry exposes five fixed zero-duration hats', () => {
     'When element appears',
     'When tapped',
     'When hovered',
+    'When another animation finishes',
     'When reader scrolls into section',
   ];
   const eventEntries = MOTION_BLOCK_CATALOG.filter(
@@ -1306,18 +1310,33 @@ void test('replaceMotionEvent preserves one fixed hat and every action', () => {
     assert.deepEqual(source, [event, move, wait]);
   }
 
+  const chained = replaceMotionEvent(source, 'animation-finish');
+  assert.equal(chained[0].sourceElementId, null);
+  chained[0].sourceElementId = 'source-layer';
+  const retained = replaceMotionEvent(chained, 'animation-finish');
+  assert.equal(retained[0], chained[0]);
+  assert.equal(retained[0].sourceElementId, 'source-layer');
+  const changedAway = replaceMotionEvent(chained, 'page-open');
+  assert.equal(changedAway[0].sourceElementId, null);
+  assert.equal(changedAway[1], move);
+  assert.equal(changedAway[2], wait);
+
   const invalid = [move, wait];
   assert.deepEqual(replaceMotionEvent(invalid, 'page-open'), invalid);
   assert.notEqual(replaceMotionEvent(invalid, 'page-open'), invalid);
 });
 
-void test('all five event triggers survive restore and compile without becoming steps', () => {
+void test('all six event triggers survive restore and compile without becoming steps', () => {
   for (const eventKind of MOTION_EVENT_BLOCK_KINDS) {
     const project = createDefaultProject();
     const element = project.scenes[0].elements[0];
     element.motion.event = 'scene-enter';
+    const eventBlock = createMotionBlock(eventKind, `event-${eventKind}`);
+    if (eventKind === 'animation-finish') {
+      eventBlock.sourceElementId = project.scenes[0].elements[1].id;
+    }
     element.motion.blocks = [
-      createMotionBlock(eventKind, `event-${eventKind}`),
+      eventBlock,
       createMotionBlock('move', `move-${eventKind}`),
     ];
 
@@ -1328,11 +1347,82 @@ void test('all five event triggers survive restore and compile without becoming 
     assert.equal(restoredElement.motion.blocks[0].kind, eventKind);
     const compiled = compileElementMotion(restoredElement);
     assert.equal(compiled.event, eventKind);
+    assert.equal(
+      compiled.eventSourceElementId,
+      eventKind === 'animation-finish'
+        ? project.scenes[0].elements[1].id
+        : null,
+    );
     assert.deepEqual(
       compiled.steps.map((step) => step.kind),
       ['move'],
     );
   }
+});
+
+void test('animation-finish source IDs normalize safely and remain recoverable', () => {
+  const project = createDefaultProject();
+  const element = project.scenes[0].elements[0];
+  const sourceId = project.scenes[0].elements[1].id;
+  const eventBlock = createMotionBlock('animation-finish', 'event-chain');
+  eventBlock.sourceElementId = `  ${sourceId}  `;
+  element.motion.blocks = [eventBlock, createMotionBlock('move', 'move')];
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  assert.equal(
+    restored.scenes[0].elements[0].motion.blocks[0].sourceElementId,
+    sourceId,
+  );
+
+  const missing = structuredClone(project);
+  missing.scenes[0].elements[0].motion.blocks[0].sourceElementId =
+    'deleted-layer';
+  assert.ok(restoreProject(JSON.stringify(missing)));
+
+  const malformed = structuredClone(project);
+  malformed.scenes[0].elements[0].motion.blocks[0].sourceElementId = 'x'.repeat(
+    MAX_MOTION_EVENT_SOURCE_ID_LENGTH + 1,
+  );
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(malformed)).error,
+    'Project contains an invalid animation source layer',
+  );
+});
+
+void test('animation-finish dependency checks reject self and transitive cycles', () => {
+  const project = createDefaultProject();
+  const elements = project.scenes[0].elements.slice(0, 3);
+  const [first, second, third] = elements;
+  assert.ok(first && second && third);
+
+  second.motion.blocks = replaceMotionEvent(
+    second.motion.blocks,
+    'animation-finish',
+  );
+  second.motion.blocks[0].sourceElementId = first.id;
+  third.motion.blocks = replaceMotionEvent(
+    third.motion.blocks,
+    'animation-finish',
+  );
+  third.motion.blocks[0].sourceElementId = second.id;
+
+  assert.equal(
+    wouldCreateAnimationFinishCycle(elements, first.id, first.id),
+    true,
+  );
+  assert.equal(
+    wouldCreateAnimationFinishCycle(elements, first.id, third.id),
+    true,
+  );
+  assert.equal(
+    wouldCreateAnimationFinishCycle(elements, third.id, first.id),
+    false,
+  );
+  assert.equal(
+    wouldCreateAnimationFinishCycle(elements, first.id, 'deleted-layer'),
+    false,
+  );
 });
 
 void test('motion action helpers reject every event kind', () => {

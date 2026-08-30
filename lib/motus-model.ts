@@ -68,6 +68,7 @@ export const MOTION_EVENT_BLOCK_KINDS = [
   'element-appear',
   'element-tap',
   'element-hover',
+  'animation-finish',
   'scene-enter',
 ] as const;
 export type MotionEventBlockKind = (typeof MOTION_EVENT_BLOCK_KINDS)[number];
@@ -265,6 +266,7 @@ export const MAX_PROJECT_HISTORY_ENTRIES = 50;
 export const MAX_PROJECT_HISTORY_BYTES = 24_000_000;
 export const MAX_MOTION_BLOCKS = 64;
 export const MAX_BOUNCE_JUMPS = 12;
+export const MAX_MOTION_EVENT_SOURCE_ID_LENGTH = 256;
 
 export type BounceDirection = 'left' | 'right';
 export type RevealDirection = 'left' | 'right' | 'up' | 'down';
@@ -284,6 +286,7 @@ export type MotionBlock = {
   category: MotionBlockCategory;
   label: string;
   enabled: boolean;
+  sourceElementId: string | null;
   durationMs: number;
   easing: Easing;
   x: number;
@@ -475,6 +478,14 @@ export const MOTION_BLOCK_CATALOG: MotionBlockCatalogEntry[] = [
     'event',
     'When hovered',
     'Starts when a pointer enters or keyboard focus reaches this layer.',
+    [],
+    0,
+  ),
+  catalogBlock(
+    'animation-finish',
+    'event',
+    'When another animation finishes',
+    'Starts after a chosen layer in this scene successfully finishes its animation.',
     [],
     0,
   ),
@@ -1994,6 +2005,7 @@ export function createMotionBlock(
     category: catalogEntry.category,
     label: catalogEntry.label,
     enabled: true,
+    sourceElementId: null,
     durationMs: catalogEntry.durationMs,
     easing: 'ease-out',
     x: 0,
@@ -2222,6 +2234,7 @@ export type CompiledMotionKeyframe = {
 export type CompiledElementMotion = {
   schemaVersion: typeof MOTION_SCHEMA_VERSION;
   event: MotionEventBlockKind;
+  eventSourceElementId: string | null;
   durationMs: number;
   delayMs: number;
   easing: Easing;
@@ -2761,6 +2774,14 @@ function normalizeMotionBlocks(
           : `${raw.kind}-${index + 1}`,
       );
       block.enabled = raw.enabled !== false;
+      block.sourceElementId =
+        block.kind === 'animation-finish' &&
+        typeof raw.sourceElementId === 'string' &&
+        raw.sourceElementId.trim()
+          ? raw.sourceElementId
+              .trim()
+              .slice(0, MAX_MOTION_EVENT_SOURCE_ID_LENGTH)
+          : null;
       block.durationMs = normalizeMotionBlockNumericField(
         block,
         'durationMs',
@@ -2856,6 +2877,32 @@ function migrateMotion(
         : 'ease-out',
     blocks,
   };
+}
+
+export function wouldCreateAnimationFinishCycle(
+  elements: readonly MotusElement[],
+  targetElementId: string,
+  sourceElementId: string,
+): boolean {
+  if (!targetElementId || !sourceElementId) return false;
+  if (targetElementId === sourceElementId) return true;
+
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const visited = new Set<string>();
+  let currentId: string | null = sourceElementId;
+  while (currentId && !visited.has(currentId)) {
+    if (currentId === targetElementId) return true;
+    visited.add(currentId);
+    const current = byId.get(currentId);
+    if (!current) return false;
+    const motion = migrateMotion(current.motion);
+    const eventBlock = motion.blocks[0];
+    currentId =
+      eventBlock?.kind === 'animation-finish'
+        ? eventBlock.sourceElementId
+        : null;
+  }
+  return false;
 }
 
 export function constrainElementToCanvas(
@@ -4415,6 +4462,10 @@ export function compileElementMotion(
   return {
     schemaVersion: MOTION_SCHEMA_VERSION,
     event: instruction.event,
+    eventSourceElementId:
+      instruction.event === 'animation-finish'
+        ? (instruction.blocks[0]?.sourceElementId ?? null)
+        : null,
     durationMs: clamp(
       actionDurationMs || Math.round(instruction.durationMs),
       200,
@@ -5011,6 +5062,15 @@ function validateMotion(value: unknown): string | null {
         ids.has(block.id)
       ) {
         return 'Project contains an invalid animation block program';
+      }
+      if (
+        block.sourceElementId !== undefined &&
+        block.sourceElementId !== null &&
+        (typeof block.sourceElementId !== 'string' ||
+          !block.sourceElementId.trim() ||
+          block.sourceElementId.length > MAX_MOTION_EVENT_SOURCE_ID_LENGTH)
+      ) {
+        return 'Project contains an invalid animation source layer';
       }
       if (block.kind === 'bounce' && block.jumps !== undefined) {
         if (

@@ -434,7 +434,7 @@ export function createCatalogPreviewProject(
   preview.publications = [];
   preview.updatedAt = '2026-08-29T00:00:00.000Z';
   const previewEvents: readonly (readonly MotionEventBlockKind[])[] = [
-    ['page-open', 'scene-enter', 'element-tap'],
+    ['page-open', 'scene-enter', 'animation-finish'],
     ['element-appear', 'element-hover', 'scene-enter'],
     ['scene-enter', 'element-tap', 'element-hover'],
   ];
@@ -451,13 +451,17 @@ export function createCatalogPreviewProject(
     elements: scene.elements.map((element, elementIndex) => {
       const eventKind =
         previewEvents[sceneIndex]?.[elementIndex] ?? 'scene-enter';
+      const blocks = replaceMotionEvent(element.motion.blocks, eventKind);
+      if (eventKind === 'animation-finish' && blocks[0]) {
+        blocks[0].sourceElementId = `${preview.id}-scene-${sceneIndex + 1}-${Math.max(elementIndex, 1)}`;
+      }
       return {
         ...element,
         id: `${preview.id}-scene-${sceneIndex + 1}-${elementIndex + 1}`,
         motion: {
           ...element.motion,
           event: eventKind,
-          blocks: replaceMotionEvent(element.motion.blocks, eventKind),
+          blocks,
         },
         ...(element.type === 'text'
           ? {
