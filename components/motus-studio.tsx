@@ -140,6 +140,7 @@ import {
   CANVAS_WIDTH,
   ELEMENT_FONT_PRESETS,
   ELEMENT_FONT_WEIGHTS,
+  ELEMENT_IMAGE_FITS,
   ELEMENT_TEXT_ALIGNMENTS,
   MAX_ELEMENT_FONT_SIZE,
   MAX_ELEMENT_LETTER_SPACING,
@@ -196,6 +197,7 @@ import {
   findSupportedImageFile,
   getCompiledMotionKeyframeEstimate,
   getExpandedMotionStepCount,
+  getElementImageFraming,
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
@@ -249,6 +251,7 @@ import {
   type ElementPointerTransformMode,
   type ElementFontPreset,
   type ElementFontWeight,
+  type ElementImageFit,
   type ElementAlignment,
   type ElementDistributionAxis,
   type ElementTextAlignment,
@@ -338,6 +341,11 @@ const ELEMENT_WEIGHT_LABELS: Record<ElementFontWeight, string> = {
   700: 'Bold',
   800: 'Extra bold',
   900: 'Black',
+};
+
+const ELEMENT_IMAGE_FIT_LABELS: Record<ElementImageFit, string> = {
+  cover: 'Fill frame',
+  contain: 'Fit image',
 };
 
 const ELEMENT_ALIGNMENT_ICONS: Record<ElementTextAlignment, typeof AlignLeft> =
@@ -1703,9 +1711,20 @@ function elementIcon(type: ElementType) {
 
 function renderElementContent(element: MotusElement) {
   if (element.type === 'image' && element.src) {
+    const framing = getElementImageFraming(element);
     // Data URLs from the local project file are not compatible with optimized image loaders.
-    // oxlint-disable-next-line next/no-img-element
-    return <img alt="" draggable={false} src={element.src} />;
+    return (
+      // oxlint-disable-next-line next/no-img-element
+      <img
+        alt=""
+        draggable={false}
+        src={element.src}
+        style={{
+          objectFit: framing.fit,
+          objectPosition: `${framing.focalX}% ${framing.focalY}%`,
+        }}
+      />
+    );
   }
   if (element.type === 'text' || element.type === 'speech') {
     return <span className="element-text-content">{element.text}</span>;
@@ -2767,6 +2786,10 @@ export function MotusStudio() {
         selectedElement.typography,
       ) ?? getDefaultElementTypography(selectedElement.type))
     : undefined;
+  const selectedImageFraming =
+    selectedElement?.type === 'image'
+      ? getElementImageFraming(selectedElement)
+      : undefined;
   const projectImageAssets = useMemo(() => {
     const assets = new Map<string, ProjectImageAsset>();
     for (const scene of allScenes) {
@@ -7488,6 +7511,130 @@ export function MotusStudio() {
                         />
                         <output>{selectedElement.fill}</output>
                       </label>
+                    ) : null}
+                    {selectedElement.type === 'image' &&
+                    selectedImageFraming ? (
+                      <section
+                        aria-labelledby="image-framing-panel-title"
+                        className="image-framing-panel"
+                      >
+                        <div className="image-framing-head">
+                          <div>
+                            <FileImage aria-hidden="true" />
+                            <strong id="image-framing-panel-title">
+                              Image framing
+                            </strong>
+                          </div>
+                          <span>
+                            {selectedImageFraming.fit === 'cover'
+                              ? 'Cropped'
+                              : 'Full image'}
+                          </span>
+                        </div>
+                        <fieldset className="image-fit-toggle">
+                          <legend>Fit</legend>
+                          <div>
+                            {ELEMENT_IMAGE_FITS.map((imageFit) => (
+                              <button
+                                aria-pressed={
+                                  selectedImageFraming.fit === imageFit
+                                }
+                                key={imageFit}
+                                onClick={() =>
+                                  updateElement(selectedElement.id, (item) => {
+                                    item.imageFit = imageFit;
+                                  })
+                                }
+                                type="button"
+                              >
+                                {ELEMENT_IMAGE_FIT_LABELS[imageFit]}
+                              </button>
+                            ))}
+                          </div>
+                        </fieldset>
+                        <div className="image-framing-controls">
+                          <label className="image-framing-control">
+                            <span>Horizontal focus</span>
+                            <output htmlFor="selected-image-focal-x">
+                              {Math.round(selectedImageFraming.focalX)}%
+                            </output>
+                            <input
+                              {...continuousHistoryProps}
+                              aria-describedby="image-framing-help"
+                              disabled={selectedImageFraming.fit === 'contain'}
+                              id="selected-image-focal-x"
+                              max="100"
+                              min="0"
+                              onChange={(event) =>
+                                updateElement(
+                                  selectedElement.id,
+                                  (item) => {
+                                    item.imageFocalX = Number(
+                                      event.target.value,
+                                    );
+                                  },
+                                  `element:${selectedElement.id}:image-focal-x`,
+                                )
+                              }
+                              step="1"
+                              type="range"
+                              value={selectedImageFraming.focalX}
+                            />
+                          </label>
+                          <label className="image-framing-control">
+                            <span>Vertical focus</span>
+                            <output htmlFor="selected-image-focal-y">
+                              {Math.round(selectedImageFraming.focalY)}%
+                            </output>
+                            <input
+                              {...continuousHistoryProps}
+                              aria-describedby="image-framing-help"
+                              disabled={selectedImageFraming.fit === 'contain'}
+                              id="selected-image-focal-y"
+                              max="100"
+                              min="0"
+                              onChange={(event) =>
+                                updateElement(
+                                  selectedElement.id,
+                                  (item) => {
+                                    item.imageFocalY = Number(
+                                      event.target.value,
+                                    );
+                                  },
+                                  `element:${selectedElement.id}:image-focal-y`,
+                                )
+                              }
+                              step="1"
+                              type="range"
+                              value={selectedImageFraming.focalY}
+                            />
+                          </label>
+                        </div>
+                        <small id="image-framing-help">
+                          {selectedImageFraming.fit === 'cover'
+                            ? 'Move the focus point to choose which part of the image stays in frame.'
+                            : 'Fit image keeps the entire image visible, so focus controls are paused.'}
+                        </small>
+                        <Button
+                          className="image-framing-reset"
+                          disabled={
+                            selectedImageFraming.focalX === 50 &&
+                            selectedImageFraming.focalY === 50
+                          }
+                          onClick={() =>
+                            updateElement(selectedElement.id, (item) => {
+                              item.imageFocalX = 50;
+                              item.imageFocalY = 50;
+                            })
+                          }
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          <RotateCcw aria-hidden="true" />
+                          Center image
+                        </Button>
+                      </section>
                     ) : null}
                     <div className="property-grid">
                       {(['x', 'y', 'width', 'height'] as const).map(
