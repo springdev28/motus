@@ -15,6 +15,7 @@ import {
 
 import { readNewestMotusDraft } from '@/lib/motus-draft-storage';
 import { MotusLogo } from '@/components/motus-logo';
+import { MotusWorkMetadataSummary } from '@/components/motus-work-metadata-summary';
 import {
   MOTUS_LIBRARY_WORKS,
   createCatalogPreviewProject,
@@ -224,6 +225,12 @@ export function MotusHome() {
                         : 'chapters'}{' '}
                       · {draft.project.format === 'page' ? 'Page' : 'Vertical'}
                     </p>
+                    <MotusWorkMetadataSummary
+                      contentRating={draft.project.contentRating}
+                      format={draft.project.format}
+                      metadata={draft.project.metadata}
+                      mode="compact"
+                    />
                   </div>
                   <a className="home-continue-button" href="/studio">
                     Continue editing <ArrowRight aria-hidden="true" />

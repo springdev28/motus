@@ -1,5 +1,6 @@
 import {
   createDefaultProject,
+  createWorkMetadata,
   replaceMotionEvent,
   type ContentRating,
   type MotusProject,
@@ -745,7 +746,34 @@ export function createCatalogPreviewProject(
   preview.creatorName = work.creator;
   preview.description = work.description;
   preview.tags = [...work.tags];
+  const languages: Record<string, string> = {
+    English: 'en',
+    Turkish: 'tr',
+    Spanish: 'es',
+    French: 'fr',
+    Japanese: 'ja',
+  };
+  preview.language = languages[work.language] ?? 'en';
   preview.visibility = 'public';
+  const statuses = {
+    Ongoing: 'ongoing',
+    Completed: 'completed',
+    Hiatus: 'hiatus',
+  } as const;
+  preview.metadata = createWorkMetadata(
+    {
+      contributorNames: [work.creator],
+      workStatus: statuses[work.status],
+      origin: work.origin === 'original' ? 'original' : null,
+      fandom: work.fandom,
+      genres: [work.genre],
+      characters: [...work.characters],
+      contentWarnings: work.contentWarningIds.map(
+        (warningId) => LIBRARY_CONTENT_WARNING_LABELS[warningId],
+      ),
+    },
+    work.creator,
+  );
   const ratings: Record<LibraryWorkRating, ContentRating> = {
     General: 'all-ages',
     Teen: 'teen',

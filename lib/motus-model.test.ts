@@ -131,20 +131,58 @@ function createLegacyProject(
   const project = structuredClone(source);
   const chapter = project.chapters[0];
   const publications = project.publications.map((publication) => {
-    const { format: _format, chapters, ...legacyPublication } = publication;
+    const {
+      format: _format,
+      chapters,
+      metadata: _metadata,
+      ...legacyPublication
+    } = publication;
     return {
       ...legacyPublication,
       chapterTitle: chapters[0].title,
       scenes: chapters[0].scenes,
     };
   });
-  const { format: _format, chapters: _chapters, ...legacyProject } = project;
+  const {
+    format: _format,
+    chapters: _chapters,
+    metadata: _metadata,
+    ...legacyProject
+  } = project;
   return {
     ...legacyProject,
     schemaVersion,
     chapterTitle: chapter.title,
     scenes: chapter.scenes,
     publications,
+  };
+}
+
+function createVersion7Project(source = createDefaultProject()) {
+  const project = structuredClone(source);
+  const publications = project.publications.map((publication) => {
+    const { metadata: _metadata, ...version7Publication } = publication;
+    return version7Publication;
+  });
+  const { metadata: _metadata, ...version7Project } = project;
+  return { ...version7Project, schemaVersion: 7 as const, publications };
+}
+
+function migratedMetadataFor(creatorName: string) {
+  return {
+    contributorNames: [creatorName],
+    workStatus: null,
+    origin: null,
+    sourceWorkSlug: null,
+    sourceTitle: null,
+    sourceCreator: null,
+    fandom: null,
+    genres: [],
+    characters: [],
+    relationships: [],
+    themes: [],
+    contentWarnings: [],
+    communityLinks: [],
   };
 }
 
@@ -168,6 +206,7 @@ void test('blank projects start private with one editable scene', () => {
   assert.equal(project.coverSceneId, 'work-123-scene-1');
   assert.deepEqual(project.chapters[0].scenes[0].elements, []);
   assert.deepEqual(project.publications, []);
+  assert.deepEqual(project.metadata, migratedMetadataFor('New creator'));
 });
 
 void test('project backup names are portable and never empty', () => {
@@ -2699,18 +2738,128 @@ void test('nested version 7 projects round-trip chapters, format, cover, and rev
     project,
     '2026-08-30T02:00:00.000Z',
   );
+  revision.creatorName = 'Revision creator';
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+  const version7Project = createVersion7Project(project);
+
+  const restored = restoreProject(JSON.stringify(version7Project));
+
+  assert.ok(restored);
+  assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
+  assert.equal(restored.format, 'page');
+  assert.equal(restored.coverSceneId, 'scene-4');
+  assert.deepEqual(
+    restored.chapters.map((chapter) => chapter.id),
+    project.chapters.map((chapter) => chapter.id),
+  );
+  assert.deepEqual(restored.metadata, migratedMetadataFor(project.creatorName));
+  assert.deepEqual(
+    restored.publications[0].metadata,
+    migratedMetadataFor('Revision creator'),
+  );
+  assert.notEqual(restored.chapters, project.chapters);
+  assert.notEqual(restored.publications[0].chapters, project.chapters);
+});
+
+void test('versions 2 through 7 receive honest metadata defaults per revision', () => {
+  for (const version of [2, 3, 4, 5, 6, 7] as const) {
+    const source = createDefaultProject();
+    source.creatorName = `Draft creator v${version}`;
+    const revision = createPublicationRevision(source);
+    revision.creatorName = `Revision creator v${version}`;
+    source.publications = [revision];
+    source.publishedRevision = revision.revision;
+    const legacy =
+      version === 7
+        ? createVersion7Project(source)
+        : createLegacyProject(version, source);
+
+    const restored = restoreProject(JSON.stringify(legacy));
+
+    assert.ok(restored);
+    assert.deepEqual(
+      restored.metadata,
+      migratedMetadataFor(`Draft creator v${version}`),
+    );
+    assert.deepEqual(
+      restored.publications[0].metadata,
+      migratedMetadataFor(`Revision creator v${version}`),
+    );
+  }
+});
+
+void test('version 8 metadata round-trips, repairs the creator alias, and stays independent', () => {
+  const project = createDefaultProject();
+  project.creatorName = 'Stale creator alias';
+  project.metadata = {
+    contributorNames: ['Lead Creator', 'Co Creator'],
+    workStatus: 'hiatus',
+    origin: 'external-fanwork',
+    sourceWorkSlug: null,
+    sourceTitle: 'The External Source',
+    sourceCreator: 'Original Rights Holder',
+    fandom: 'Source Fandom',
+    genres: ['Drama', 'Mystery'],
+    characters: ['A', 'B'],
+    relationships: ['A / B'],
+    themes: ['Memory'],
+    contentWarnings: ['Flashing lights'],
+    communityLinks: ['Experimental comics'],
+  };
+  const revision = createPublicationRevision(project);
   project.publications = [revision];
   project.publishedRevision = revision.revision;
 
   const restored = restoreProject(JSON.stringify(project));
 
   assert.ok(restored);
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(restored)),
-    JSON.parse(JSON.stringify(project)),
+  assert.equal(restored.creatorName, 'Lead Creator');
+  assert.equal(restored.publications[0].creatorName, 'Lead Creator');
+  assert.deepEqual(restored.metadata, project.metadata);
+  assert.deepEqual(restored.publications[0].metadata, revision.metadata);
+  restored.metadata.characters.push('C');
+  assert.deepEqual(restored.publications[0].metadata.characters, ['A', 'B']);
+});
+
+void test('version 8 rejects malformed project and publication metadata', () => {
+  const malformedProjects: unknown[] = [];
+  const missingMetadata = createDefaultProject() as unknown as Record<
+    string,
+    unknown
+  >;
+  delete missingMetadata.metadata;
+  malformedProjects.push(missingMetadata);
+
+  const badStatus = createDefaultProject();
+  (badStatus.metadata as unknown as Record<string, unknown>).workStatus =
+    'paused';
+  malformedProjects.push(badStatus);
+
+  const duplicateContributors = createDefaultProject();
+  duplicateContributors.metadata.contributorNames = ['Bahar', ' bahar '];
+  malformedProjects.push(duplicateContributors);
+
+  const illegalSourceLink = createDefaultProject();
+  illegalSourceLink.metadata.sourceWorkSlug = 'another-work';
+  malformedProjects.push(illegalSourceLink);
+
+  for (const malformed of malformedProjects) {
+    assert.match(
+      restoreProjectWithError(JSON.stringify(malformed)).error ?? '',
+      /^Project .+ metadata is invalid$|^Project source work relationship is invalid$/,
+    );
+  }
+
+  const revisionProject = createDefaultProject();
+  const revision = createPublicationRevision(revisionProject);
+  revision.metadata.genres = ['Mystery', 'mystery'];
+  revisionProject.publications = [revision];
+  revisionProject.publishedRevision = revision.revision;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(revisionProject)).error,
+    'Publication revision 1 work metadata is invalid',
   );
-  assert.notEqual(restored.chapters, project.chapters);
-  assert.notEqual(restored.publications[0].chapters, project.chapters);
 });
 
 void test('nested project validation rejects malformed hierarchy and aggregate overflow', () => {
@@ -3048,6 +3197,8 @@ void test('published revisions remain immutable when the draft changes', () => {
   project.title = 'Changed draft title';
   project.coverSceneId = 'scene-3';
   project.tags.push('new tag');
+  project.metadata.characters.push('The Archivist');
+  project.metadata.themes.push('Inheritance');
   project.chapters[0].scenes[0].elements[0].text = 'Changed draft scene';
 
   assert.equal(revision.revision, 1);
@@ -3055,6 +3206,11 @@ void test('published revisions remain immutable when the draft changes', () => {
   assert.equal(revision.title, 'Signal in the Fog');
   assert.equal(revision.coverSceneId, 'scene-2');
   assert.deepEqual(revision.tags, ['science fiction', 'mystery']);
+  assert.deepEqual(revision.metadata.characters, [
+    'The Cartographer',
+    'The Signal',
+  ]);
+  assert.deepEqual(revision.metadata.themes, ['Connection', 'Memory']);
   assert.equal(
     revision.chapters[0].scenes[0].elements[0].text,
     'Something moved beyond the fog.',
@@ -3078,6 +3234,9 @@ void test('publication changes are detected against the current revision', () =>
 
   project.chapters[0].scenes[0].elements[0].text =
     revision.chapters[0].scenes[0].elements[0].text;
+  project.metadata.themes.push('Isolation');
+  assert.equal(hasUnpublishedChanges(project), true);
+  project.metadata.themes = [...revision.metadata.themes];
   project.coverSceneId = 'scene-2';
   assert.equal(hasUnpublishedChanges(project), true);
 });
@@ -3092,6 +3251,7 @@ void test('reader source defaults to the edited draft after publication', () => 
   project.publishedRevision = revision.revision;
   project.title = 'Edited draft title';
   project.contentRating = 'mature';
+  project.metadata.themes.push('Isolation');
   project.chapters[0].scenes[0].name = 'Edited draft scene';
 
   const draftSource = resolveReaderSource(project);
@@ -3099,6 +3259,11 @@ void test('reader source defaults to the edited draft after publication', () => 
   assert.equal(draftSource.title, 'Edited draft title');
   assert.equal(draftSource.contentRating, 'mature');
   assert.equal(draftSource.coverSceneId, 'scene-1');
+  assert.deepEqual(draftSource.metadata.themes, [
+    'Connection',
+    'Memory',
+    'Isolation',
+  ]);
   assert.equal(draftSource.chapters[0].scenes[0].name, 'Edited draft scene');
 
   const revisionSource = resolveReaderSource(project, revision);
@@ -3107,7 +3272,10 @@ void test('reader source defaults to the edited draft after publication', () => 
   assert.equal(revisionSource.title, 'Signal in the Fog');
   assert.equal(revisionSource.contentRating, 'all-ages');
   assert.equal(revisionSource.coverSceneId, 'scene-1');
+  assert.deepEqual(revisionSource.metadata.themes, ['Connection', 'Memory']);
   assert.equal(revisionSource.chapters[0].scenes[0].name, 'The signal');
+  draftSource.metadata.themes.push('Reader-only mutation');
+  assert.equal(project.metadata.themes.includes('Reader-only mutation'), false);
 });
 
 void test('publication readiness blocks untitled or invisible work', () => {
@@ -3117,6 +3285,8 @@ void test('publication readiness blocks untitled or invisible work', () => {
   assert.equal(ready.visibleLayerCount, 9);
 
   const blank = createBlankProject('empty-work');
+  blank.metadata.workStatus = 'ongoing';
+  blank.metadata.origin = 'original';
   blank.title = '   ';
   assert.deepEqual(getPublicationReadiness(blank).issues, [
     'Add a title for this work',
@@ -3143,6 +3313,29 @@ void test('publication readiness blocks untitled or invisible work', () => {
   ]);
 });
 
+void test('publication readiness requires creator status and exact fanwork source context', () => {
+  const project = createDefaultProject();
+  project.metadata.contributorNames = [];
+  project.metadata.workStatus = null;
+  project.metadata.origin = null;
+  assert.deepEqual(getPublicationReadiness(project).issues, [
+    'Add at least one creator credit',
+    'Choose a completion status',
+    'Choose the work origin',
+  ]);
+
+  project.metadata.contributorNames = ['Bahar Yüksel'];
+  project.metadata.workStatus = 'ongoing';
+  project.metadata.origin = 'motus-fanwork';
+  assert.deepEqual(getPublicationReadiness(project).issues, [
+    'Choose the source Motus work',
+  ]);
+  project.metadata.origin = 'external-fanwork';
+  assert.deepEqual(getPublicationReadiness(project).issues, [
+    'Name the external source work',
+  ]);
+});
+
 void test('a published revision can be recovered as a new editable draft', () => {
   const project = createDefaultProject();
   project.coverSceneId = 'scene-2';
@@ -3153,6 +3346,9 @@ void test('a published revision can be recovered as a new editable draft', () =>
   project.publications.push(revision);
   project.publishedRevision = revision.revision;
   project.title = 'Later draft';
+  project.creatorName = 'Later creator';
+  project.metadata.contributorNames = ['Later creator', 'Second creator'];
+  project.metadata.genres = ['Drama'];
   project.coverSceneId = 'scene-3';
   project.chapters[0].scenes[0].elements[0].text = 'Later scene copy';
 
@@ -3164,6 +3360,8 @@ void test('a published revision can be recovered as a new editable draft', () =>
 
   assert.ok(restored);
   assert.equal(restored.title, revision.title);
+  assert.equal(restored.creatorName, revision.metadata.contributorNames[0]);
+  assert.deepEqual(restored.metadata, revision.metadata);
   assert.equal(restored.coverSceneId, 'scene-2');
   assert.equal(
     restored.chapters[0].scenes[0].elements[0].text,

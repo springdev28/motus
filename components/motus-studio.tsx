@@ -97,6 +97,8 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { MotusLogo } from '@/components/motus-logo';
+import { MotusWorkDetailsDialog } from '@/components/motus-work-details-dialog';
+import { MotusWorkMetadataSummary } from '@/components/motus-work-metadata-summary';
 import {
   Dialog,
   DialogContent,
@@ -145,7 +147,6 @@ import {
   MOTION_EVENT_BLOCK_KINDS,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_ELEMENT_TEXT_LENGTH,
-  MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_PROJECT_FILE_BYTES,
   MAX_PROJECT_CHAPTERS,
   MAX_PROJECT_SCENES,
@@ -200,7 +201,6 @@ import {
   normalizeBounceJumpNumericField,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
-  parseProjectTags,
   recordProjectHistory,
   removePublicationRevision,
   replaceMotionEvent,
@@ -225,7 +225,6 @@ import {
   wouldCreateAnimationFinishCycle,
   writeDraftJournal,
   type BounceJump,
-  type ContentRating,
   type Easing,
   type ElementPointerTransformMode,
   type ElementFontPreset,
@@ -243,7 +242,6 @@ import {
   type MotionBlockKind,
   type MotionEventBlockKind,
   type MotusProject,
-  type MotusProjectFormat,
   type MotusPublicationRevision,
   type MotusScene,
   type ProjectHistoryEntry,
@@ -1758,9 +1756,6 @@ export function MotusStudio() {
     string | null
   >(null);
   const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
-  const [publishTagsInput, setPublishTagsInput] = useState(
-    'science fiction, mystery',
-  );
   const [pendingProjectImport, setPendingProjectImport] =
     useState<PendingProjectImport | null>(null);
   const [pendingRevisionRemoval, setPendingRevisionRemoval] =
@@ -4571,7 +4566,6 @@ export function MotusStudio() {
       setConflictOpen(true);
       return;
     }
-    setPublishTagsInput(project.tags.join(', '));
     setPublishOpen(true);
   };
   const openProjectDetails = () => {
@@ -4581,7 +4575,6 @@ export function MotusStudio() {
       setConflictOpen(true);
       return;
     }
-    setPublishTagsInput(project.tags.join(', '));
     setProjectDetailsOpen(true);
   };
   const displayedNotice =
@@ -8070,138 +8063,14 @@ export function MotusStudio() {
         </DialogContent>
       </Dialog>
 
-      <Dialog onOpenChange={setProjectDetailsOpen} open={projectDetailsOpen}>
-        <DialogContent className="publish-dialog">
-          <DialogHeader>
-            <DialogTitle>Project details</DialogTitle>
-            <DialogDescription>
-              Update the title and reader-facing context without publishing a
-              new revision.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="publish-grid">
-            <label className="publish-field" htmlFor="project-details-title">
-              <span>Title</span>
-              <Input
-                {...textHistoryProps}
-                id="project-details-title"
-                maxLength={MAX_PROJECT_TITLE_LENGTH}
-                onChange={(event) =>
-                  commitProject((draft) => {
-                    draft.title = event.target.value;
-                  }, 'project:title')
-                }
-                placeholder="Name this work"
-                value={project.title}
-              />
-            </label>
-            <div className="publish-field-row identity-field-row">
-              <label
-                className="publish-field"
-                htmlFor="project-details-creator"
-              >
-                <span>Creator</span>
-                <Input
-                  {...textHistoryProps}
-                  id="project-details-creator"
-                  maxLength={MAX_PROJECT_TITLE_LENGTH}
-                  onChange={(event) =>
-                    commitProject((draft) => {
-                      draft.creatorName = event.target.value;
-                    }, 'project:creator')
-                  }
-                  value={project.creatorName}
-                />
-              </label>
-              <label
-                className="publish-field"
-                htmlFor="project-details-chapter"
-              >
-                <span>Chapter</span>
-                <Input
-                  {...textHistoryProps}
-                  id="project-details-chapter"
-                  maxLength={MAX_PROJECT_TITLE_LENGTH}
-                  onChange={(event) =>
-                    commitProject((draft) => {
-                      const chapter = draft.chapters.find(
-                        (item) => item.id === activeChapter.id,
-                      );
-                      if (chapter) chapter.title = event.target.value;
-                    }, `chapter:${activeChapter.id}:title`)
-                  }
-                  value={activeChapter.title}
-                />
-              </label>
-            </div>
-            <label className="publish-field" htmlFor="project-details-format">
-              <span>Reading format</span>
-              <NativeSelect
-                id="project-details-format"
-                onChange={(event) =>
-                  commitProject((draft) => {
-                    draft.format = event.target.value as MotusProjectFormat;
-                  })
-                }
-                value={project.format}
-              >
-                <NativeSelectOption value="vertical-scroll">
-                  Vertical scroll
-                </NativeSelectOption>
-                <NativeSelectOption value="page">
-                  Page by page
-                </NativeSelectOption>
-              </NativeSelect>
-            </label>
-            <label
-              className="publish-field"
-              htmlFor="project-details-description"
-            >
-              <span>Description</span>
-              <Textarea
-                {...textHistoryProps}
-                id="project-details-description"
-                maxLength={MAX_PROJECT_DESCRIPTION_LENGTH}
-                onChange={(event) =>
-                  commitProject((draft) => {
-                    draft.description = event.target.value;
-                  }, 'project:description')
-                }
-                placeholder="What should readers know before they begin?"
-                value={project.description}
-              />
-            </label>
-            <label className="publish-field" htmlFor="project-details-tags">
-              <span>Tags</span>
-              <Input
-                id="project-details-tags"
-                maxLength={400}
-                onBlur={(event) => {
-                  endHistoryTransaction();
-                  setPublishTagsInput(
-                    parseProjectTags(event.currentTarget.value).join(', '),
-                  );
-                }}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setPublishTagsInput(value);
-                  commitProject((draft) => {
-                    draft.tags = parseProjectTags(value);
-                  }, 'project:tags');
-                }}
-                placeholder="mystery, science fiction"
-                value={publishTagsInput}
-              />
-              <span className="publish-field-hint">
-                Separate tags with commas.
-              </span>
-            </label>
-          </div>
-          <div className="new-work-actions">
-            <Button onClick={() => setProjectDetailsOpen(false)}>Done</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <MotusWorkDetailsDialog
+        activeChapterId={activeChapter.id}
+        endHistoryTransaction={endHistoryTransaction}
+        onCommit={commitProject}
+        onOpenChange={setProjectDetailsOpen}
+        open={projectDetailsOpen}
+        project={project}
+      />
 
       <Dialog
         onOpenChange={(open) => {
@@ -8215,6 +8084,16 @@ export function MotusStudio() {
             <DialogTitle>{readerSource.title}</DialogTitle>
             <DialogDescription>{readerDescription}</DialogDescription>
           </DialogHeader>
+          <div className="reader-work-summary">
+            <MotusWorkMetadataSummary
+              contentRating={readerSource.contentRating}
+              description={readerSource.description}
+              format={readerSource.format}
+              metadata={readerSource.metadata}
+              mode="compact"
+              tone="dark"
+            />
+          </div>
           {(readerSource.contentRating === 'mature' ||
             readerSource.contentRating === 'adults-only') &&
           !readerMatureConfirmed ? (
@@ -8380,178 +8259,57 @@ export function MotusStudio() {
           </DialogHeader>
 
           <div className="publish-grid">
-            <label className="publish-field" htmlFor="publish-title">
-              <span>Title</span>
-              <Input
-                {...textHistoryProps}
-                id="publish-title"
-                maxLength={MAX_PROJECT_TITLE_LENGTH}
-                onChange={(event) =>
-                  commitProject((draft) => {
-                    draft.title = event.target.value;
-                  }, 'project:title')
-                }
-                placeholder="Name this work"
-                value={project.title}
+            <section className="publish-work-review">
+              <div className="publish-work-review-heading">
+                <div>
+                  <span>WORK DETAILS</span>
+                  <strong>{project.title || 'Untitled work'}</strong>
+                </div>
+                <Button
+                  onClick={() => {
+                    setPublishOpen(false);
+                    queueMicrotask(() => setProjectDetailsOpen(true));
+                  }}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Pencil />
+                  Edit details
+                </Button>
+              </div>
+              <MotusWorkMetadataSummary
+                contentRating={project.contentRating}
+                description={project.description}
+                format={project.format}
+                metadata={project.metadata}
               />
-            </label>
-            <div className="publish-field-row identity-field-row">
-              <label className="publish-field" htmlFor="publish-creator">
-                <span>Creator</span>
-                <Input
-                  {...textHistoryProps}
-                  id="publish-creator"
-                  maxLength={MAX_PROJECT_TITLE_LENGTH}
-                  onChange={(event) =>
-                    commitProject((draft) => {
-                      draft.creatorName = event.target.value;
-                    }, 'project:creator')
-                  }
-                  value={project.creatorName}
-                />
-              </label>
-              <label className="publish-field" htmlFor="publish-chapter">
-                <span>Chapter</span>
-                <Input
-                  {...textHistoryProps}
-                  id="publish-chapter"
-                  maxLength={MAX_PROJECT_TITLE_LENGTH}
-                  onChange={(event) =>
-                    commitProject((draft) => {
-                      const chapter = draft.chapters.find(
-                        (item) => item.id === activeChapter.id,
-                      );
-                      if (chapter) chapter.title = event.target.value;
-                    }, `chapter:${activeChapter.id}:title`)
-                  }
-                  value={activeChapter.title}
-                />
-              </label>
-            </div>
-            <label className="publish-field" htmlFor="publish-format">
-              <span>Reading format</span>
-              <NativeSelect
-                id="publish-format"
-                onChange={(event) =>
-                  commitProject((draft) => {
-                    draft.format = event.target.value as MotusProjectFormat;
-                  })
-                }
-                value={project.format}
-              >
-                <NativeSelectOption value="vertical-scroll">
-                  Vertical scroll
-                </NativeSelectOption>
-                <NativeSelectOption value="page">
-                  Page by page
-                </NativeSelectOption>
-              </NativeSelect>
-            </label>
-            <label className="publish-field" htmlFor="publish-description">
-              <span>Description</span>
-              <Textarea
-                {...textHistoryProps}
-                id="publish-description"
-                maxLength={MAX_PROJECT_DESCRIPTION_LENGTH}
-                onChange={(event) =>
-                  commitProject((draft) => {
-                    draft.description = event.target.value;
-                  }, 'project:description')
-                }
-                placeholder="What should readers know before they begin?"
-                value={project.description}
-              />
-            </label>
-            <label className="publish-field" htmlFor="publish-tags">
-              <span>Tags</span>
-              <Input
-                id="publish-tags"
-                maxLength={400}
-                onBlur={(event) => {
-                  endHistoryTransaction();
-                  setPublishTagsInput(
-                    parseProjectTags(event.currentTarget.value).join(', '),
-                  );
-                }}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setPublishTagsInput(value);
-                  commitProject((draft) => {
-                    draft.tags = parseProjectTags(value);
-                  }, 'project:tags');
-                }}
-                placeholder="mystery, science fiction"
-                value={publishTagsInput}
-              />
-              <small className="publish-field-hint">
-                Comma-separated · up to 8 tags
-              </small>
-            </label>
+            </section>
 
-            <label className="publish-field" htmlFor="publish-cover-scene">
-              <span>Cover scene</span>
-              <NativeSelect
-                id="publish-cover-scene"
-                onChange={(event) =>
-                  commitProject((draft) => {
-                    draft.coverSceneId = event.target.value;
-                  })
-                }
-                value={project.coverSceneId}
-              >
-                {project.chapters.flatMap((chapter, chapterNumber) =>
-                  chapter.scenes.map((scene, sceneNumber) => (
-                    <NativeSelectOption key={scene.id} value={scene.id}>
-                      C{chapterNumber + 1} ·{' '}
-                      {String(sceneNumber + 1).padStart(2, '0')} · {scene.name}
-                    </NativeSelectOption>
-                  )),
-                )}
-              </NativeSelect>
-              <small className="publish-field-hint">
-                Used for the work cover and next revision
-              </small>
-            </label>
-
-            <div className="publish-field-row">
-              <label className="publish-field" htmlFor="publish-language">
-                <span>Language</span>
+            <div className="publish-field-row publish-final-controls">
+              <label className="publish-field" htmlFor="publish-cover-scene">
+                <span>Cover scene</span>
                 <NativeSelect
-                  id="publish-language"
+                  id="publish-cover-scene"
                   onChange={(event) =>
                     commitProject((draft) => {
-                      draft.language = event.target.value;
+                      draft.coverSceneId = event.target.value;
                     })
                   }
-                  value={project.language}
+                  value={project.coverSceneId}
                 >
-                  <NativeSelectOption value="en">English</NativeSelectOption>
-                  <NativeSelectOption value="tr">Turkish</NativeSelectOption>
-                  <NativeSelectOption value="es">Spanish</NativeSelectOption>
-                  <NativeSelectOption value="fr">French</NativeSelectOption>
-                  <NativeSelectOption value="ja">Japanese</NativeSelectOption>
+                  {project.chapters.flatMap((chapter, chapterNumber) =>
+                    chapter.scenes.map((scene, sceneNumber) => (
+                      <NativeSelectOption key={scene.id} value={scene.id}>
+                        C{chapterNumber + 1} ·{' '}
+                        {String(sceneNumber + 1).padStart(2, '0')} ·{' '}
+                        {scene.name}
+                      </NativeSelectOption>
+                    )),
+                  )}
                 </NativeSelect>
-              </label>
-              <label className="publish-field" htmlFor="publish-rating">
-                <span>Content rating</span>
-                <NativeSelect
-                  id="publish-rating"
-                  onChange={(event) =>
-                    commitProject((draft) => {
-                      draft.contentRating = event.target.value as ContentRating;
-                    })
-                  }
-                  value={project.contentRating}
-                >
-                  <NativeSelectOption value="all-ages">
-                    General
-                  </NativeSelectOption>
-                  <NativeSelectOption value="teen">Teen</NativeSelectOption>
-                  <NativeSelectOption value="mature">Mature</NativeSelectOption>
-                  <NativeSelectOption value="adults-only">
-                    Adults only
-                  </NativeSelectOption>
-                </NativeSelect>
+                <small className="publish-field-hint">
+                  Used for the work cover and next revision
+                </small>
               </label>
               <label className="publish-field" htmlFor="publish-visibility">
                 <span>Visibility</span>

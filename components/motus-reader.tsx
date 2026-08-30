@@ -13,14 +13,13 @@ import {
   Heart,
   Play,
   RotateCcw,
-  ShieldAlert,
 } from 'lucide-react';
 
 import { MotusLogo } from '@/components/motus-logo';
 import { ReaderScene } from '@/components/motus-studio';
+import { MotusWorkMetadataSummary } from '@/components/motus-work-metadata-summary';
 import { Button } from '@/components/ui/button';
 import {
-  LIBRARY_CONTENT_WARNING_LABELS,
   MOTUS_LIBRARY_WORKS,
   createCatalogPreviewProject,
   getCatalogPreviewLayout,
@@ -344,20 +343,12 @@ export function MotusReader({ slug }: { slug: string }) {
                 </a>
               ))}
             </div>
-            {work.contentWarningIds.length ? (
-              <div
-                className="published-reader-warnings"
-                aria-label="Content warnings"
-              >
-                <ShieldAlert aria-hidden="true" />
-                <span>
-                  Content warnings:{' '}
-                  {work.contentWarningIds
-                    .map((warning) => LIBRARY_CONTENT_WARNING_LABELS[warning])
-                    .join(' · ')}
-                </span>
-              </div>
-            ) : null}
+            <MotusWorkMetadataSummary
+              contentRating={project.contentRating}
+              format={project.format}
+              metadata={project.metadata}
+              tone="dark"
+            />
           </div>
           <dl className="published-reader-facts">
             <div>

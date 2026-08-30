@@ -1,4 +1,4 @@
-export const PROJECT_SCHEMA_VERSION = 7 as const;
+export const PROJECT_SCHEMA_VERSION = 8 as const;
 export const MOTION_SCHEMA_VERSION = 1 as const;
 export const MOTUS_PROJECT_FORMATS = ['vertical-scroll', 'page'] as const;
 export type MotusProjectFormat = (typeof MOTUS_PROJECT_FORMATS)[number];
@@ -249,6 +249,14 @@ export const isMotionEventBlockKind = (
 export type ContentRating = 'all-ages' | 'teen' | 'mature' | 'adults-only';
 export type PublicationVisibility = 'private' | 'public';
 export type SupportedImageMime = 'image/png' | 'image/webp';
+export const WORK_STATUSES = ['ongoing', 'completed', 'hiatus'] as const;
+export type WorkStatus = (typeof WORK_STATUSES)[number];
+export const WORK_ORIGINS = [
+  'original',
+  'motus-fanwork',
+  'external-fanwork',
+] as const;
+export type WorkOrigin = (typeof WORK_ORIGINS)[number];
 
 export const MAX_IMAGE_BYTES = 750_000;
 export const MAX_IMAGE_DIMENSION = 4_096;
@@ -262,6 +270,9 @@ export const MAX_PROJECT_TAG_LENGTH = 40;
 export const MAX_PROJECT_CHAPTERS = 100;
 export const MAX_PROJECT_SCENES = 100;
 export const MAX_PUBLICATION_REVISION = 1_000_000;
+export const MAX_PROJECT_CONTRIBUTORS = 32;
+export const MAX_PROJECT_METADATA_ITEMS = 64;
+export const MAX_PROJECT_METADATA_VALUE_LENGTH = 160;
 export const MAX_SCENE_ELEMENTS = 500;
 export const MAX_SCENE_NAME_LENGTH = 160;
 export const MAX_SCENE_THUMBNAIL_ELEMENTS = 12;
@@ -2320,6 +2331,22 @@ export function getSceneThumbnailElements(
   });
 }
 
+export type MotusWorkMetadata = {
+  contributorNames: string[];
+  workStatus: WorkStatus | null;
+  origin: WorkOrigin | null;
+  sourceWorkSlug: string | null;
+  sourceTitle: string | null;
+  sourceCreator: string | null;
+  fandom: string | null;
+  genres: string[];
+  characters: string[];
+  relationships: string[];
+  themes: string[];
+  contentWarnings: string[];
+  communityLinks: string[];
+};
+
 export type MotusPublicationRevision = {
   id: string;
   revision: number;
@@ -2331,6 +2358,7 @@ export type MotusPublicationRevision = {
   language: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  metadata: MotusWorkMetadata;
   format: MotusProjectFormat;
   coverSceneId: string;
   chapters: MotusChapter[];
@@ -2346,6 +2374,7 @@ export type MotusProject = {
   language: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  metadata: MotusWorkMetadata;
   format: MotusProjectFormat;
   coverSceneId: string;
   publishedRevision: number;
@@ -2414,8 +2443,12 @@ export type MotusReaderSource = {
   revision: number | null;
   title: string;
   creatorName: string;
+  description: string;
+  tags: string[];
+  language: string;
   contentRating: ContentRating;
   visibility: PublicationVisibility;
+  metadata: MotusWorkMetadata;
   format: MotusProjectFormat;
   coverSceneId: string;
   chapters: MotusChapter[];
@@ -2481,8 +2514,12 @@ export function resolveReaderSource(
         revision: revision.revision,
         title: revision.title,
         creatorName: revision.creatorName,
+        description: revision.description,
+        tags: [...revision.tags],
+        language: revision.language,
         contentRating: revision.contentRating,
         visibility: revision.visibility,
+        metadata: cloneWorkMetadata(revision.metadata),
         format: revision.format,
         coverSceneId: resolveProjectCoverSceneId(
           revision,
@@ -2494,9 +2531,14 @@ export function resolveReaderSource(
         mode: 'draft',
         revision: null,
         title: project.title,
-        creatorName: project.creatorName,
+        creatorName:
+          project.metadata.contributorNames[0] ?? project.creatorName,
+        description: project.description,
+        tags: [...project.tags],
+        language: project.language,
         contentRating: project.contentRating,
         visibility: project.visibility,
+        metadata: cloneWorkMetadata(project.metadata),
         format: project.format,
         coverSceneId: resolveProjectCoverSceneId(project, project.coverSceneId),
         chapters: project.chapters,
@@ -2526,7 +2568,25 @@ export function getPublicationReadiness(
   else if (project.title.length > MAX_PROJECT_TITLE_LENGTH) {
     issues.push(`Shorten the title to ${MAX_PROJECT_TITLE_LENGTH} characters`);
   }
-  if (!project.creatorName.trim()) issues.push('Add the creator name');
+  if (project.metadata.contributorNames.length === 0) {
+    issues.push('Add at least one creator credit');
+  }
+  if (!project.metadata.workStatus) {
+    issues.push('Choose a completion status');
+  }
+  if (!project.metadata.origin) {
+    issues.push('Choose the work origin');
+  } else if (
+    project.metadata.origin === 'motus-fanwork' &&
+    !project.metadata.sourceWorkSlug
+  ) {
+    issues.push('Choose the source Motus work');
+  } else if (
+    project.metadata.origin === 'external-fanwork' &&
+    !project.metadata.sourceTitle
+  ) {
+    issues.push('Name the external source work');
+  }
   if (project.chapters.some((chapter) => !chapter.title.trim())) {
     issues.push('Name every chapter');
   }
@@ -2755,6 +2815,107 @@ function sanitizeProjectTags(values: unknown[]): string[] {
 
 export function parseProjectTags(value: string): string[] {
   return sanitizeProjectTags(value.split(','));
+}
+
+function sanitizeWorkMetadataItems(
+  values: unknown[],
+  maxItems = MAX_PROJECT_METADATA_ITEMS,
+): string[] {
+  const items: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const item = value
+      .trim()
+      .replace(/\s+/g, ' ')
+      .slice(0, MAX_PROJECT_METADATA_VALUE_LENGTH);
+    const key = item.toLocaleLowerCase();
+    if (!item || seen.has(key)) continue;
+    items.push(item);
+    seen.add(key);
+    if (items.length === maxItems) break;
+  }
+
+  return items;
+}
+
+export function parseWorkMetadataItems(value: string): string[] {
+  return sanitizeWorkMetadataItems(value.split(','));
+}
+
+function normalizeOptionalMetadataValue(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  return normalized
+    ? normalized.slice(0, MAX_PROJECT_METADATA_VALUE_LENGTH)
+    : null;
+}
+
+export function createWorkMetadata(
+  source: Partial<MotusWorkMetadata> = {},
+  fallbackCreatorName = 'Unknown creator',
+): MotusWorkMetadata {
+  const workStatus = WORK_STATUSES.includes(source.workStatus as WorkStatus)
+    ? (source.workStatus as WorkStatus)
+    : null;
+  const origin = WORK_ORIGINS.includes(source.origin as WorkOrigin)
+    ? (source.origin as WorkOrigin)
+    : null;
+  const hasExplicitContributors = source.contributorNames !== undefined;
+  const contributorNames = sanitizeWorkMetadataItems(
+    source.contributorNames ?? [fallbackCreatorName],
+    MAX_PROJECT_CONTRIBUTORS,
+  );
+  const normalizedContributors =
+    contributorNames.length || hasExplicitContributors
+      ? contributorNames
+      : sanitizeWorkMetadataItems(
+          [fallbackCreatorName],
+          MAX_PROJECT_CONTRIBUTORS,
+        );
+  return {
+    contributorNames: normalizedContributors,
+    workStatus,
+    origin,
+    sourceWorkSlug:
+      origin === 'motus-fanwork'
+        ? normalizeOptionalMetadataValue(source.sourceWorkSlug)
+        : null,
+    sourceTitle:
+      origin !== 'original'
+        ? normalizeOptionalMetadataValue(source.sourceTitle)
+        : null,
+    sourceCreator:
+      origin !== 'original'
+        ? normalizeOptionalMetadataValue(source.sourceCreator)
+        : null,
+    fandom:
+      origin !== 'original'
+        ? normalizeOptionalMetadataValue(source.fandom)
+        : null,
+    genres: sanitizeWorkMetadataItems(source.genres ?? []),
+    characters: sanitizeWorkMetadataItems(source.characters ?? []),
+    relationships: sanitizeWorkMetadataItems(source.relationships ?? []),
+    themes: sanitizeWorkMetadataItems(source.themes ?? []),
+    contentWarnings: sanitizeWorkMetadataItems(source.contentWarnings ?? []),
+    communityLinks: sanitizeWorkMetadataItems(source.communityLinks ?? []),
+  };
+}
+
+export function cloneWorkMetadata(
+  metadata: MotusWorkMetadata,
+): MotusWorkMetadata {
+  return {
+    ...metadata,
+    contributorNames: [...metadata.contributorNames],
+    genres: [...metadata.genres],
+    characters: [...metadata.characters],
+    relationships: [...metadata.relationships],
+    themes: [...metadata.themes],
+    contentWarnings: [...metadata.contentWarnings],
+    communityLinks: [...metadata.communityLinks],
+  };
 }
 
 const MOTION_BLOCK_KIND_SET = new Set<string>(MOTION_BLOCK_KINDS);
@@ -4692,6 +4853,17 @@ export const createDefaultProject = (): MotusProject => ({
   language: 'en',
   contentRating: 'all-ages',
   visibility: 'private',
+  metadata: createWorkMetadata(
+    {
+      contributorNames: ['Bahar Yüksel'],
+      workStatus: 'ongoing',
+      origin: 'original',
+      genres: ['Science fiction', 'Mystery'],
+      characters: ['The Cartographer', 'The Signal'],
+      themes: ['Connection', 'Memory'],
+    },
+    'Bahar Yüksel',
+  ),
   format: 'vertical-scroll',
   coverSceneId: 'scene-1',
   publishedRevision: 0,
@@ -4748,6 +4920,10 @@ export function createBlankProject(
     language: 'en',
     contentRating: 'all-ages',
     visibility: 'private',
+    metadata: createWorkMetadata(
+      { contributorNames: ['New creator'] },
+      'New creator',
+    ),
     format: 'vertical-scroll',
     coverSceneId: openingSceneId,
     publishedRevision: 0,
@@ -5066,17 +5242,20 @@ export function createPublicationRevision(
   for (let suffix = 2; occupiedIds.has(id); suffix += 1) {
     id = `${baseId}-${suffix}`;
   }
+  const metadata = createWorkMetadata(project.metadata, project.creatorName);
+  const creatorName = metadata.contributorNames[0] ?? project.creatorName;
   return {
     id,
     revision,
     createdAt,
     title: project.title,
-    creatorName: project.creatorName,
+    creatorName,
     description: project.description,
     tags: [...project.tags],
     language: project.language,
     contentRating: project.contentRating,
     visibility: project.visibility,
+    metadata,
     format: project.format,
     coverSceneId: resolveProjectCoverSceneId(project, project.coverSceneId),
     chapters: structuredClone(project.chapters),
@@ -5092,12 +5271,14 @@ export function hasUnpublishedChanges(project: MotusProject): boolean {
 
   return (
     published.title !== project.title ||
-    published.creatorName !== project.creatorName ||
+    published.creatorName !==
+      (project.metadata.contributorNames[0] ?? project.creatorName) ||
     published.description !== project.description ||
     JSON.stringify(published.tags) !== JSON.stringify(project.tags) ||
     published.language !== project.language ||
     published.contentRating !== project.contentRating ||
     published.visibility !== project.visibility ||
+    JSON.stringify(published.metadata) !== JSON.stringify(project.metadata) ||
     published.format !== project.format ||
     published.coverSceneId !== project.coverSceneId ||
     JSON.stringify(published.chapters) !== JSON.stringify(project.chapters)
@@ -5114,7 +5295,12 @@ export function restorePublicationToDraft(
 
   const restored = cloneProject(project);
   restored.title = revision.title;
-  restored.creatorName = revision.creatorName;
+  restored.metadata = createWorkMetadata(
+    revision.metadata,
+    revision.creatorName,
+  );
+  restored.creatorName =
+    restored.metadata.contributorNames[0] ?? revision.creatorName;
   restored.description = revision.description;
   restored.tags = [...revision.tags];
   restored.language = revision.language;
@@ -5460,6 +5646,104 @@ function isProjectFormat(value: unknown): value is MotusProjectFormat {
   return value === 'vertical-scroll' || value === 'page';
 }
 
+const WORK_METADATA_LIST_FIELDS = [
+  'genres',
+  'characters',
+  'relationships',
+  'themes',
+  'contentWarnings',
+  'communityLinks',
+] as const;
+
+function validateMetadataStringList(
+  value: unknown,
+  maxItems: number,
+  requireOne: boolean,
+): boolean {
+  if (!Array.isArray(value)) return false;
+  if ((requireOne && value.length === 0) || value.length > maxItems) {
+    return false;
+  }
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (
+      typeof item !== 'string' ||
+      !item.trim() ||
+      item.length > MAX_PROJECT_METADATA_VALUE_LENGTH
+    ) {
+      return false;
+    }
+    const key = item.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+}
+
+function validateOptionalMetadataValue(value: unknown): boolean {
+  return (
+    value === null ||
+    (typeof value === 'string' &&
+      Boolean(value.trim()) &&
+      value.length <= MAX_PROJECT_METADATA_VALUE_LENGTH)
+  );
+}
+
+function validateWorkMetadata(
+  value: unknown,
+  label: string,
+  requireContributor: boolean,
+): string | null {
+  if (!isRecord(value)) return `${label} work metadata is invalid`;
+  if (
+    !validateMetadataStringList(
+      value.contributorNames,
+      MAX_PROJECT_CONTRIBUTORS,
+      requireContributor,
+    ) ||
+    (value.workStatus !== null &&
+      !WORK_STATUSES.includes(value.workStatus as WorkStatus)) ||
+    (value.origin !== null &&
+      !WORK_ORIGINS.includes(value.origin as WorkOrigin))
+  ) {
+    return `${label} work metadata is invalid`;
+  }
+  for (const field of [
+    'sourceWorkSlug',
+    'sourceTitle',
+    'sourceCreator',
+    'fandom',
+  ] as const) {
+    if (!validateOptionalMetadataValue(value[field])) {
+      return `${label} work metadata is invalid`;
+    }
+  }
+  for (const field of WORK_METADATA_LIST_FIELDS) {
+    if (
+      !validateMetadataStringList(
+        value[field],
+        MAX_PROJECT_METADATA_ITEMS,
+        false,
+      )
+    ) {
+      return `${label} work metadata is invalid`;
+    }
+  }
+  if (
+    value.origin === 'original' &&
+    (value.sourceWorkSlug !== null ||
+      value.sourceTitle !== null ||
+      value.sourceCreator !== null ||
+      value.fandom !== null)
+  ) {
+    return `${label} original-work source metadata is invalid`;
+  }
+  if (value.origin !== 'motus-fanwork' && value.sourceWorkSlug !== null) {
+    return `${label} source work relationship is invalid`;
+  }
+  return null;
+}
+
 export function restoreProjectWithError(
   value: string | null,
 ): ProjectRestoreResult {
@@ -5491,6 +5775,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 4 &&
     candidate.schemaVersion !== 5 &&
     candidate.schemaVersion !== 6 &&
+    candidate.schemaVersion !== 7 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {
@@ -5505,9 +5790,19 @@ export function restoreProjectWithError(
     return { project: null, error: 'Project title is too long' };
   }
 
-  const legacySchema = candidate.schemaVersion !== PROJECT_SCHEMA_VERSION;
-  if (!legacySchema && !isProjectFormat(candidate.format)) {
+  const schemaVersion = candidate.schemaVersion as number;
+  const usesChapterHierarchy = schemaVersion >= 7;
+  const usesWorkMetadata = schemaVersion >= 8;
+  if (usesChapterHierarchy && !isProjectFormat(candidate.format)) {
     return { project: null, error: 'Project uses an unsupported format' };
+  }
+  if (usesWorkMetadata) {
+    const metadataError = validateWorkMetadata(
+      candidate.metadata,
+      'Project',
+      false,
+    );
+    if (metadataError) return { project: null, error: metadataError };
   }
 
   const fallbackId = createProjectBackupFileName({
@@ -5519,9 +5814,9 @@ export function restoreProjectWithError(
       ? candidate.id.trim()
       : fallbackId;
   const legacyChapterId = `${projectId.slice(0, MAX_ELEMENT_ID_LENGTH - 10)}-chapter-1`;
-  const hierarchyError = legacySchema
-    ? validateScenes(candidate.scenes, 'Project')
-    : validateChapters(candidate.chapters, 'Project');
+  const hierarchyError = usesChapterHierarchy
+    ? validateChapters(candidate.chapters, 'Project')
+    : validateScenes(candidate.scenes, 'Project');
   if (hierarchyError) return { project: null, error: hierarchyError };
 
   const publicationValues = candidate.publications ?? [];
@@ -5543,8 +5838,16 @@ export function restoreProjectWithError(
     ) {
       return { project: null, error: 'Project publication history is invalid' };
     }
-    if (!legacySchema && !isProjectFormat(publicationValue.format)) {
+    if (usesChapterHierarchy && !isProjectFormat(publicationValue.format)) {
       return { project: null, error: 'Project publication format is invalid' };
+    }
+    if (usesWorkMetadata) {
+      const metadataError = validateWorkMetadata(
+        publicationValue.metadata,
+        `Publication revision ${publicationValue.revision as number}`,
+        true,
+      );
+      if (metadataError) return { project: null, error: metadataError };
     }
     const revision = publicationValue.revision as number;
     if (
@@ -5558,13 +5861,13 @@ export function restoreProjectWithError(
     }
     publicationIds.add(publicationValue.id);
     publicationNumbers.add(revision);
-    const revisionError = legacySchema
-      ? validateScenes(
-          publicationValue.scenes,
+    const revisionError = usesChapterHierarchy
+      ? validateChapters(
+          publicationValue.chapters,
           `Publication revision ${revision}`,
         )
-      : validateChapters(
-          publicationValue.chapters,
+      : validateScenes(
+          publicationValue.scenes,
           `Publication revision ${revision}`,
         );
     if (revisionError) return { project: null, error: revisionError };
@@ -5573,8 +5876,9 @@ export function restoreProjectWithError(
   const publications: MotusPublicationRevision[] = publicationValues.map(
     (publicationValue) => {
       const revision = publicationValue as UnknownRecord;
-      const chapters = legacySchema
-        ? [
+      const chapters = usesChapterHierarchy
+        ? normalizeChapters(revision.chapters as unknown[])
+        : [
             {
               id: legacyChapterId,
               title: normalizeEditableName(
@@ -5584,21 +5888,30 @@ export function restoreProjectWithError(
               ),
               scenes: normalizeScenes(revision.scenes as unknown[]),
             },
-          ]
-        : normalizeChapters(revision.chapters as unknown[]);
-      const format: MotusProjectFormat = legacySchema
-        ? 'vertical-scroll'
-        : (revision.format as MotusProjectFormat);
+          ];
+      const format: MotusProjectFormat = usesChapterHierarchy
+        ? (revision.format as MotusProjectFormat)
+        : 'vertical-scroll';
+      const legacyCreatorName = normalizeEditableName(
+        revision.creatorName,
+        'Unknown creator',
+        MAX_PROJECT_TITLE_LENGTH,
+      );
+      const metadata = usesWorkMetadata
+        ? createWorkMetadata(
+            revision.metadata as Partial<MotusWorkMetadata>,
+            legacyCreatorName,
+          )
+        : createWorkMetadata(
+            { contributorNames: [legacyCreatorName] },
+            legacyCreatorName,
+          );
       return {
         id: revision.id as string,
         revision: revision.revision as number,
         createdAt: revision.createdAt as string,
         title: revision.title as string,
-        creatorName: normalizeEditableName(
-          revision.creatorName,
-          'Unknown creator',
-          MAX_PROJECT_TITLE_LENGTH,
-        ),
+        creatorName: metadata.contributorNames[0] ?? legacyCreatorName,
         description:
           typeof revision.description === 'string'
             ? revision.description.slice(0, MAX_PROJECT_DESCRIPTION_LENGTH)
@@ -5608,6 +5921,7 @@ export function restoreProjectWithError(
           typeof revision.language === 'string' ? revision.language : 'en',
         contentRating: normalizeContentRating(revision.contentRating),
         visibility: normalizeVisibility(revision.visibility),
+        metadata,
         format,
         coverSceneId: resolveProjectCoverSceneId(
           { chapters },
@@ -5626,8 +5940,9 @@ export function restoreProjectWithError(
     Number.isFinite(Date.parse(candidate.updatedAt))
       ? candidate.updatedAt
       : new Date(0).toISOString();
-  const chapters = legacySchema
-    ? [
+  const chapters = usesChapterHierarchy
+    ? normalizeChapters(candidate.chapters as unknown[])
+    : [
         {
           id: legacyChapterId,
           title: normalizeEditableName(
@@ -5637,11 +5952,24 @@ export function restoreProjectWithError(
           ),
           scenes: normalizeScenes(candidate.scenes as unknown[]),
         },
-      ]
-    : normalizeChapters(candidate.chapters as unknown[]);
-  const format: MotusProjectFormat = legacySchema
-    ? 'vertical-scroll'
-    : (candidate.format as MotusProjectFormat);
+      ];
+  const format: MotusProjectFormat = usesChapterHierarchy
+    ? (candidate.format as MotusProjectFormat)
+    : 'vertical-scroll';
+  const legacyCreatorName = normalizeEditableName(
+    candidate.creatorName,
+    'Unknown creator',
+    MAX_PROJECT_TITLE_LENGTH,
+  );
+  const metadata = usesWorkMetadata
+    ? createWorkMetadata(
+        candidate.metadata as Partial<MotusWorkMetadata>,
+        legacyCreatorName,
+      )
+    : createWorkMetadata(
+        { contributorNames: [legacyCreatorName] },
+        legacyCreatorName,
+      );
 
   return {
     error: null,
@@ -5649,11 +5977,7 @@ export function restoreProjectWithError(
       schemaVersion: PROJECT_SCHEMA_VERSION,
       id: projectId,
       title: candidate.title,
-      creatorName: normalizeEditableName(
-        candidate.creatorName,
-        'Unknown creator',
-        MAX_PROJECT_TITLE_LENGTH,
-      ),
+      creatorName: metadata.contributorNames[0] ?? legacyCreatorName,
       description:
         typeof candidate.description === 'string'
           ? candidate.description.slice(0, MAX_PROJECT_DESCRIPTION_LENGTH)
@@ -5663,6 +5987,7 @@ export function restoreProjectWithError(
         typeof candidate.language === 'string' ? candidate.language : 'en',
       contentRating: normalizeContentRating(candidate.contentRating),
       visibility: normalizeVisibility(candidate.visibility),
+      metadata,
       format,
       coverSceneId: resolveProjectCoverSceneId(
         { chapters },

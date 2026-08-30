@@ -181,6 +181,15 @@ void test('stable reader projects preserve work metadata and editable motion', (
   const rebuiltAtAnotherCatalogPosition = createCatalogPreviewProject(work, 7);
   assert.equal(project.title, work.title);
   assert.equal(project.creatorName, work.creator);
+  assert.deepEqual(project.metadata.contributorNames, [work.creator]);
+  assert.equal(project.metadata.workStatus, 'ongoing');
+  assert.equal(project.metadata.origin, 'original');
+  assert.deepEqual(project.metadata.genres, [work.genre]);
+  assert.deepEqual(project.metadata.characters, [...work.characters]);
+  assert.deepEqual(project.metadata.relationships, []);
+  assert.deepEqual(project.metadata.themes, []);
+  assert.deepEqual(project.metadata.communityLinks, []);
+  assert.equal(project.language, 'en');
   assert.equal(project.visibility, 'public');
   assert.equal(project.publishedRevision, 0);
   assert.equal(project.chapters.length, work.chapterCount);
@@ -198,6 +207,28 @@ void test('stable reader projects preserve work metadata and editable motion', (
       ),
     ),
   );
+});
+
+void test('catalog previews preserve warnings and unresolved fanwork provenance honestly', () => {
+  const work = getLibraryWork('afterimage-archive');
+  assert.ok(work);
+  const project = createCatalogPreviewProject(work);
+
+  assert.equal(project.metadata.origin, null);
+  assert.equal(project.metadata.fandom, 'The Static Room');
+  assert.equal(project.metadata.sourceWorkSlug, null);
+  assert.equal(project.metadata.sourceTitle, null);
+  assert.equal(project.metadata.sourceCreator, null);
+  assert.deepEqual(project.metadata.contentWarnings, [
+    'Horror imagery',
+    'Distressing themes',
+  ]);
+  assert.deepEqual(project.metadata.genres, ['Mystery']);
+  assert.equal(project.metadata.characters.includes('The Cartographer'), false);
+
+  const spanishWork = getLibraryWork('cloudbreak-courier');
+  assert.ok(spanishWork);
+  assert.equal(createCatalogPreviewProject(spanishWork).language, 'es');
 });
 
 void test('reading progress rejects cross-chapter scene pairs', () => {
