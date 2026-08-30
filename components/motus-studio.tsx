@@ -4948,6 +4948,15 @@ export function MotusStudio() {
             Catalogs
           </Button>
           <Button
+            aria-label="Edit work details"
+            className="topbar-mobile-hide"
+            onClick={openProjectDetails}
+            variant="secondary"
+          >
+            <Pencil data-icon="inline-start" />
+            Details
+          </Button>
+          <Button
             aria-label="Open draft reader"
             className="topbar-reader"
             onClick={() => openReader()}
@@ -5070,7 +5079,7 @@ export function MotusStudio() {
                 onClick={openProjectDetails}
               >
                 <Pencil />
-                Project details
+                Work details
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
