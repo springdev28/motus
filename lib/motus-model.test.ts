@@ -9,6 +9,7 @@ import {
   ELEMENT_TEXT_ALIGNMENTS,
   MAX_BOUNCE_JUMPS,
   MAX_ELEMENT_FONT_SIZE,
+  MAX_ELEMENT_ID_LENGTH,
   MAX_ELEMENT_LETTER_SPACING,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_MOTION_BLOCKS,
@@ -1387,6 +1388,17 @@ void test('animation-finish source IDs normalize safely and remain recoverable',
   assert.equal(
     restoreProjectWithError(JSON.stringify(malformed)).error,
     'Project contains an invalid animation source layer',
+  );
+
+  const oversizedLayerId = structuredClone(project);
+  oversizedLayerId.scenes[0].elements[1].id = 'x'.repeat(
+    MAX_ELEMENT_ID_LENGTH + 1,
+  );
+  oversizedLayerId.scenes[0].elements[0].motion.blocks[0].sourceElementId =
+    null;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(oversizedLayerId)).error,
+    'Project contains an invalid layer',
   );
 });
 

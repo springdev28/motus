@@ -266,6 +266,7 @@ export const MAX_PROJECT_HISTORY_ENTRIES = 50;
 export const MAX_PROJECT_HISTORY_BYTES = 24_000_000;
 export const MAX_MOTION_BLOCKS = 64;
 export const MAX_BOUNCE_JUMPS = 12;
+export const MAX_ELEMENT_ID_LENGTH = 256;
 export const MAX_MOTION_EVENT_SOURCE_ID_LENGTH = 256;
 
 export type BounceDirection = 'left' | 'right';
@@ -5134,7 +5135,9 @@ function validateScenes(value: unknown, context: string): string | null {
       if (
         !isRecord(elementValue) ||
         typeof elementValue.id !== 'string' ||
-        !elementValue.id
+        !elementValue.id ||
+        elementValue.id !== elementValue.id.trim() ||
+        elementValue.id.length > MAX_ELEMENT_ID_LENGTH
       ) {
         return `${context} contains an invalid layer`;
       }

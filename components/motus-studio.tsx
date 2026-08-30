@@ -3279,10 +3279,25 @@ export function MotusStudio() {
       return false;
     }
     const copyIds = sources.map((source) => uniqueId(source.type));
-    const copyOrigins = sources.map((source, index) => ({
-      ...createElementCopy(source, copyIds[index], 0),
-      locked: false,
-    }));
+    const copiedElementIds = new Map(
+      sources.map((source, index) => [source.id, copyIds[index]]),
+    );
+    const copyOrigins = sources.map((source, index) => {
+      const copy = createElementCopy(source, copyIds[index], 0);
+      const eventBlock = copy.motion.blocks[0];
+      if (
+        eventBlock?.kind === 'animation-finish' &&
+        eventBlock.sourceElementId
+      ) {
+        eventBlock.sourceElementId =
+          copiedElementIds.get(eventBlock.sourceElementId) ??
+          eventBlock.sourceElementId;
+      }
+      return {
+        ...copy,
+        locked: false,
+      };
+    });
     const copies = translateSelectedElements(copyOrigins, copyIds, 28, 28).map(
       (copy, index) => ({
         ...copy,
@@ -6302,6 +6317,7 @@ export function MotusStudio() {
                               block.kind === 'animation-finish'
                                 ? activeScene.elements.filter(
                                     (candidate) =>
+                                      candidate.visible &&
                                       candidate.id !== selectedElement.id &&
                                       candidate.motion.blocks.some(
                                         (candidateBlock) =>
@@ -6417,11 +6433,8 @@ export function MotusStudio() {
                                                   block.sourceElementId ?? ''
                                                 }
                                               >
-                                                <NativeSelectOption
-                                                  disabled
-                                                  value=""
-                                                >
-                                                  Choose a source layer
+                                                <NativeSelectOption value="">
+                                                  No source selected
                                                 </NativeSelectOption>
                                                 {storedAnimationSourceUnavailable ? (
                                                   <NativeSelectOption
