@@ -1385,6 +1385,26 @@
   font-size: 8px;
 }
 
+.discover-creator-grid button[data-slot='button'] {
+  border-color: #554d60;
+  background: #2d2935;
+  color: #f5f1fa;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.discover-creator-grid button[data-slot='button']:hover {
+  border-color: #7b6e8a;
+  background: #393342;
+  color: #fff;
+}
+
+.discover-creator-grid button[data-slot='button'][aria-pressed='true'] {
+  border-color: #7864b0;
+  background: #4b3c6d;
+  color: #e5ff73;
+}
+
 .discover-community-grid > article {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
