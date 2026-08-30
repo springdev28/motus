@@ -1,0 +1,162 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  LIBRARY_WORK_FORMATS,
+  LIBRARY_WORK_RATINGS,
+  LIBRARY_WORK_STATUSES,
+  MOTUS_LIBRARY_WORKS,
+  createCatalogPreviewProject,
+  filterLibraryWorks,
+  getLibraryWork,
+  parseStoredReadingProgress,
+  parseStoredSlugSet,
+} from './motus-library.ts';
+import { isMotionEventBlockKind } from './motus-model.ts';
+
+void test('library represents every specified reading format', () => {
+  assert.deepEqual(LIBRARY_WORK_FORMATS, [
+    'Vertical scroll',
+    'Page',
+    'Spread',
+    'Motion comic',
+    'Hybrid',
+  ]);
+  for (const format of LIBRARY_WORK_FORMATS) {
+    assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.format === format));
+  }
+});
+
+void test('work filtering searches metadata, tags, characters, and fandoms', () => {
+  assert.deepEqual(
+    filterLibraryWorks(MOTUS_LIBRARY_WORKS, { query: 'Frame 17' }).map(
+      (work) => work.slug,
+    ),
+    ['afterimage-archive'],
+  );
+  assert.deepEqual(
+    filterLibraryWorks(MOTUS_LIBRARY_WORKS, { query: 'solarpunk' }).map(
+      (work) => work.slug,
+    ),
+    ['iron-orchard'],
+  );
+  assert.deepEqual(
+    filterLibraryWorks(MOTUS_LIBRARY_WORKS, {
+      format: 'Vertical scroll',
+      status: 'Ongoing',
+      rating: 'General',
+    }).map((work) => work.slug),
+    ['cloudbreak-courier'],
+  );
+});
+
+void test('following filter only returns followed work slugs', () => {
+  const results = filterLibraryWorks(MOTUS_LIBRARY_WORKS, {
+    followedOnly: true,
+    followedSlugs: new Set(['the-last-signal', 'neon-hearts-club']),
+  });
+  assert.deepEqual(
+    results.map((work) => work.slug),
+    ['the-last-signal', 'neon-hearts-club'],
+  );
+});
+
+void test('stored follow data discards malformed and unknown entries', () => {
+  assert.deepEqual(
+    [...parseStoredSlugSet('["the-last-signal", "unknown", 4, null]')],
+    ['the-last-signal'],
+  );
+  assert.deepEqual([...parseStoredSlugSet('{"slug":"the-last-signal"}')], []);
+  assert.deepEqual([...parseStoredSlugSet('not json')], []);
+});
+
+void test('library exposes every status and complete source rating taxonomy', () => {
+  assert.deepEqual(LIBRARY_WORK_STATUSES, ['Ongoing', 'Completed', 'Hiatus']);
+  assert.deepEqual(LIBRARY_WORK_RATINGS, [
+    'General',
+    'Teen',
+    'Mature',
+    'Adults only',
+  ]);
+  for (const status of LIBRARY_WORK_STATUSES) {
+    assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.status === status));
+  }
+  for (const rating of LIBRARY_WORK_RATINGS) {
+    assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.rating === rating));
+  }
+});
+
+void test('combined filters and normalized search never leak nonmatching works', () => {
+  assert.deepEqual(
+    filterLibraryWorks(MOTUS_LIBRARY_WORKS, {
+      query: '  MIRA   VALE ',
+      format: 'Vertical scroll',
+      status: 'Ongoing',
+      rating: 'Teen',
+      followedOnly: true,
+      followedSlugs: new Set(['the-last-signal', 'iron-orchard']),
+    }).map((work) => work.slug),
+    ['the-last-signal'],
+  );
+  assert.deepEqual(
+    filterLibraryWorks(MOTUS_LIBRARY_WORKS, {
+      followedOnly: true,
+      followedSlugs: new Set(),
+    }),
+    [],
+  );
+});
+
+void test('stored reading progress keeps only safe finite entries for known works', () => {
+  const parsed = parseStoredReadingProgress(
+    JSON.stringify({
+      'the-last-signal': {
+        sceneIndex: 2,
+        updatedAt: '2026-08-29T08:00:00.000Z',
+      },
+      'iron-orchard': {
+        sceneIndex: {},
+        updatedAt: '2026-08-29T08:00:00.000Z',
+      },
+      unknown: {
+        sceneIndex: 1,
+        updatedAt: '2026-08-29T08:00:00.000Z',
+      },
+      constructor: {
+        sceneIndex: 1,
+        updatedAt: '2026-08-29T08:00:00.000Z',
+      },
+    }),
+  );
+  assert.deepEqual(parsed, {
+    'the-last-signal': {
+      sceneIndex: 2,
+      updatedAt: '2026-08-29T08:00:00.000Z',
+    },
+  });
+  assert.deepEqual(parseStoredReadingProgress('[]'), {});
+  assert.deepEqual(parseStoredReadingProgress('not json'), {});
+});
+
+void test('stable reader projects preserve work metadata and editable motion', () => {
+  const work = getLibraryWork('the-last-signal');
+  assert.ok(work);
+  const project = createCatalogPreviewProject(work, 0);
+  const rebuiltAtAnotherCatalogPosition = createCatalogPreviewProject(work, 7);
+  assert.equal(project.title, work.title);
+  assert.equal(project.creatorName, work.creator);
+  assert.equal(project.visibility, 'public');
+  assert.equal(project.scenes.length, 3);
+  assert.equal(project.coverSceneId, project.scenes[0].id);
+  assert.deepEqual(rebuiltAtAnotherCatalogPosition, project);
+  assert.equal(project.id, `catalog-preview-${work.slug}`);
+  assert.ok(
+    project.scenes.every((scene) =>
+      scene.elements.every(
+        (element) =>
+          isMotionEventBlockKind(element.motion.blocks[0]?.kind) &&
+          element.motion.blocks.length > 1,
+      ),
+    ),
+  );
+});

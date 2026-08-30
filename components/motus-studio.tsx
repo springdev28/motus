@@ -113,6 +113,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
+  MOTUS_LIBRARY_WORKS as workCatalog,
+  createCatalogPreviewProject,
+  type LibraryWork as WorkCatalogEntry,
+} from '@/lib/motus-library';
+import {
   NativeSelect,
   NativeSelectOption,
 } from '@/components/ui/native-select';
@@ -135,6 +140,7 @@ import {
   MAX_MOTION_BLOCKS,
   MOTION_BLOCK_CATEGORIES,
   MOTION_BLOCK_CATALOG,
+  MOTION_EVENT_BLOCK_KINDS,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_ELEMENT_TEXT_LENGTH,
   MAX_PROJECT_DESCRIPTION_LENGTH,
@@ -183,12 +189,14 @@ import {
   hasPointerDragStarted,
   hasUnpublishedChanges,
   insertMotionActionBefore,
+  isMotionEventBlockKind,
   normalizeBounceJumpNumericField,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
   recordProjectHistory,
   removePublicationRevision,
+  replaceMotionEvent,
   reorderMotionActionBefore,
   reorderScenes,
   resetProjectTimeline,
@@ -223,6 +231,7 @@ import {
   type MotionBlockCategory,
   type MotionBlockCatalogEntry,
   type MotionBlockKind,
+  type MotionEventBlockKind,
   type MotusProject,
   type MotusPublicationRevision,
   type MotusScene,
@@ -703,51 +712,6 @@ function BlockCategoryIcon({ category }: { category: BlockPaletteCategory }) {
   return <Clock3 aria-hidden="true" />;
 }
 
-const workCatalog = [
-  {
-    title: 'The Last Signal',
-    creator: 'Mira Vale',
-    genre: 'Science fiction',
-    format: 'Vertical scroll',
-    status: 'Ongoing',
-    rating: 'Teen',
-    tags: ['mystery', 'space', 'slow burn'],
-    palette: 'linear-gradient(145deg, #3e2e67, #151624 62%, #4f7182)',
-  },
-  {
-    title: 'Tea at the Edge of Magic',
-    creator: 'Juniper Moss',
-    genre: 'Fantasy',
-    format: 'Hybrid',
-    status: 'Completed',
-    rating: 'All ages',
-    tags: ['cozy', 'found family', 'witches'],
-    palette: 'linear-gradient(145deg, #60432e, #263a35 58%, #ad8050)',
-  },
-  {
-    title: 'Neon Hearts Club',
-    creator: 'Aya North',
-    genre: 'Romance',
-    format: 'Motion comic',
-    status: 'Ongoing',
-    rating: 'Teen',
-    tags: ['music', 'rivals', 'city nights'],
-    palette: 'linear-gradient(145deg, #8a315c, #24162d 60%, #3f67a6)',
-  },
-  {
-    title: 'The House Below Rain',
-    creator: 'Tomas Grey',
-    genre: 'Horror',
-    format: 'Vertical scroll',
-    status: 'Hiatus',
-    rating: 'Mature',
-    tags: ['folk horror', 'rain', 'memory'],
-    palette: 'linear-gradient(145deg, #28383a, #111719 58%, #665c4c)',
-  },
-] as const;
-
-type WorkCatalogEntry = (typeof workCatalog)[number];
-
 type ProjectImageAsset = {
   id: string;
   name: string;
@@ -756,53 +720,6 @@ type ProjectImageAsset = {
   height: number;
   uses: number;
 };
-
-function createCatalogPreviewProject(
-  work: WorkCatalogEntry,
-  catalogIndex: number,
-): MotusProject {
-  const preview = createDefaultProject();
-  preview.id = `catalog-preview-${catalogIndex + 1}`;
-  preview.title = work.title;
-  preview.creatorName = work.creator;
-  preview.chapterTitle = 'Catalog preview';
-  preview.description = `${work.genre} · ${work.format} · ${work.status}`;
-  preview.tags = [...work.tags];
-  preview.visibility = 'public';
-  preview.contentRating =
-    work.rating === 'Mature'
-      ? 'mature'
-      : work.rating === 'Teen'
-        ? 'teen'
-        : 'all-ages';
-  preview.publishedRevision = 0;
-  preview.publications = [];
-  preview.scenes = preview.scenes.slice(0, 2).map((scene, sceneIndex) => ({
-    ...scene,
-    id: `${preview.id}-scene-${sceneIndex + 1}`,
-    name: sceneIndex === 0 ? 'Opening beat' : 'Second beat',
-    background: work.palette,
-    elements: scene.elements.map((element, elementIndex) => ({
-      ...element,
-      id: `${preview.id}-scene-${sceneIndex + 1}-${elementIndex + 1}`,
-      ...(element.type === 'text'
-        ? {
-            text: sceneIndex === 0 ? work.title : `${work.genre} in motion`,
-          }
-        : {}),
-      ...(element.type === 'speech'
-        ? {
-            text:
-              sceneIndex === 0
-                ? `A preview by ${work.creator}.`
-                : work.tags.map((tag) => `#${tag}`).join('  '),
-          }
-        : {}),
-    })),
-  }));
-  preview.coverSceneId = preview.scenes[0].id;
-  return preview;
-}
 
 const sceneTemplates = [
   {
@@ -1123,6 +1040,44 @@ function BouncePathPreview({ jumps }: { jumps: BounceJump[] }) {
   );
 }
 
+function animateElementProgram(
+  element: MotusElement,
+  node: HTMLDivElement,
+): Animation | null {
+  if (
+    !node.animate ||
+    !element.visible ||
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  ) {
+    return null;
+  }
+  const compiled = compileElementMotion(element);
+  if (!compiled.steps.some((step) => step.kind !== 'wait')) return null;
+  return node.animate(
+    compiled.keyframes.map((frame) => ({
+      offset: frame.offset,
+      easing: frame.easing,
+      filter: [
+        `blur(${frame.blurPx}px)`,
+        `brightness(${frame.brightness})`,
+        `contrast(${frame.contrast})`,
+        `saturate(${frame.saturation})`,
+        `grayscale(${frame.grayscale})`,
+        `sepia(${frame.sepia})`,
+        `hue-rotate(${frame.hueRotate}deg)`,
+        `drop-shadow(0 0 ${frame.glowPx}px rgb(229 255 115 / 85%))`,
+      ].join(' '),
+      opacity: frame.opacity,
+      clipPath: `inset(${frame.clipTop}% ${frame.clipRight}% ${frame.clipBottom}% ${frame.clipLeft}%)`,
+      transform: `translate(${frame.translateX}px, ${frame.translateY}px) rotate(${frame.rotation}deg) scale(${frame.scale * frame.scaleX}, ${frame.scale * frame.scaleY})`,
+    })),
+    {
+      duration: Math.max(compiled.sequenceDurationMs, 1),
+      fill: 'both',
+    },
+  );
+}
+
 type SceneViewProps = {
   scene: MotusScene;
   elementLimit?: number;
@@ -1132,6 +1087,7 @@ type SceneViewProps = {
   playingElementId?: string;
   onPlaybackComplete?: () => void;
   interactive?: boolean;
+  readerTriggers?: boolean;
   onSelect?: (id: string, additive?: boolean) => void;
   editingTextId?: string | null;
   onBeginTextEdit?: (elementId: string) => void;
@@ -1160,6 +1116,7 @@ function SceneView({
   playingElementId,
   onPlaybackComplete,
   interactive = false,
+  readerTriggers = false,
   onSelect,
   editingTextId,
   onBeginTextEdit,
@@ -1172,6 +1129,7 @@ function SceneView({
 }: SceneViewProps) {
   const elementNodes = useRef(new Map<string, HTMLDivElement>());
   const runningAnimations = useRef<Animation[]>([]);
+  const readerAnimations = useRef(new Map<string, Animation>());
   const onPlaybackCompleteRef = useRef(onPlaybackComplete);
   const renderedElements = useMemo(
     () =>
@@ -1189,7 +1147,7 @@ function SceneView({
     runningAnimations.current.forEach((animation) => animation.cancel());
     runningAnimations.current = [];
 
-    if (!playingKey) return;
+    if (!playingKey || readerTriggers) return;
 
     let disposed = false;
     let completed = false;
@@ -1215,32 +1173,9 @@ function SceneView({
     for (const element of renderedElements) {
       if (playingElementId && element.id !== playingElementId) continue;
       const node = elementNodes.current.get(element.id);
-      if (!node?.animate || !element.visible) continue;
-      const compiled = compileElementMotion(element);
-      if (!compiled.steps.some((step) => step.kind !== 'wait')) continue;
-      const animation = node.animate(
-        compiled.keyframes.map((frame) => ({
-          offset: frame.offset,
-          easing: frame.easing,
-          filter: [
-            `blur(${frame.blurPx}px)`,
-            `brightness(${frame.brightness})`,
-            `contrast(${frame.contrast})`,
-            `saturate(${frame.saturation})`,
-            `grayscale(${frame.grayscale})`,
-            `sepia(${frame.sepia})`,
-            `hue-rotate(${frame.hueRotate}deg)`,
-            `drop-shadow(0 0 ${frame.glowPx}px rgb(229 255 115 / 85%))`,
-          ].join(' '),
-          opacity: frame.opacity,
-          clipPath: `inset(${frame.clipTop}% ${frame.clipRight}% ${frame.clipBottom}% ${frame.clipLeft}%)`,
-          transform: `translate(${frame.translateX}px, ${frame.translateY}px) rotate(${frame.rotation}deg) scale(${frame.scale * frame.scaleX}, ${frame.scale * frame.scaleY})`,
-        })),
-        {
-          duration: Math.max(compiled.sequenceDurationMs, 1),
-          fill: 'both',
-        },
-      );
+      if (!node) continue;
+      const animation = animateElementProgram(element, node);
+      if (!animation) continue;
       animations.push(animation);
     }
 
@@ -1254,7 +1189,89 @@ function SceneView({
     }
 
     return cleanup;
-  }, [playingElementId, playingKey, renderedElements]);
+  }, [playingElementId, playingKey, readerTriggers, renderedElements]);
+
+  const triggerReaderElement = useCallback(
+    (elementId: string, restart = false) => {
+      if (!readerTriggers) return;
+      const element = renderedElements.find(
+        (candidate) => candidate.id === elementId,
+      );
+      const node = elementNodes.current.get(elementId);
+      if (!element || !node) return;
+      const current = readerAnimations.current.get(elementId);
+      if (current) {
+        if (!restart) return;
+        current.cancel();
+        readerAnimations.current.delete(elementId);
+      }
+      const animation = animateElementProgram(element, node);
+      if (!animation) return;
+      readerAnimations.current.set(elementId, animation);
+      void animation.finished
+        .catch(() => undefined)
+        .then(() => {
+          if (readerAnimations.current.get(elementId) === animation) {
+            readerAnimations.current.delete(elementId);
+          }
+        });
+    },
+    [readerTriggers, renderedElements],
+  );
+
+  useEffect(() => {
+    if (!readerTriggers) return;
+    for (const element of renderedElements) {
+      if (compileElementMotion(element).event === 'page-open') {
+        triggerReaderElement(element.id);
+      }
+    }
+  }, [readerTriggers, renderedElements, triggerReaderElement]);
+
+  useEffect(() => {
+    if (!readerTriggers || !playingKey) return;
+    for (const element of renderedElements) {
+      if (compileElementMotion(element).event === 'scene-enter') {
+        triggerReaderElement(element.id, true);
+      }
+    }
+  }, [playingKey, readerTriggers, renderedElements, triggerReaderElement]);
+
+  useEffect(() => {
+    if (!readerTriggers) return;
+    const appearElements = renderedElements.filter(
+      (element) => compileElementMotion(element).event === 'element-appear',
+    );
+    if (appearElements.length === 0) return;
+    if (!('IntersectionObserver' in window)) {
+      appearElements.forEach((element) => triggerReaderElement(element.id));
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const elementId = (entry.target as HTMLElement).dataset.elementId;
+          if (elementId) triggerReaderElement(elementId);
+          observer.unobserve(entry.target);
+        }
+      },
+      { rootMargin: '0px 0px -8% 0px', threshold: 0.25 },
+    );
+    appearElements.forEach((element) => {
+      const node = elementNodes.current.get(element.id);
+      if (node) observer.observe(node);
+    });
+    return () => observer.disconnect();
+  }, [readerTriggers, renderedElements, triggerReaderElement]);
+
+  useEffect(() => {
+    const animations = readerAnimations.current;
+    return () => {
+      animations.forEach((animation) => animation.cancel());
+      animations.clear();
+    };
+  }, [scene.id]);
 
   return (
     <section
@@ -1274,6 +1291,11 @@ function SceneView({
         const editingText =
           interactive && textEditable && editingTextId === element.id;
         const compiledMotion = compileElementMotion(element);
+        const readerTap =
+          readerTriggers && compiledMotion.event === 'element-tap';
+        const readerHover =
+          readerTriggers && compiledMotion.event === 'element-hover';
+        const readerInteractive = readerTap || readerHover;
         const typography = normalizeElementTypography(
           element.type,
           element.typography,
@@ -1323,7 +1345,9 @@ function SceneView({
             aria-keyshortcuts={
               interactive
                 ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Enter Space Shift+Enter Shift+Space Meta+A Control+A Meta+C Control+C Meta+X Control+X Meta+V Control+V'
-                : undefined
+                : readerTap
+                  ? 'Enter Space'
+                  : undefined
             }
             aria-label={`${
               interactive && selected
@@ -1334,10 +1358,15 @@ function SceneView({
             }${describeElementForAccessibility(element)}${
               interactive && textEditable && primarySelected
                 ? ' Press Enter to edit text.'
-                : ''
+                : readerTap
+                  ? ' Activate to play this animation.'
+                  : readerHover
+                    ? ' Focus or hover to play this animation.'
+                    : ''
             }`}
             aria-current={interactive && primarySelected ? 'true' : undefined}
             className={`canvas-element element-${element.type}`}
+            data-element-id={element.id}
             data-edge-bottom={
               element.y + element.height >= CANVAS_HEIGHT - 48 || undefined
             }
@@ -1349,9 +1378,12 @@ function SceneView({
             data-editing={editingText || undefined}
             data-interactive={interactive || undefined}
             data-locked={element.locked || undefined}
+            data-motion-trigger={
+              readerTriggers ? compiledMotion.event : undefined
+            }
             data-primary-selected={primarySelected || undefined}
             data-selected={selected || undefined}
-            key={`${element.id}-${playingKey}`}
+            key={readerTriggers ? element.id : `${element.id}-${playingKey}`}
             onClick={
               interactive && !editingText
                 ? (event) => {
@@ -1361,7 +1393,9 @@ function SceneView({
                       event.shiftKey || event.metaKey || event.ctrlKey,
                     );
                   }
-                : undefined
+                : readerTap
+                  ? () => triggerReaderElement(element.id)
+                  : undefined
             }
             onDoubleClick={
               interactive && textEditable && !element.locked
@@ -1407,7 +1441,13 @@ function SceneView({
                       );
                     }
                   }
-                : undefined
+                : readerTap
+                  ? (event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      triggerReaderElement(element.id);
+                    }
+                  : undefined
             }
             onKeyUp={
               interactive
@@ -1419,6 +1459,12 @@ function SceneView({
                 : undefined
             }
             onBlur={interactive ? onKeyboardNudgeEnd : undefined}
+            onFocus={
+              readerHover ? () => triggerReaderElement(element.id) : undefined
+            }
+            onPointerEnter={
+              readerHover ? () => triggerReaderElement(element.id) : undefined
+            }
             onPointerDown={
               interactive && !editingText
                 ? (event) => {
@@ -1428,14 +1474,31 @@ function SceneView({
                   }
                 : undefined
             }
-            role={interactive ? (editingText ? 'group' : 'button') : 'img'}
+            role={
+              interactive
+                ? editingText
+                  ? 'group'
+                  : 'button'
+                : readerInteractive
+                  ? 'button'
+                  : 'img'
+            }
             ref={(node) => {
               if (node) elementNodes.current.set(element.id, node);
               else elementNodes.current.delete(element.id);
               if (interactive) onElementRef?.(element.id, node);
             }}
             style={elementStyle}
-            tabIndex={interactive && !editingText ? 0 : undefined}
+            tabIndex={
+              (interactive && !editingText) || readerInteractive ? 0 : undefined
+            }
+            title={
+              readerTap
+                ? 'Tap to play this layer animation'
+                : readerHover
+                  ? 'Hover or focus to play this layer animation'
+                  : undefined
+            }
           >
             {editingText ? (
               <CanvasTextEditor
@@ -1514,9 +1577,17 @@ type ReaderSceneProps = {
   scene: MotusScene;
   index: number;
   sessionKey: number;
+  anchorId?: string;
+  onEnter?: (index: number) => void;
 };
 
-function ReaderScene({ scene, index, sessionKey }: ReaderSceneProps) {
+export function ReaderScene({
+  scene,
+  index,
+  sessionKey,
+  anchorId,
+  onEnter,
+}: ReaderSceneProps) {
   const sceneRef = useRef<HTMLElement>(null);
   const [playingKey, setPlayingKey] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -1529,12 +1600,18 @@ function ReaderScene({ scene, index, sessionKey }: ReaderSceneProps) {
       '(prefers-reduced-motion: reduce)',
     ).matches;
     if (prefersReducedMotion) {
-      queueMicrotask(() => setReducedMotion(true));
+      queueMicrotask(() => {
+        setReducedMotion(true);
+        onEnter?.(index);
+      });
       return;
     }
 
     if (!('IntersectionObserver' in window)) {
-      queueMicrotask(() => setPlayingKey(sessionKey || 1));
+      queueMicrotask(() => {
+        setPlayingKey(sessionKey || 1);
+        onEnter?.(index);
+      });
       return;
     }
 
@@ -1542,19 +1619,21 @@ function ReaderScene({ scene, index, sessionKey }: ReaderSceneProps) {
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         setPlayingKey(sessionKey || 1);
+        onEnter?.(index);
         observer.disconnect();
       },
       { rootMargin: '0px 0px -12% 0px', threshold: 0.35 },
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [sessionKey]);
+  }, [index, onEnter, sessionKey]);
 
   return (
     <article
       aria-label={`Scene ${index + 1}: ${scene.name}`}
       className="reader-scene"
       data-played={playingKey > 0 || undefined}
+      id={anchorId}
       ref={sceneRef}
     >
       <div className="reader-scene-meta">
@@ -1569,7 +1648,7 @@ function ReaderScene({ scene, index, sessionKey }: ReaderSceneProps) {
               : 'Plays on view'}
         </span>
       </div>
-      <SceneView playingKey={playingKey} scene={scene} />
+      <SceneView playingKey={playingKey} readerTriggers scene={scene} />
     </article>
   );
 }
@@ -2607,10 +2686,8 @@ export function MotusStudio() {
       setNotice('Select a layer before adding an animation block');
       return;
     }
-    if (kind === 'scene-enter') {
-      setNotice(
-        'Every layer program already starts when its scene enters view',
-      );
+    if (isMotionEventBlockKind(kind)) {
+      setNotice('Choose the trigger from the fixed event block');
       return;
     }
     if (selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS) {
@@ -2731,6 +2808,18 @@ export function MotusStudio() {
     );
   };
 
+  const changeMotionEvent = (eventKind: MotionEventBlockKind) => {
+    if (!selectedElement) return;
+    const catalogEntry = MOTION_BLOCK_CATALOG.find(
+      (entry) => entry.kind === eventKind,
+    );
+    updateElement(selectedElement.id, (item) => {
+      item.motion.blocks = replaceMotionEvent(item.motion.blocks, eventKind);
+      item.motion.event = eventKind;
+    });
+    setNotice(`${catalogEntry?.label ?? 'Event'} trigger selected`);
+  };
+
   const duplicateMotionBlock = (blockId: string) => {
     if (!selectedElement) return;
     if (selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS) {
@@ -2744,7 +2833,7 @@ export function MotusStudio() {
         (block) => block.id === blockId,
       );
       const source = item.motion.blocks[index];
-      if (!source || source.kind === 'scene-enter') return;
+      if (!source || isMotionEventBlockKind(source.kind)) return;
       const copy: MotionBlock = {
         ...structuredClone(source),
         id: uniqueId(`block-${source.kind}`),
@@ -2886,7 +2975,7 @@ export function MotusStudio() {
           }),
     }));
     const generatedActions = generatedBlocks.filter(
-      (block) => block.kind !== 'scene-enter',
+      (block) => !isMotionEventBlockKind(block.kind),
     );
     if (
       mode === 'append' &&
@@ -2897,10 +2986,13 @@ export function MotusStudio() {
       return;
     }
     updateElement(selectedElement.id, (item) => {
-      item.motion.blocks =
-        mode === 'replace'
-          ? generatedBlocks
-          : [...item.motion.blocks, ...generatedActions];
+      if (mode === 'replace') {
+        item.motion.blocks = generatedBlocks;
+        const eventKind = generatedBlocks[0]?.kind;
+        if (isMotionEventBlockKind(eventKind)) item.motion.event = eventKind;
+      } else {
+        item.motion.blocks = [...item.motion.blocks, ...generatedActions];
+      }
     });
     setCatalogOpen(false);
     setInspectorTab('motion');
@@ -6123,16 +6215,18 @@ export function MotusStudio() {
                       <MotionProgramDropzone
                         active={Boolean(activeMotionDrag)}
                         itemIds={selectedElement.motion.blocks
-                          .filter((block) => block.kind !== 'scene-enter')
+                          .filter(
+                            (block) => !isMotionEventBlockKind(block.kind),
+                          )
                           .map((block) => programDragId(block.id))}
                         label={`${selectedElement.name} animation blocks`}
                       >
                         {selectedElement.motion.blocks.map(
                           // oxlint-disable-next-line react/react-compiler -- callbacks only access editor refs after input events.
                           (block, blockIndex) => {
-                            const isEvent = block.kind === 'scene-enter';
+                            const isEvent = isMotionEventBlockKind(block.kind);
                             const isAction =
-                              block.kind !== 'scene-enter' &&
+                              !isMotionEventBlockKind(block.kind) &&
                               block.kind !== 'wait';
                             const isBounce = block.kind === 'bounce';
                             const catalogEntry = MOTION_BLOCK_CATALOG.find(
@@ -6187,9 +6281,37 @@ export function MotusStudio() {
 
                                     <div className="motion-block-inline-fields">
                                       {isEvent ? (
-                                        <span className="motion-inline-token">
-                                          scene enters view
-                                        </span>
+                                        <label className="motion-inline-field motion-inline-trigger">
+                                          <span>Trigger</span>
+                                          <NativeSelect
+                                            aria-label={`${selectedElement.name} animation trigger`}
+                                            onChange={(event) =>
+                                              changeMotionEvent(
+                                                event.target
+                                                  .value as MotionEventBlockKind,
+                                              )
+                                            }
+                                            size="sm"
+                                            value={block.kind}
+                                          >
+                                            {MOTION_EVENT_BLOCK_KINDS.map(
+                                              (eventKind) => (
+                                                <NativeSelectOption
+                                                  key={eventKind}
+                                                  value={eventKind}
+                                                >
+                                                  {
+                                                    MOTION_BLOCK_CATALOG.find(
+                                                      (entry) =>
+                                                        entry.kind ===
+                                                        eventKind,
+                                                    )?.label
+                                                  }
+                                                </NativeSelectOption>
+                                              ),
+                                            )}
+                                          </NativeSelect>
+                                        </label>
                                       ) : isBounce ? (
                                         <>
                                           <span className="motion-inline-token">
@@ -7531,25 +7653,34 @@ export function MotusStudio() {
             <DialogTitle>{readerSource.title}</DialogTitle>
             <DialogDescription>{readerDescription}</DialogDescription>
           </DialogHeader>
-          {readerSource.contentRating === 'mature' && !readerMatureConfirmed ? (
+          {(readerSource.contentRating === 'mature' ||
+            readerSource.contentRating === 'adults-only') &&
+          !readerMatureConfirmed ? (
             <section
               aria-describedby="reader-mature-description"
               aria-labelledby="reader-mature-title"
               className="reader-maturity"
             >
               <EyeOff aria-hidden="true" />
-              <span>MATURE CONTENT</span>
+              <span>
+                {readerSource.contentRating === 'adults-only'
+                  ? 'ADULTS ONLY · 18+'
+                  : 'MATURE CONTENT'}
+              </span>
               <h3 id="reader-mature-title">Continue to this reader?</h3>
               <p id="reader-mature-description">
-                The creator marked this work as Mature. Continue only if this
-                content is appropriate for you.
+                {readerSource.contentRating === 'adults-only'
+                  ? 'The creator restricted this work to adults. Continue only if you are 18 or older.'
+                  : 'The creator marked this work as Mature. Continue only if this content is appropriate for you.'}
               </p>
               <div>
                 <Button onClick={() => setReaderOpen(false)} variant="ghost">
                   Go back
                 </Button>
                 <Button onClick={() => setReaderMatureConfirmed(true)}>
-                  Continue to reader
+                  {readerSource.contentRating === 'adults-only'
+                    ? 'I am 18 or older — continue'
+                    : 'Continue to reader'}
                 </Button>
               </div>
             </section>
@@ -7817,10 +7948,13 @@ export function MotusStudio() {
                   value={project.contentRating}
                 >
                   <NativeSelectOption value="all-ages">
-                    All ages
+                    General
                   </NativeSelectOption>
                   <NativeSelectOption value="teen">Teen</NativeSelectOption>
                   <NativeSelectOption value="mature">Mature</NativeSelectOption>
+                  <NativeSelectOption value="adults-only">
+                    Adults only
+                  </NativeSelectOption>
                 </NativeSelect>
               </label>
               <label className="publish-field" htmlFor="publish-visibility">

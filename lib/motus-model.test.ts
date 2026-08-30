@@ -23,6 +23,7 @@ import {
   MOTION_BLOCK_CATEGORIES,
   MOTION_BLOCK_CATEGORY_IDS,
   MOTION_BLOCK_KINDS,
+  MOTION_EVENT_BLOCK_KINDS,
   MOTION_SCHEMA_VERSION,
   PROJECT_SCHEMA_VERSION,
   alignSelectedElements,
@@ -57,12 +58,14 @@ import {
   hasPointerDragStarted,
   hasUnpublishedChanges,
   insertMotionActionBefore,
+  isMotionEventBlockKind,
   normalizeBounceJumpNumericField,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
   recordProjectHistory,
   removePublicationRevision,
+  replaceMotionEvent,
   reorderMotionActionBefore,
   reorderScenes,
   resetProjectTimeline,
@@ -1136,17 +1139,17 @@ void test('restored drafts bound editable names and reject invalid name types', 
 void test('motion registry is exhaustive, categorized, and has bounded finite defaults', () => {
   const catalogKinds = MOTION_BLOCK_CATALOG.map((entry) => entry.kind);
   const addableEntries = MOTION_BLOCK_CATALOG.filter(
-    (entry) => entry.kind !== 'scene-enter',
+    (entry) => !isMotionEventBlockKind(entry.kind),
   );
   const representedCategories = new Set(
     MOTION_BLOCK_CATALOG.map((entry) => entry.category),
   );
 
-  assert.equal(MOTION_BLOCK_CATALOG.length, 163);
-  assert.equal(new Set(catalogKinds).size, 163);
+  assert.equal(MOTION_BLOCK_CATALOG.length, 167);
+  assert.equal(new Set(catalogKinds).size, 167);
   assert.equal(addableEntries.length, 162);
-  assert.equal(MOTION_BLOCK_KINDS.length, 163);
-  assert.equal(new Set(MOTION_BLOCK_KINDS).size, 163);
+  assert.equal(MOTION_BLOCK_KINDS.length, 167);
+  assert.equal(new Set(MOTION_BLOCK_KINDS).size, 167);
   assert.deepEqual(
     [...catalogKinds].sort(),
     [...MOTION_BLOCK_KINDS].sort(),
@@ -1248,6 +1251,109 @@ void test('motion registry is exhaustive, categorized, and has bounded finite de
       );
     }
   }
+});
+
+void test('motion event registry exposes five fixed zero-duration hats', () => {
+  assert.deepEqual(MOTION_EVENT_BLOCK_KINDS, [
+    'page-open',
+    'element-appear',
+    'element-tap',
+    'element-hover',
+    'scene-enter',
+  ]);
+  assert.equal(isMotionEventBlockKind('page-open'), true);
+  assert.equal(isMotionEventBlockKind('scene-enter'), true);
+  assert.equal(isMotionEventBlockKind('move'), false);
+  assert.equal(isMotionEventBlockKind(null), false);
+
+  const expectedLabels = [
+    'When page opens',
+    'When element appears',
+    'When tapped',
+    'When hovered',
+    'When reader scrolls into section',
+  ];
+  const eventEntries = MOTION_BLOCK_CATALOG.filter(
+    (entry) => entry.category === 'event',
+  );
+  assert.deepEqual(
+    eventEntries.map((entry) => entry.kind),
+    [...MOTION_EVENT_BLOCK_KINDS],
+  );
+  assert.deepEqual(
+    eventEntries.map((entry) => entry.label),
+    expectedLabels,
+  );
+  assert.equal(
+    eventEntries.every((entry) => entry.durationMs === 0),
+    true,
+  );
+});
+
+void test('replaceMotionEvent preserves one fixed hat and every action', () => {
+  const event = createMotionBlock('scene-enter', 'event');
+  const move = createMotionBlock('move', 'move');
+  const wait = createMotionBlock('wait', 'wait');
+  const source = [event, move, wait];
+
+  for (const eventKind of MOTION_EVENT_BLOCK_KINDS) {
+    const replaced = replaceMotionEvent(source, eventKind);
+    assert.notEqual(replaced, source);
+    assert.equal(replaced[0].kind, eventKind);
+    assert.equal(replaced[0].id, event.id);
+    assert.equal(replaced[1], move);
+    assert.equal(replaced[2], wait);
+    assert.deepEqual(source, [event, move, wait]);
+  }
+
+  const invalid = [move, wait];
+  assert.deepEqual(replaceMotionEvent(invalid, 'page-open'), invalid);
+  assert.notEqual(replaceMotionEvent(invalid, 'page-open'), invalid);
+});
+
+void test('all five event triggers survive restore and compile without becoming steps', () => {
+  for (const eventKind of MOTION_EVENT_BLOCK_KINDS) {
+    const project = createDefaultProject();
+    const element = project.scenes[0].elements[0];
+    element.motion.event = 'scene-enter';
+    element.motion.blocks = [
+      createMotionBlock(eventKind, `event-${eventKind}`),
+      createMotionBlock('move', `move-${eventKind}`),
+    ];
+
+    const restored = restoreProject(JSON.stringify(project));
+    assert.ok(restored);
+    const restoredElement = restored.scenes[0].elements[0];
+    assert.equal(restoredElement.motion.event, eventKind);
+    assert.equal(restoredElement.motion.blocks[0].kind, eventKind);
+    const compiled = compileElementMotion(restoredElement);
+    assert.equal(compiled.event, eventKind);
+    assert.deepEqual(
+      compiled.steps.map((step) => step.kind),
+      ['move'],
+    );
+  }
+});
+
+void test('motion action helpers reject every event kind', () => {
+  const program = [
+    createMotionBlock('element-hover', 'event'),
+    createMotionBlock('move', 'move'),
+  ];
+  for (const eventKind of MOTION_EVENT_BLOCK_KINDS) {
+    assert.deepEqual(
+      insertMotionActionBefore(
+        program,
+        createMotionBlock(eventKind, `extra-${eventKind}`),
+      ),
+      program,
+    );
+  }
+  assert.deepEqual(reorderMotionActionBefore(program, 'event'), program);
+  assert.deepEqual(
+    reorderMotionActionBefore(program, 'move', 'event'),
+    program,
+  );
 });
 
 void test('motion numeric fields normalize to their authored playback bounds', () => {
@@ -1589,7 +1695,7 @@ void test('every exposed block control changes its compiled animation', () => {
   };
 
   for (const entry of MOTION_BLOCK_CATALOG) {
-    if (entry.kind === 'scene-enter') continue;
+    if (isMotionEventBlockKind(entry.kind)) continue;
     const baseline = compileCatalogBlock(entry.kind);
 
     for (const parameter of entry.parameters) {
@@ -1751,7 +1857,7 @@ void test('every addable default block compiles to a finite visible one-step pro
   };
 
   for (const entry of MOTION_BLOCK_CATALOG) {
-    if (entry.kind === 'scene-enter') continue;
+    if (isMotionEventBlockKind(entry.kind)) continue;
 
     const element = createDefaultProject().scenes[0].elements[0];
     element.opacity = expectedFinalChannels.opacity;
@@ -2666,6 +2772,23 @@ void test('only non-current publication revisions can be removed', () => {
   assert.equal(project.publications.length, 2);
   assert.equal(removePublicationRevision(project, second.id), null);
   assert.equal(removePublicationRevision(project, 'missing-revision'), null);
+});
+
+void test('adults-only ratings survive project and publication round trips', () => {
+  const project = createDefaultProject();
+  project.contentRating = 'adults-only';
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-29T02:00:00.000Z',
+  );
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  const restored = restoreProject(JSON.stringify(project));
+
+  assert.ok(restored);
+  assert.equal(restored.contentRating, 'adults-only');
+  assert.equal(restored.publications[0].contentRating, 'adults-only');
 });
 
 void test('version 3 drafts receive safe publication defaults', () => {

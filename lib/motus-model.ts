@@ -63,8 +63,17 @@ export const MOTION_BLOCK_CATEGORY_IDS = [
 ] as const;
 export type MotionBlockCategory = (typeof MOTION_BLOCK_CATEGORY_IDS)[number];
 
-export const MOTION_BLOCK_KINDS = [
+export const MOTION_EVENT_BLOCK_KINDS = [
+  'page-open',
+  'element-appear',
+  'element-tap',
+  'element-hover',
   'scene-enter',
+] as const;
+export type MotionEventBlockKind = (typeof MOTION_EVENT_BLOCK_KINDS)[number];
+
+export const MOTION_BLOCK_KINDS = [
+  ...MOTION_EVENT_BLOCK_KINDS,
   'wait',
   'move',
   'scale',
@@ -229,7 +238,12 @@ export const MOTION_BLOCK_KINDS = [
   'text-blink',
 ] as const;
 export type MotionBlockKind = (typeof MOTION_BLOCK_KINDS)[number];
-export type ContentRating = 'all-ages' | 'teen' | 'mature';
+const MOTION_EVENT_BLOCK_KIND_SET = new Set<string>(MOTION_EVENT_BLOCK_KINDS);
+export const isMotionEventBlockKind = (
+  value: unknown,
+): value is MotionEventBlockKind =>
+  typeof value === 'string' && MOTION_EVENT_BLOCK_KIND_SET.has(value);
+export type ContentRating = 'all-ages' | 'teen' | 'mature' | 'adults-only';
 export type PublicationVisibility = 'private' | 'public';
 export type SupportedImageMime = 'image/png' | 'image/webp';
 
@@ -433,10 +447,42 @@ const secondary = (
 
 export const MOTION_BLOCK_CATALOG: MotionBlockCatalogEntry[] = [
   catalogBlock(
+    'page-open',
+    'event',
+    'When page opens',
+    'Starts this layer program as soon as the reader opens the page.',
+    [],
+    0,
+  ),
+  catalogBlock(
+    'element-appear',
+    'event',
+    'When element appears',
+    'Starts when this layer enters the reader viewport.',
+    [],
+    0,
+  ),
+  catalogBlock(
+    'element-tap',
+    'event',
+    'When tapped',
+    'Starts when a reader clicks, taps, or keyboard-activates this layer.',
+    [],
+    0,
+  ),
+  catalogBlock(
+    'element-hover',
+    'event',
+    'When hovered',
+    'Starts when a pointer enters or keyboard focus reaches this layer.',
+    [],
+    0,
+  ),
+  catalogBlock(
     'scene-enter',
     'event',
-    'When scene enters view',
-    'Starts this layer program in preview and the published reader.',
+    'When reader scrolls into section',
+    'Starts when the containing scene enters the reader viewport.',
     [],
     0,
   ),
@@ -1969,9 +2015,25 @@ export function createMotionBlock(
 
 function hasSingleLeadingMotionEvent(blocks: readonly MotionBlock[]): boolean {
   return (
-    blocks[0]?.kind === 'scene-enter' &&
-    blocks.slice(1).every((block) => block.kind !== 'scene-enter')
+    isMotionEventBlockKind(blocks[0]?.kind) &&
+    blocks.slice(1).every((block) => !isMotionEventBlockKind(block.kind))
   );
+}
+
+export function replaceMotionEvent(
+  blocks: readonly MotionBlock[],
+  eventKind: MotionEventBlockKind,
+): MotionBlock[] {
+  if (!hasSingleLeadingMotionEvent(blocks)) return [...blocks];
+  const current = blocks[0];
+  if (current.kind === eventKind) return [...blocks];
+  return [
+    {
+      ...createMotionBlock(eventKind, current.id),
+      enabled: current.enabled,
+    },
+    ...blocks.slice(1),
+  ];
 }
 
 export function insertMotionActionBefore(
@@ -1982,7 +2044,7 @@ export function insertMotionActionBefore(
   const unchanged = () => [...blocks];
   if (
     !hasSingleLeadingMotionEvent(blocks) ||
-    action.kind === 'scene-enter' ||
+    isMotionEventBlockKind(action.kind) ||
     blocks.length >= MAX_MOTION_BLOCKS ||
     blocks.some((block) => block.id === action.id)
   ) {
@@ -2113,7 +2175,7 @@ export function validateImageAsset(
 
 export type ElementMotion = {
   schemaVersion: typeof MOTION_SCHEMA_VERSION;
-  event: 'scene-enter';
+  event: MotionEventBlockKind;
   moveX: number;
   moveY: number;
   durationMs: number;
@@ -2127,7 +2189,7 @@ export type ElementMotion = {
 
 export type CompiledMotionStep = {
   blockId: string;
-  kind: Exclude<MotionBlockKind, 'scene-enter'>;
+  kind: Exclude<MotionBlockKind, MotionEventBlockKind>;
   startsAtMs: number;
   durationMs: number;
   easing: Easing;
@@ -2159,7 +2221,7 @@ export type CompiledMotionKeyframe = {
 
 export type CompiledElementMotion = {
   schemaVersion: typeof MOTION_SCHEMA_VERSION;
-  event: 'scene-enter';
+  event: MotionEventBlockKind;
   durationMs: number;
   delayMs: number;
   easing: Easing;
@@ -2559,7 +2621,7 @@ export function normalizeMotionBlockNumericField(
   const numericValue = finite(value, fallback);
 
   if (field === 'durationMs') {
-    if (block.kind === 'scene-enter') return 0;
+    if (isMotionEventBlockKind(block.kind)) return 0;
     return clamp(
       Math.round(numericValue),
       block.kind === 'wait' ? 0 : 100,
@@ -2675,13 +2737,15 @@ function normalizeMotionBlocks(
   value: unknown,
   legacy: Partial<ElementMotion>,
 ): MotionBlock[] {
+  const fallbackEventKind = isMotionEventBlockKind(legacy.event)
+    ? legacy.event
+    : 'scene-enter';
   if (Array.isArray(value)) {
     const seen = new Set<string>();
     let eventBlock: MotionBlock | null = null;
     const actionBlocks: MotionBlock[] = [];
     for (let index = 0; index < value.length; index += 1) {
       const candidate = value[index];
-      if (actionBlocks.length >= MAX_MOTION_BLOCKS - 1) break;
       if (
         !candidate ||
         typeof candidate !== 'object' ||
@@ -2726,14 +2790,14 @@ function normalizeMotionBlocks(
       if (block.kind === 'bounce' && jumps.length > 0) block.jumps = jumps;
       if (seen.has(block.id)) block.id = `${block.id}-${index + 1}`;
       seen.add(block.id);
-      if (block.kind === 'scene-enter') {
+      if (isMotionEventBlockKind(block.kind)) {
         if (!eventBlock) eventBlock = block;
-      } else {
+      } else if (actionBlocks.length < MAX_MOTION_BLOCKS - 1) {
         actionBlocks.push(block);
       }
     }
     return [
-      eventBlock ?? createMotionBlock('scene-enter', 'event'),
+      eventBlock ?? createMotionBlock(fallbackEventKind, 'event'),
       ...actionBlocks,
     ];
   }
@@ -2744,6 +2808,7 @@ function normalizeMotionBlocks(
     finite(legacy.durationMs, 900),
     finite(legacy.fromOpacity, 1),
   ).blocks;
+  migrated[0] = createMotionBlock(fallbackEventKind, 'event');
   if (finite(legacy.delayMs, 0) > 0) {
     migrated.splice(1, 0, {
       ...createMotionBlock('wait', 'wait'),
@@ -2771,9 +2836,13 @@ function migrateMotion(
   value: Partial<ElementMotion> | undefined,
 ): ElementMotion {
   const legacy = value ?? {};
+  const blocks = normalizeMotionBlocks(legacy.blocks, legacy);
+  const event = isMotionEventBlockKind(blocks[0]?.kind)
+    ? blocks[0].kind
+    : 'scene-enter';
   return {
     schemaVersion: MOTION_SCHEMA_VERSION,
-    event: 'scene-enter',
+    event,
     moveX: finite(legacy.moveX, 0),
     moveY: finite(legacy.moveY, 0),
     durationMs: finite(legacy.durationMs, 900),
@@ -2785,7 +2854,7 @@ function migrateMotion(
       legacy.easing === 'linear' || legacy.easing === 'ease-in-out'
         ? legacy.easing
         : 'ease-out',
-    blocks: normalizeMotionBlocks(legacy.blocks, legacy),
+    blocks,
   };
 }
 
@@ -3512,8 +3581,8 @@ export function compileElementMotion(
     (
       block,
     ): block is MotionBlock & {
-      kind: Exclude<MotionBlockKind, 'scene-enter'>;
-    } => block.enabled && block.kind !== 'scene-enter',
+      kind: Exclude<MotionBlockKind, MotionEventBlockKind>;
+    } => block.enabled && !isMotionEventBlockKind(block.kind),
   );
   let cursorMs = 0;
   let leadingDelayMs = 0;
@@ -4345,7 +4414,7 @@ export function compileElementMotion(
   }
   return {
     schemaVersion: MOTION_SCHEMA_VERSION,
-    event: 'scene-enter',
+    event: instruction.event,
     durationMs: clamp(
       actionDurationMs || Math.round(instruction.durationMs),
       200,
@@ -4922,7 +4991,7 @@ function validateMotion(value: unknown): string | null {
   ) {
     return 'Project uses an unsupported motion version';
   }
-  if (value.event !== undefined && value.event !== 'scene-enter') {
+  if (value.event !== undefined && !isMotionEventBlockKind(value.event)) {
     return 'Project uses an unsupported motion trigger';
   }
   if (value.blocks !== undefined) {
@@ -5116,7 +5185,9 @@ function normalizeTags(value: unknown): string[] {
 }
 
 function normalizeContentRating(value: unknown): ContentRating {
-  return value === 'teen' || value === 'mature' ? value : 'all-ages';
+  return value === 'teen' || value === 'mature' || value === 'adults-only'
+    ? value
+    : 'all-ages';
 }
 
 function normalizeVisibility(value: unknown): PublicationVisibility {
