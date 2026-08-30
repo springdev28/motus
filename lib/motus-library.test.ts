@@ -240,7 +240,10 @@ void test('work origin and warning metadata use the supported taxonomy', () => {
       assert.ok(supportedWarnings.has(warning));
     }
     if (work.origin === 'fanwork') assert.ok(work.fandom);
-    else assert.equal(work.origin, 'original');
+    else {
+      assert.equal(work.origin, 'original');
+      assert.equal(work.fandom, null);
+    }
   }
   assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.origin === 'fanwork'));
   assert.ok(MOTUS_LIBRARY_WORKS.some((work) => work.contentWarningIds.length));

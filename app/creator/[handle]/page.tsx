@@ -22,7 +22,7 @@ export async function generateMetadata({
 }: CreatorPageProps): Promise<Metadata> {
   const { handle } = await params;
   const profile = getLibraryCreatorProfile(handle);
-  if (!profile) {
+  if (!profile || handle !== profile.creator.routeHandle) {
     return {
       title: 'Creator not found — Motus',
       description: 'This Motus creator profile could not be found.',
@@ -31,6 +31,9 @@ export async function generateMetadata({
   return {
     title: `${profile.creator.name} (${profile.creator.displayHandle}) — Motus`,
     description: profile.creator.bio,
+    alternates: {
+      canonical: `/creator/${profile.creator.routeHandle}`,
+    },
     openGraph: {
       title: `${profile.creator.name} — Motus creator`,
       description: profile.creator.bio,
@@ -48,6 +51,7 @@ export async function generateMetadata({
 
 export default async function CreatorPage({ params }: CreatorPageProps) {
   const { handle } = await params;
-  if (!getLibraryCreatorProfile(handle)) notFound();
+  const profile = getLibraryCreatorProfile(handle);
+  if (!profile || handle !== profile.creator.routeHandle) notFound();
   return <MotusCreatorProfile handle={handle} />;
 }

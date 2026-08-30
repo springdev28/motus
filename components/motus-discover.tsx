@@ -46,6 +46,14 @@ const FOLLOWED_CREATORS_STORAGE_KEY_V2 = 'motus:followed-creators:v2';
 
 type FilterValue<T extends string> = T | 'All';
 
+function readStoredValue(key: string) {
+  try {
+    return { available: true, value: window.localStorage.getItem(key) };
+  } catch {
+    return { available: false, value: null };
+  }
+}
+
 function writeStoredStrings<T extends string>(
   key: string,
   values: ReadonlySet<T>,
@@ -79,6 +87,7 @@ export function MotusDiscover() {
     Set<LibraryCreatorId>
   >(new Set());
   const [hydrated, setHydrated] = useState(false);
+  const [storageAvailable, setStorageAvailable] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -96,29 +105,37 @@ export function MotusDiscover() {
       }
       setQuery(requestedQuery);
       setFollowedOnly(parameters.get('view') === 'following');
-      setFollowedWorks(
-        parseStoredSlugSet(
-          window.localStorage.getItem(FOLLOWED_WORKS_STORAGE_KEY),
-        ),
-      );
-      const storedCreatorValue = window.localStorage.getItem(
+      const storedWorksResult = readStoredValue(FOLLOWED_WORKS_STORAGE_KEY);
+      setFollowedWorks(parseStoredSlugSet(storedWorksResult.value));
+      const storedCreatorResult = readStoredValue(
         FOLLOWED_CREATORS_STORAGE_KEY_V2,
       );
-      const storedCreatorIds = parseStoredCreatorIdSet(storedCreatorValue);
+      const legacyCreatorResult =
+        storedCreatorResult.available && storedCreatorResult.value === null
+          ? readStoredValue(FOLLOWED_CREATORS_STORAGE_KEY_V1)
+          : { available: storedCreatorResult.available, value: null };
+      const storedCreatorIds = parseStoredCreatorIdSet(
+        storedCreatorResult.value,
+      );
       const migratedCreatorIds =
-        storedCreatorValue === null
-          ? migrateStoredCreatorHandles(
-              window.localStorage.getItem(FOLLOWED_CREATORS_STORAGE_KEY_V1),
-            )
+        storedCreatorResult.available && storedCreatorResult.value === null
+          ? migrateStoredCreatorHandles(legacyCreatorResult.value)
           : new Set<LibraryCreatorId>();
       const creatorIds = new Set<LibraryCreatorId>([
         ...storedCreatorIds,
         ...migratedCreatorIds,
       ]);
-      if (storedCreatorValue === null) {
+      const migrationSaved =
+        storedCreatorResult.value !== null ||
+        !storedCreatorResult.available ||
         writeStoredStrings(FOLLOWED_CREATORS_STORAGE_KEY_V2, creatorIds);
-      }
       setFollowedCreators(creatorIds);
+      setStorageAvailable(
+        storedWorksResult.available &&
+          storedCreatorResult.available &&
+          legacyCreatorResult.available &&
+          migrationSaved,
+      );
       setHydrated(true);
     });
     return () => {
@@ -208,18 +225,26 @@ export function MotusDiscover() {
     const next = new Set(followedWorks);
     if (next.has(slug)) next.delete(slug);
     else next.add(slug);
-    if (writeStoredStrings(FOLLOWED_WORKS_STORAGE_KEY, next)) {
-      setFollowedWorks(next);
+    if (
+      storageAvailable &&
+      !writeStoredStrings(FOLLOWED_WORKS_STORAGE_KEY, next)
+    ) {
+      setStorageAvailable(false);
     }
+    setFollowedWorks(next);
   };
 
   const toggleCreatorFollow = (creatorId: LibraryCreatorId) => {
     const next = new Set(followedCreators);
     if (next.has(creatorId)) next.delete(creatorId);
     else next.add(creatorId);
-    if (writeStoredStrings(FOLLOWED_CREATORS_STORAGE_KEY_V2, next)) {
-      setFollowedCreators(next);
+    if (
+      storageAvailable &&
+      !writeStoredStrings(FOLLOWED_CREATORS_STORAGE_KEY_V2, next)
+    ) {
+      setStorageAvailable(false);
     }
+    setFollowedCreators(next);
   };
 
   const searchFor = (value: string) => {
@@ -306,6 +331,13 @@ export function MotusDiscover() {
             </button>
           ))}
         </section>
+
+        {hydrated && !storageAvailable ? (
+          <output className="discover-storage-notice">
+            <Heart aria-hidden="true" /> Following changes are temporary because
+            device storage is unavailable.
+          </output>
+        ) : null}
 
         {entity === 'works' ? (
           <>
@@ -442,6 +474,7 @@ export function MotusDiscover() {
                         <button
                           aria-label={`${followedWorks.has(work.slug) ? 'Unfollow' : 'Follow'} ${work.title}`}
                           aria-pressed={followedWorks.has(work.slug)}
+                          disabled={!hydrated}
                           onClick={() => toggleWorkFollow(work.slug)}
                           type="button"
                         >

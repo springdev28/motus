@@ -28,6 +28,14 @@ import {
 const FOLLOWED_CREATORS_STORAGE_KEY_V1 = 'motus:followed-creators:v1';
 const FOLLOWED_CREATORS_STORAGE_KEY_V2 = 'motus:followed-creators:v2';
 
+function readStoredValue(key: string) {
+  try {
+    return { available: true, value: window.localStorage.getItem(key) };
+  } catch {
+    return { available: false, value: null };
+  }
+}
+
 function writeCreatorFollows(values: ReadonlySet<LibraryCreatorId>) {
   try {
     window.localStorage.setItem(
@@ -64,7 +72,7 @@ function CreatorWorkCard({ work }: { work: LibraryWork }) {
             <span>{work.chapterCount} chapters</span>
             <span>{work.language}</span>
           </span>
-          {work.fandom ? (
+          {work.origin === 'fanwork' ? (
             <span className="creator-work-provenance">
               <LibraryBig aria-hidden="true" /> Fanwork · {work.fandom}
             </span>
@@ -94,24 +102,31 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
     Set<LibraryCreatorId>
   >(new Set());
   const [hydrated, setHydrated] = useState(false);
+  const [storageAvailable, setStorageAvailable] = useState(true);
 
   useEffect(() => {
     let active = true;
     queueMicrotask(() => {
       if (!active) return;
-      const storedValue = window.localStorage.getItem(
-        FOLLOWED_CREATORS_STORAGE_KEY_V2,
-      );
-      const stored = parseStoredCreatorIdSet(storedValue);
+      const storedResult = readStoredValue(FOLLOWED_CREATORS_STORAGE_KEY_V2);
+      const legacyResult =
+        storedResult.available && storedResult.value === null
+          ? readStoredValue(FOLLOWED_CREATORS_STORAGE_KEY_V1)
+          : { available: storedResult.available, value: null };
+      const stored = parseStoredCreatorIdSet(storedResult.value);
       const migrated =
-        storedValue === null
-          ? migrateStoredCreatorHandles(
-              window.localStorage.getItem(FOLLOWED_CREATORS_STORAGE_KEY_V1),
-            )
+        storedResult.available && storedResult.value === null
+          ? migrateStoredCreatorHandles(legacyResult.value)
           : new Set<LibraryCreatorId>();
       const merged = new Set<LibraryCreatorId>([...stored, ...migrated]);
-      if (storedValue === null) writeCreatorFollows(merged);
+      const migrationSaved =
+        storedResult.value !== null ||
+        !storedResult.available ||
+        writeCreatorFollows(merged);
       setFollowedCreators(merged);
+      setStorageAvailable(
+        storedResult.available && legacyResult.available && migrationSaved,
+      );
       setHydrated(true);
     });
     return () => {
@@ -143,7 +158,10 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
     const next = new Set(followedCreators);
     if (next.has(creator.id)) next.delete(creator.id);
     else next.add(creator.id);
-    if (writeCreatorFollows(next)) setFollowedCreators(next);
+    if (storageAvailable && !writeCreatorFollows(next)) {
+      setStorageAvailable(false);
+    }
+    setFollowedCreators(next);
   };
 
   return (
@@ -202,7 +220,11 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
               {followed ? <Check /> : <Heart />}
               {followed ? 'Following' : 'Follow creator'}
             </Button>
-            <small>Saved on this device</small>
+            <small>
+              {hydrated && !storageAvailable
+                ? 'Temporary on this page — device storage is unavailable'
+                : 'Saved on this device'}
+            </small>
           </div>
         </section>
 
@@ -264,6 +286,15 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
                 {featuredWork.format} · {featuredWork.status} ·{' '}
                 {featuredWork.rating}
               </span>
+              {featuredWork.contentWarningIds.length ? (
+                <span className="creator-featured-warnings">
+                  <ShieldAlert aria-hidden="true" />
+                  Content warnings:{' '}
+                  {featuredWork.contentWarningIds
+                    .map((warning) => LIBRARY_CONTENT_WARNING_LABELS[warning])
+                    .join(' · ')}
+                </span>
+              ) : null}
             </span>
           </a>
         </section>
