@@ -441,7 +441,7 @@ export function MotusReader({ slug }: { slug: string }) {
         aria-live="polite"
         className="published-reader-missing"
       >
-        <MotusLogo />
+        <MotusLogo variant="on-dark" />
         <span>OPENING PUBLISHED REVISION</span>
         <h1>Loading this browser’s saved work…</h1>
       </main>
@@ -451,7 +451,7 @@ export function MotusReader({ slug }: { slug: string }) {
   if (!work || !project || !activeChapter) {
     return (
       <main className="published-reader-missing">
-        <MotusLogo />
+        <MotusLogo variant="on-dark" />
         <span>WORK NOT FOUND</span>
         <h1>
           {expectsDevicePublication
@@ -486,7 +486,7 @@ export function MotusReader({ slug }: { slug: string }) {
           {work.devicePublication ? 'Home' : 'Explore'}
         </a>
         <a aria-label="Motus home" className="published-reader-brand" href="/">
-          <MotusLogo />
+          <MotusLogo variant="on-dark" />
           <span>MOTUS</span>
         </a>
         <div className="published-reader-follow-wrap">

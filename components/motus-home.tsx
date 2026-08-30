@@ -296,7 +296,7 @@ export function MotusHome() {
     <div className="home-shell">
       <header className="home-header">
         <a aria-label="Motus home" className="home-brand" href="/">
-          <MotusLogo className="home-brand-mark" />
+          <MotusLogo className="home-brand-mark" variant="on-light" />
           <span>MOTUS</span>
         </a>
         <nav aria-label="Primary navigation" className="home-nav">

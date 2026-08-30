@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 const siteOrigin =
@@ -11,8 +11,20 @@ export const metadata: Metadata = {
     'Build layered motion comics with a visual canvas and editable animation blocks.',
   icons: {
     apple: [{ url: '/apple-touch-icon.png', sizes: '180x180' }],
-    icon: [{ url: '/motus-logo-256.png', sizes: '256x256', type: 'image/png' }],
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon-16.png', sizes: '16x16', type: 'image/png' },
+    ],
+    other: [
+      {
+        rel: 'mask-icon',
+        url: '/motus-mask-icon.svg',
+        color: '#7b2cff',
+      },
+    ],
   },
+  manifest: '/manifest.webmanifest',
   openGraph: {
     title: 'Motus — Motion comics, made visual',
     description:
@@ -34,6 +46,11 @@ export const metadata: Metadata = {
       'Build layered motion comics with a visual canvas and editable animation blocks.',
     images: ['/og.png'],
   },
+};
+
+export const viewport: Viewport = {
+  colorScheme: 'light dark',
+  themeColor: '#7b2cff',
 };
 
 export default function RootLayout({

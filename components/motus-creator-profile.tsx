@@ -137,7 +137,7 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
   if (!profile) {
     return (
       <main className="published-reader-missing">
-        <MotusLogo />
+        <MotusLogo variant="on-dark" />
         <span>CREATOR NOT FOUND</span>
         <h1>This creator is not in the Motus library.</h1>
         <a href="/discover?entity=creators">Browse creators</a>
@@ -172,7 +172,7 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
           Creators
         </a>
         <a aria-label="Motus home" className="creator-profile-brand" href="/">
-          <MotusLogo />
+          <MotusLogo variant="on-dark" />
           <span>MOTUS</span>
         </a>
         <a className="creator-profile-create" href="/studio">

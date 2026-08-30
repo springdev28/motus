@@ -1,10 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640">
-  <style>
-    .mark { fill: #7b2cff; }
-    @media (prefers-color-scheme: dark) { .mark { fill: #fff; } }
-  </style>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" fill="none">
   <path
-    class="mark"
+    fill="#7b2cff"
     fill-rule="evenodd"
     d="M545 53 423 123 290 224 150 395 67 551 118 334 191 144 260 110 356 80 468 56ZM110 434 202 306 300 198 463 82 349 108 235 152 153 302ZM596 243 431 304 292 380 178 466 78 578 118 489 180 386 242 306 308 240 467 231ZM142 486 213 422 334 341 453 282 548 250 318 269 198 397ZM559 385 278 475 108 574 236 456 381 363 486 368ZM220 489 345 437 515 386 386 386Z"
     clip-rule="evenodd"
