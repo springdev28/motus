@@ -312,7 +312,7 @@ export function MotusDiscover() {
     <div className="discover-shell">
       <header className="discover-header">
         <a aria-label="Motus home" className="discover-brand" href="/">
-          <MotusLogo />
+          <MotusLogo variant="on-dark" />
           <span>MOTUS</span>
         </a>
         <nav aria-label="Primary navigation">

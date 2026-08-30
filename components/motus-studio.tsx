@@ -6122,7 +6122,7 @@ export function MotusStudio() {
             }
           }}
         >
-          <MotusLogo className="brand-mark" />
+          <MotusLogo className="brand-mark" variant="on-dark" />
           <span className="brand-name">MOTUS</span>
           <span className="brand-product">STUDIO</span>
         </a>
