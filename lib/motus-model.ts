@@ -1,5 +1,5 @@
 export const PROJECT_SCHEMA_VERSION = 8 as const;
-export const MOTION_SCHEMA_VERSION = 1 as const;
+export const MOTION_SCHEMA_VERSION = 2 as const;
 export const MOTUS_PROJECT_FORMATS = ['vertical-scroll', 'page'] as const;
 export type MotusProjectFormat = (typeof MOTUS_PROJECT_FORMATS)[number];
 export const CANVAS_WIDTH = 1_080;
@@ -75,9 +75,14 @@ export const MOTION_EVENT_BLOCK_KINDS = [
 ] as const;
 export type MotionEventBlockKind = (typeof MOTION_EVENT_BLOCK_KINDS)[number];
 
+export const MOTION_CONTAINER_BLOCK_KINDS = ['repeat', 'parallel'] as const;
+export type MotionContainerBlockKind =
+  (typeof MOTION_CONTAINER_BLOCK_KINDS)[number];
+
 export const MOTION_BLOCK_KINDS = [
   ...MOTION_EVENT_BLOCK_KINDS,
   'wait',
+  ...MOTION_CONTAINER_BLOCK_KINDS,
   'move',
   'scale',
   'rotate',
@@ -246,6 +251,34 @@ export const isMotionEventBlockKind = (
   value: unknown,
 ): value is MotionEventBlockKind =>
   typeof value === 'string' && MOTION_EVENT_BLOCK_KIND_SET.has(value);
+const MOTION_CONTAINER_BLOCK_KIND_SET = new Set<string>(
+  MOTION_CONTAINER_BLOCK_KINDS,
+);
+export const isMotionContainerBlockKind = (
+  value: unknown,
+): value is MotionContainerBlockKind =>
+  typeof value === 'string' && MOTION_CONTAINER_BLOCK_KIND_SET.has(value);
+export type MotionLeafBlockKind = Exclude<
+  MotionBlockKind,
+  MotionEventBlockKind | MotionContainerBlockKind
+>;
+export const PARALLEL_MOTION_BLOCK_KINDS = [
+  'move',
+  'rotate',
+  'scale',
+  'opacity',
+  'blur',
+  'reveal',
+] as const satisfies readonly MotionLeafBlockKind[];
+export type ParallelMotionBlockKind =
+  (typeof PARALLEL_MOTION_BLOCK_KINDS)[number];
+const PARALLEL_MOTION_BLOCK_KIND_SET = new Set<string>(
+  PARALLEL_MOTION_BLOCK_KINDS,
+);
+export const isParallelMotionBlockKind = (
+  value: unknown,
+): value is ParallelMotionBlockKind =>
+  typeof value === 'string' && PARALLEL_MOTION_BLOCK_KIND_SET.has(value);
 export type ContentRating = 'all-ages' | 'teen' | 'mature' | 'adults-only';
 export type PublicationVisibility = 'private' | 'public';
 export type SupportedImageMime = 'image/png' | 'image/webp';
@@ -280,6 +313,11 @@ export const MAX_ELEMENT_TEXT_LENGTH = 50_000;
 export const MAX_PROJECT_HISTORY_ENTRIES = 50;
 export const MAX_PROJECT_HISTORY_BYTES = 24_000_000;
 export const MAX_MOTION_BLOCKS = 64;
+export const MAX_MOTION_NESTING_DEPTH = 3;
+export const MAX_PARALLEL_MOTION_BLOCKS = 6;
+export const MAX_COMPILED_MOTION_STEPS = 512;
+export const MAX_COMPILED_MOTION_KEYFRAMES = 1_024;
+export const MAX_COMPILED_MOTION_DURATION_MS = 60_000;
 export const MAX_BOUNCE_JUMPS = 12;
 export const MAX_ELEMENT_ID_LENGTH = 256;
 export const MAX_MOTION_EVENT_SOURCE_ID_LENGTH = 256;
@@ -312,6 +350,7 @@ export type MotionBlock = {
   repetitions: number;
   direction: RevealDirection;
   jumps: BounceJump[];
+  children: MotionBlock[];
 };
 
 export type MotionBlockNumericField =
@@ -520,6 +559,22 @@ export const MOTION_BLOCK_CATALOG: MotionBlockCatalogEntry[] = [
     'Pauses before the next block runs.',
     [],
     300,
+  ),
+  catalogBlock(
+    'repeat',
+    'control',
+    'Repeat',
+    'Runs the blocks held inside this container a chosen number of times.',
+    [repeats(3, 'Times')],
+    0,
+  ),
+  catalogBlock(
+    'parallel',
+    'control',
+    'Run together',
+    'Starts compatible motion, looks, and effect blocks at the same time.',
+    [],
+    700,
   ),
 
   catalogBlock(
@@ -2034,11 +2089,327 @@ export function createMotionBlock(
       kind === 'bounce'
         ? Array.from({ length: 4 }, (_, index) => createBounceJump(index))
         : [],
+    children: [],
   };
   for (const parameterSpec of catalogEntry.parameters) {
     block[parameterSpec.field] = parameterSpec.defaultValue;
   }
   return block;
+}
+
+export function countMotionBlocks(blocks: readonly MotionBlock[]): number {
+  return blocks.reduce(
+    (total, block) => total + 1 + countMotionBlocks(block.children),
+    0,
+  );
+}
+
+export function getExpandedMotionStepCount(
+  blocks: readonly MotionBlock[],
+): number {
+  let total = 0;
+  for (const block of blocks) {
+    if (!block.enabled || isMotionEventBlockKind(block.kind)) continue;
+    if (block.kind === 'repeat') {
+      total +=
+        normalizeMotionBlockNumericField(
+          block,
+          'repetitions',
+          block.repetitions,
+        ) * getExpandedMotionStepCount(block.children);
+    } else if (block.kind === 'parallel') {
+      total += block.children.filter(
+        (child) => child.enabled && isParallelMotionBlockKind(child.kind),
+      ).length;
+    } else {
+      total += 1;
+    }
+  }
+  return total;
+}
+
+const TWO_FRAMES_PER_REPETITION_KINDS = new Set<MotionBlockKind>([
+  'shake',
+  'tremble',
+  'text-jitter',
+  'float',
+  'bob',
+  'thought-float',
+  'letter-hop',
+  'speech-bounce',
+  'pulse',
+  'breathe',
+  'word-pulse',
+  'loop-scale',
+  'heartbeat',
+  'throb',
+  'inflate',
+  'deflate',
+  'rubber-band',
+  'flash',
+  'flicker',
+  'loop-opacity',
+  'blink',
+  'ghost',
+  'text-blink',
+  'blur-pulse',
+  'focus-pull',
+  'glow',
+  'neon',
+  'shadow-pulse',
+  'shimmer',
+  'exposure-flash',
+  'sparkle',
+  'spotlight',
+  'color-pop',
+  'silhouette',
+  'prism',
+  'chromatic-pulse',
+  'sway',
+  'swing',
+  'loop-rotate',
+  'wobble',
+  'pendulum',
+  'tilt-left',
+  'tilt-right',
+  'hinge',
+  'squash',
+  'stretch',
+  'jello',
+  'compress',
+  'flip-horizontal',
+  'card-flip',
+  'flip-vertical',
+  'coin-flip',
+  'spin-pulse',
+  'yoyo',
+  'loop-move',
+  'backtrack',
+  'boomerang',
+  'drift-left',
+  'drift-right',
+  'drift-up',
+  'drift-down',
+  'recoil',
+  'settle',
+]);
+
+function getMotionLeafKeyframeEstimate(block: MotionBlock): number {
+  const repetitions = normalizeMotionBlockNumericField(
+    block,
+    'repetitions',
+    block.repetitions,
+  );
+  if (block.kind === 'bounce') return block.jumps.length * 2 + 1;
+  if (TWO_FRAMES_PER_REPETITION_KINDS.has(block.kind)) {
+    return repetitions * 2;
+  }
+  if (
+    block.kind === 'arc-in' ||
+    block.kind === 'swoop-left' ||
+    block.kind === 'swoop-right' ||
+    block.kind === 'spring' ||
+    block.kind === 'zoom-bounce' ||
+    block.kind === 'jump'
+  ) {
+    return 2;
+  }
+  if (
+    block.kind === 'overshoot' ||
+    block.kind === 'dash-in' ||
+    block.kind === 'skid-in' ||
+    block.kind === 'snap-in' ||
+    block.kind === 'magnetic-snap'
+  ) {
+    return 2;
+  }
+  if (block.kind === 'elastic-slide') return repetitions + 1;
+  if (block.kind === 'drop-bounce') return repetitions * 2;
+  if (
+    block.kind === 'gravity-fall' ||
+    block.kind === 'headline-drop' ||
+    block.kind === 'rocket-rise'
+  ) {
+    return 2;
+  }
+  if (block.kind === 'rubber-stamp') return repetitions * 2;
+  if (block.kind === 'slingshot') return 3;
+  if (
+    block.kind === 'hop-left' ||
+    block.kind === 'hop-right' ||
+    block.kind === 'toss' ||
+    block.kind === 'fling'
+  ) {
+    return repetitions * 2;
+  }
+  if (block.kind === 'parachute') return repetitions + 1;
+  if (
+    block.kind === 'orbit' ||
+    block.kind === 'spiral' ||
+    block.kind === 'corkscrew' ||
+    block.kind === 'circle-clockwise' ||
+    block.kind === 'circle-counterclockwise' ||
+    block.kind === 'ellipse-loop' ||
+    block.kind === 'figure-eight' ||
+    block.kind === 'infinity-loop' ||
+    block.kind === 'wave' ||
+    block.kind === 'letter-wave'
+  ) {
+    return repetitions * 8 + 1;
+  }
+  if (
+    block.kind === 'zigzag' ||
+    block.kind === 'snake' ||
+    block.kind === 'sawtooth' ||
+    block.kind === 'ricochet' ||
+    block.kind === 'pinball'
+  ) {
+    return repetitions + 1;
+  }
+  if (
+    block.kind === 'ladder-up' ||
+    block.kind === 'ladder-down' ||
+    block.kind === 'stair-step'
+  ) {
+    return repetitions * 2 + 1;
+  }
+  if (block.kind === 'diamond-path') return repetitions * 5;
+  if (block.kind === 'triangle-path' || block.kind === 'square-path') {
+    return repetitions * 4;
+  }
+  if (
+    block.kind === 'flip-in-horizontal' ||
+    block.kind === 'flip-in-vertical'
+  ) {
+    return repetitions + 1;
+  }
+  return 1;
+}
+
+function estimateMotionProgramKeyframes(
+  blocks: readonly MotionBlock[],
+): number {
+  let total = 0;
+  for (const block of blocks) {
+    if (!block.enabled || isMotionEventBlockKind(block.kind)) continue;
+    if (block.kind === 'repeat') {
+      const childEstimate = estimateMotionProgramKeyframes(block.children);
+      if (childEstimate > 0) {
+        const repetitions = normalizeMotionBlockNumericField(
+          block,
+          'repetitions',
+          block.repetitions,
+        );
+        total += childEstimate * repetitions + repetitions - 1;
+      }
+    } else if (block.kind === 'parallel') {
+      if (block.children.some((child) => child.enabled)) total += 1;
+    } else {
+      total += getMotionLeafKeyframeEstimate(block);
+    }
+  }
+  return total;
+}
+
+export function getCompiledMotionKeyframeEstimate(
+  blocks: readonly MotionBlock[],
+): number {
+  const bodyEstimate = estimateMotionProgramKeyframes(blocks);
+  if (bodyEstimate === 0) return 0;
+  return bodyEstimate + 2;
+}
+
+export function getMotionProgramDurationMs(
+  blocks: readonly MotionBlock[],
+): number {
+  let total = 0;
+  for (const block of blocks) {
+    if (!block.enabled || isMotionEventBlockKind(block.kind)) continue;
+    if (block.kind === 'repeat') {
+      total +=
+        getMotionProgramDurationMs(block.children) *
+        normalizeMotionBlockNumericField(
+          block,
+          'repetitions',
+          block.repetitions,
+        );
+    } else if (block.kind === 'parallel') {
+      const firstEnabledChild = block.children.find((child) => child.enabled);
+      if (firstEnabledChild) total += getBlockDuration(firstEnabledChild);
+    } else {
+      total += getBlockDuration(block);
+    }
+  }
+  return total;
+}
+
+export type MotionProgramRuntimeIssue =
+  | 'expanded-steps'
+  | 'keyframes'
+  | 'duration';
+
+export function getMotionProgramRuntimeIssue(
+  blocks: readonly MotionBlock[],
+): MotionProgramRuntimeIssue | null {
+  if (getExpandedMotionStepCount(blocks) > MAX_COMPILED_MOTION_STEPS) {
+    return 'expanded-steps';
+  }
+  if (
+    getCompiledMotionKeyframeEstimate(blocks) > MAX_COMPILED_MOTION_KEYFRAMES
+  ) {
+    return 'keyframes';
+  }
+  if (getMotionProgramDurationMs(blocks) > MAX_COMPILED_MOTION_DURATION_MS) {
+    return 'duration';
+  }
+  return null;
+}
+
+export function findMotionBlock(
+  blocks: readonly MotionBlock[],
+  blockId: string,
+): MotionBlock | null {
+  for (const block of blocks) {
+    if (block.id === blockId) return block;
+    const nested = findMotionBlock(block.children, blockId);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+export function findMotionBlockSiblings(
+  blocks: MotionBlock[],
+  blockId: string,
+): MotionBlock[] | null {
+  if (blocks.some((block) => block.id === blockId)) return blocks;
+  for (const block of blocks) {
+    const nested = findMotionBlockSiblings(block.children, blockId);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+export function hasExecutableMotionActions(
+  blocks: readonly MotionBlock[],
+): boolean {
+  return blocks.some((block) => {
+    if (!block.enabled || isMotionEventBlockKind(block.kind)) return false;
+    if (isMotionContainerBlockKind(block.kind)) {
+      return hasExecutableMotionActions(block.children);
+    }
+    return block.kind !== 'wait';
+  });
+}
+
+function collectMotionBlockIds(
+  blocks: readonly MotionBlock[],
+  ids = new Set<string>(),
+): Set<string> {
+  for (const block of blocks) {
+    ids.add(block.id);
+    collectMotionBlockIds(block.children, ids);
+  }
+  return ids;
 }
 
 function hasSingleLeadingMotionEvent(blocks: readonly MotionBlock[]): boolean {
@@ -2070,11 +2441,13 @@ export function insertMotionActionBefore(
   beforeActionId: string | null = null,
 ): MotionBlock[] {
   const unchanged = () => [...blocks];
+  const actionIds = collectMotionBlockIds([action]);
   if (
     !hasSingleLeadingMotionEvent(blocks) ||
     isMotionEventBlockKind(action.kind) ||
-    blocks.length >= MAX_MOTION_BLOCKS ||
-    blocks.some((block) => block.id === action.id)
+    countMotionBlocks(blocks) + countMotionBlocks([action]) >
+      MAX_MOTION_BLOCKS ||
+    [...collectMotionBlockIds(blocks)].some((id) => actionIds.has(id))
   ) {
     return unchanged();
   }
@@ -2086,12 +2459,13 @@ export function insertMotionActionBefore(
       : actions.findIndex((block) => block.id === beforeActionId);
   if (insertionIndex < 0) return unchanged();
 
-  return [
+  const nextBlocks = [
     blocks[0],
     ...actions.slice(0, insertionIndex),
     action,
     ...actions.slice(insertionIndex),
   ];
+  return getMotionProgramRuntimeIssue(nextBlocks) ? unchanged() : nextBlocks;
 }
 
 export function reorderMotionActionBefore(
@@ -2216,8 +2590,9 @@ export type ElementMotion = {
 };
 
 export type CompiledMotionStep = {
+  instanceId: string;
   blockId: string;
-  kind: Exclude<MotionBlockKind, MotionEventBlockKind>;
+  kind: MotionLeafBlockKind;
   startsAtMs: number;
   durationMs: number;
   easing: Easing;
@@ -2597,6 +2972,17 @@ export function getPublicationReadiness(
   if (!scenes.some((scene) => scene.id === project.coverSceneId)) {
     issues.push('Choose a cover scene');
   }
+  const motionRuntimeIssue = scenes
+    .flatMap((scene) => scene.elements)
+    .map((element) => getMotionProgramRuntimeIssue(element.motion.blocks))
+    .find((issue) => issue !== null);
+  if (motionRuntimeIssue === 'expanded-steps') {
+    issues.push('Reduce repeated blocks below the 512-step playback limit');
+  } else if (motionRuntimeIssue === 'keyframes') {
+    issues.push('Simplify a motion program that is too detailed to play');
+  } else if (motionRuntimeIssue === 'duration') {
+    issues.push('Shorten a motion program to 60 seconds or less');
+  }
   if (
     project.publishedRevision >= MAX_PUBLICATION_REVISION ||
     project.publications.some(
@@ -2758,7 +3144,11 @@ export function normalizeMotionBlockNumericField(
   const numericValue = finite(value, fallback);
 
   if (field === 'durationMs') {
-    if (isMotionEventBlockKind(block.kind)) return 0;
+    if (isMotionEventBlockKind(block.kind) || block.kind === 'repeat') return 0;
+    if (block.kind === 'parallel') {
+      const duration = Math.round(numericValue);
+      return clamp(duration > 0 ? duration : fallback, 100, 10_000);
+    }
     return clamp(
       Math.round(numericValue),
       block.kind === 'wait' ? 0 : 100,
@@ -2971,6 +3361,121 @@ function normalizeBounceJumps(value: unknown): BounceJump[] {
     .slice(0, MAX_BOUNCE_JUMPS);
 }
 
+type MotionNormalizationState = {
+  seenIds: Set<string>;
+  remainingNodes: number;
+};
+
+function reserveNormalizedMotionBlockId(
+  candidate: string,
+  state: MotionNormalizationState,
+): string {
+  let id = candidate;
+  let suffix = 2;
+  while (state.seenIds.has(id)) {
+    id = `${candidate}-${suffix}`;
+    suffix += 1;
+  }
+  state.seenIds.add(id);
+  return id;
+}
+
+function normalizeMotionBlockList(
+  value: unknown,
+  depth: number,
+  state: MotionNormalizationState,
+): MotionBlock[] {
+  if (
+    !Array.isArray(value) ||
+    depth > MAX_MOTION_NESTING_DEPTH ||
+    state.remainingNodes <= 0
+  ) {
+    return [];
+  }
+
+  const blocks: MotionBlock[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    if (state.remainingNodes <= 0) break;
+    const candidate = value[index];
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      Array.isArray(candidate)
+    ) {
+      continue;
+    }
+    const raw = candidate as Partial<MotionBlock>;
+    if (!isMotionBlockKind(raw.kind) || isMotionEventBlockKind(raw.kind)) {
+      continue;
+    }
+    const fallbackId = `${raw.kind}-${index + 1}`;
+    const requestedId =
+      typeof raw.id === 'string' && raw.id ? raw.id : fallbackId;
+    const block = createMotionBlock(
+      raw.kind,
+      reserveNormalizedMotionBlockId(requestedId, state),
+    );
+    state.remainingNodes -= 1;
+    block.enabled = raw.enabled !== false;
+    block.durationMs = normalizeMotionBlockNumericField(
+      block,
+      'durationMs',
+      raw.durationMs,
+    );
+    block.easing = normalizeEasing(raw.easing);
+    for (const field of [
+      'x',
+      'y',
+      'value',
+      'secondaryValue',
+      'repetitions',
+    ] as const) {
+      block[field] = normalizeMotionBlockNumericField(block, field, raw[field]);
+    }
+    block.direction =
+      raw.direction === 'right' ||
+      raw.direction === 'up' ||
+      raw.direction === 'down'
+        ? raw.direction
+        : 'left';
+    const jumps = normalizeBounceJumps(raw.jumps);
+    if (block.kind === 'bounce' && jumps.length > 0) block.jumps = jumps;
+
+    if (isMotionContainerBlockKind(block.kind)) {
+      const children = normalizeMotionBlockList(raw.children, depth + 1, state);
+      if (block.kind === 'parallel') {
+        const usedKinds = new Set<ParallelMotionBlockKind>();
+        const first = children.find((child) =>
+          isParallelMotionBlockKind(child.kind),
+        );
+        block.children = children
+          .filter((child) => {
+            if (
+              !isParallelMotionBlockKind(child.kind) ||
+              usedKinds.has(child.kind) ||
+              (first &&
+                (child.durationMs !== first.durationMs ||
+                  child.easing !== first.easing))
+            ) {
+              return false;
+            }
+            usedKinds.add(child.kind);
+            return true;
+          })
+          .slice(0, MAX_PARALLEL_MOTION_BLOCKS);
+        if (block.children[0]) {
+          block.durationMs = block.children[0].durationMs;
+          block.easing = block.children[0].easing;
+        }
+      } else {
+        block.children = children;
+      }
+    }
+    blocks.push(block);
+  }
+  return blocks;
+}
+
 function normalizeMotionBlocks(
   value: unknown,
   legacy: Partial<ElementMotion>,
@@ -2979,73 +3484,51 @@ function normalizeMotionBlocks(
     ? legacy.event
     : 'scene-enter';
   if (Array.isArray(value)) {
-    const seen = new Set<string>();
+    const state: MotionNormalizationState = {
+      seenIds: new Set<string>(),
+      remainingNodes: MAX_MOTION_BLOCKS - 1,
+    };
     let eventBlock: MotionBlock | null = null;
-    const actionBlocks: MotionBlock[] = [];
+    const actionCandidates: unknown[] = [];
     for (let index = 0; index < value.length; index += 1) {
       const candidate = value[index];
       if (
         !candidate ||
         typeof candidate !== 'object' ||
         Array.isArray(candidate)
-      )
+      ) {
         continue;
+      }
       const raw = candidate as Partial<MotionBlock>;
       if (!isMotionBlockKind(raw.kind)) continue;
-      const block = createMotionBlock(
-        raw.kind,
-        typeof raw.id === 'string' && raw.id
-          ? raw.id
-          : `${raw.kind}-${index + 1}`,
-      );
-      block.enabled = raw.enabled !== false;
-      block.sourceElementId =
-        block.kind === 'animation-finish' &&
-        typeof raw.sourceElementId === 'string' &&
-        raw.sourceElementId.trim()
-          ? raw.sourceElementId
-              .trim()
-              .slice(0, MAX_MOTION_EVENT_SOURCE_ID_LENGTH)
-          : null;
-      block.durationMs = normalizeMotionBlockNumericField(
-        block,
-        'durationMs',
-        raw.durationMs,
-      );
-      block.easing = normalizeEasing(raw.easing);
-      for (const field of [
-        'x',
-        'y',
-        'value',
-        'secondaryValue',
-        'repetitions',
-      ] as const) {
-        block[field] = normalizeMotionBlockNumericField(
-          block,
-          field,
-          raw[field],
+      if (isMotionEventBlockKind(raw.kind)) {
+        if (eventBlock) continue;
+        const requestedId =
+          typeof raw.id === 'string' && raw.id ? raw.id : 'event';
+        eventBlock = createMotionBlock(
+          raw.kind,
+          reserveNormalizedMotionBlockId(requestedId, state),
         );
+        eventBlock.enabled = raw.enabled !== false;
+        eventBlock.sourceElementId =
+          eventBlock.kind === 'animation-finish' &&
+          typeof raw.sourceElementId === 'string' &&
+          raw.sourceElementId.trim()
+            ? raw.sourceElementId
+                .trim()
+                .slice(0, MAX_MOTION_EVENT_SOURCE_ID_LENGTH)
+            : null;
+        continue;
       }
-      block.direction =
-        raw.direction === 'right' ||
-        raw.direction === 'up' ||
-        raw.direction === 'down'
-          ? raw.direction
-          : 'left';
-      const jumps = normalizeBounceJumps(raw.jumps);
-      if (block.kind === 'bounce' && jumps.length > 0) block.jumps = jumps;
-      if (seen.has(block.id)) block.id = `${block.id}-${index + 1}`;
-      seen.add(block.id);
-      if (isMotionEventBlockKind(block.kind)) {
-        if (!eventBlock) eventBlock = block;
-      } else if (actionBlocks.length < MAX_MOTION_BLOCKS - 1) {
-        actionBlocks.push(block);
-      }
+      actionCandidates.push(candidate);
     }
-    return [
-      eventBlock ?? createMotionBlock(fallbackEventKind, 'event'),
-      ...actionBlocks,
-    ];
+    const event =
+      eventBlock ??
+      createMotionBlock(
+        fallbackEventKind,
+        reserveNormalizedMotionBlockId('event', state),
+      );
+    return [event, ...normalizeMotionBlockList(actionCandidates, 0, state)];
   }
 
   const migrated = motion(
@@ -3845,42 +4328,236 @@ function getBlockInputState(
   return input;
 }
 
+type PlannedMotionSegment = {
+  instanceId: string;
+  blocks: Array<MotionBlock & { kind: MotionLeafBlockKind }>;
+  startsAtMs: number;
+  durationMs: number;
+  easing: Easing;
+  inputState: MotionFrameState;
+  outputState: MotionFrameState;
+  resetBefore: boolean;
+};
+
+type PlannedMotionProgram = {
+  inputState: MotionFrameState;
+  segments: PlannedMotionSegment[];
+  durationMs: number;
+};
+
+const isMotionLeafBlock = (
+  block: MotionBlock,
+): block is MotionBlock & { kind: MotionLeafBlockKind } =>
+  !isMotionEventBlockKind(block.kind) &&
+  !isMotionContainerBlockKind(block.kind);
+
+function getCompatibleParallelChildren(
+  block: MotionBlock,
+): Array<MotionBlock & { kind: ParallelMotionBlockKind }> {
+  if (block.kind !== 'parallel') return [];
+  const children = block.children.filter(
+    (child): child is MotionBlock & { kind: ParallelMotionBlockKind } =>
+      child.enabled && isParallelMotionBlockKind(child.kind),
+  );
+  if (children.length > MAX_PARALLEL_MOTION_BLOCKS) return [];
+  const first = children[0];
+  const kinds = new Set<ParallelMotionBlockKind>();
+  for (const child of children) {
+    if (
+      kinds.has(child.kind) ||
+      (first &&
+        (getBlockDuration(child) !== getBlockDuration(first) ||
+          child.easing !== first.easing))
+    ) {
+      return [];
+    }
+    kinds.add(child.kind);
+  }
+  return children;
+}
+
+function planMotionNode(
+  block: MotionBlock,
+  outputState: MotionFrameState,
+  path: string,
+): PlannedMotionProgram {
+  if (!block.enabled || isMotionEventBlockKind(block.kind)) {
+    return { inputState: outputState, segments: [], durationMs: 0 };
+  }
+
+  if (block.kind === 'repeat') {
+    const childProgram = planMotionSequence(
+      block.children,
+      outputState,
+      `${path}/repeat`,
+    );
+    if (childProgram.segments.length === 0 || childProgram.durationMs <= 0) {
+      return {
+        inputState: childProgram.inputState,
+        segments: [],
+        durationMs: 0,
+      };
+    }
+    const repetitions = normalizeMotionBlockNumericField(
+      block,
+      'repetitions',
+      block.repetitions,
+    );
+    const segments: PlannedMotionSegment[] = [];
+    for (let iteration = 0; iteration < repetitions; iteration += 1) {
+      for (let index = 0; index < childProgram.segments.length; index += 1) {
+        const segment = childProgram.segments[index];
+        if (
+          segments.reduce((total, item) => total + item.blocks.length, 0) +
+            segment.blocks.length >
+          MAX_COMPILED_MOTION_STEPS
+        ) {
+          break;
+        }
+        segments.push({
+          ...segment,
+          instanceId: `${path}/iteration-${iteration + 1}/${segment.instanceId}`,
+          startsAtMs: iteration * childProgram.durationMs + segment.startsAtMs,
+          resetBefore: (iteration > 0 && index === 0) || segment.resetBefore,
+        });
+      }
+      if (
+        segments.reduce((total, item) => total + item.blocks.length, 0) >=
+        MAX_COMPILED_MOTION_STEPS
+      ) {
+        break;
+      }
+    }
+    return {
+      inputState: childProgram.inputState,
+      segments,
+      durationMs: Math.min(
+        childProgram.durationMs * repetitions,
+        MAX_COMPILED_MOTION_DURATION_MS,
+      ),
+    };
+  }
+
+  if (block.kind === 'parallel') {
+    const children = getCompatibleParallelChildren(block);
+    if (children.length === 0) {
+      return { inputState: outputState, segments: [], durationMs: 0 };
+    }
+    const inputState = children.reduce(
+      (state, child) => getBlockInputState(child, state),
+      copyMotionState(outputState),
+    );
+    const durationMs = getBlockDuration(children[0]);
+    return {
+      inputState,
+      segments: [
+        {
+          instanceId: path,
+          blocks: children,
+          startsAtMs: 0,
+          durationMs,
+          easing: children[0].easing,
+          inputState,
+          outputState: copyMotionState(outputState),
+          resetBefore: false,
+        },
+      ],
+      durationMs,
+    };
+  }
+
+  if (!isMotionLeafBlock(block)) {
+    return { inputState: outputState, segments: [], durationMs: 0 };
+  }
+  const inputState = getBlockInputState(block, outputState);
+  const durationMs = getBlockDuration(block);
+  return {
+    inputState,
+    segments: [
+      {
+        instanceId: path,
+        blocks: [block],
+        startsAtMs: 0,
+        durationMs,
+        easing: block.easing,
+        inputState,
+        outputState: copyMotionState(outputState),
+        resetBefore: false,
+      },
+    ],
+    durationMs,
+  };
+}
+
+function planMotionSequence(
+  blocks: readonly MotionBlock[],
+  outputState: MotionFrameState,
+  path = 'root',
+): PlannedMotionProgram {
+  const executable = blocks.filter(
+    (block) => block.enabled && !isMotionEventBlockKind(block.kind),
+  );
+  const nodePrograms: PlannedMotionProgram[] = Array.from({
+    length: executable.length,
+  });
+  let reverseState = copyMotionState(outputState);
+  for (let index = executable.length - 1; index >= 0; index -= 1) {
+    const block = executable[index];
+    const nodeProgram = planMotionNode(
+      block,
+      reverseState,
+      `${path}/${index + 1}-${block.id}`,
+    );
+    nodePrograms[index] = nodeProgram;
+    reverseState = copyMotionState(nodeProgram.inputState);
+  }
+
+  const segments: PlannedMotionSegment[] = [];
+  let cursorMs = 0;
+  let compiledLeaves = 0;
+  let capped = false;
+  for (const nodeProgram of nodePrograms) {
+    if (capped) break;
+    for (const segment of nodeProgram.segments) {
+      if (compiledLeaves + segment.blocks.length > MAX_COMPILED_MOTION_STEPS) {
+        capped = true;
+        break;
+      }
+      const startsAtMs = cursorMs + segment.startsAtMs;
+      if (startsAtMs >= MAX_COMPILED_MOTION_DURATION_MS) {
+        capped = true;
+        break;
+      }
+      const availableMs = MAX_COMPILED_MOTION_DURATION_MS - startsAtMs;
+      if (segment.blocks.length > 1 && segment.durationMs > availableMs) {
+        capped = true;
+        break;
+      }
+      const durationMs = Math.min(segment.durationMs, availableMs);
+      segments.push({ ...segment, startsAtMs, durationMs });
+      compiledLeaves += segment.blocks.length;
+      if (durationMs < segment.durationMs) {
+        capped = true;
+        break;
+      }
+    }
+    cursorMs = Math.min(
+      MAX_COMPILED_MOTION_DURATION_MS,
+      cursorMs + nodeProgram.durationMs,
+    );
+  }
+  const durationMs = segments.reduce(
+    (latest, segment) =>
+      Math.max(latest, segment.startsAtMs + segment.durationMs),
+    0,
+  );
+  return { inputState: reverseState, segments, durationMs };
+}
+
 export function compileElementMotion(
   element: MotusElement,
 ): CompiledElementMotion {
   const instruction = migrateMotion(element.motion);
-  const activeBlocks = instruction.blocks.filter(
-    (
-      block,
-    ): block is MotionBlock & {
-      kind: Exclude<MotionBlockKind, MotionEventBlockKind>;
-    } => block.enabled && !isMotionEventBlockKind(block.kind),
-  );
-  let cursorMs = 0;
-  let leadingDelayMs = 0;
-  let encounteredAction = false;
-  const steps: CompiledMotionStep[] = [];
-  for (const block of activeBlocks) {
-    const requestedDurationMs = getBlockDuration(block);
-    const durationMs = Math.min(
-      requestedDurationMs,
-      Math.max(0, 60_000 - cursorMs),
-    );
-    if (block.kind === 'wait' && !encounteredAction)
-      leadingDelayMs += durationMs;
-    if (block.kind !== 'wait') encounteredAction = true;
-    steps.push({
-      blockId: block.id,
-      kind: block.kind,
-      startsAtMs: cursorMs,
-      durationMs,
-      easing: block.easing,
-    });
-    cursorMs += durationMs;
-  }
-  const actionDurationMs = steps
-    .filter((step) => step.kind !== 'wait')
-    .reduce((total, step) => total + step.durationMs, 0);
   const finalState: MotionFrameState = {
     translateX: 0,
     translateY: 0,
@@ -3902,17 +4579,31 @@ export function compileElementMotion(
     clipBottom: 0,
     clipLeft: 0,
   };
-  const inputStates = Array.from({ length: activeBlocks.length }, () =>
-    copyMotionState(finalState),
+  const plannedProgram = planMotionSequence(instruction.blocks, finalState);
+  const playbackSegments = plannedProgram.segments;
+  const activeBlocks = playbackSegments.map((segment) => segment.blocks[0]);
+  const inputStates = playbackSegments.map((segment) => segment.inputState);
+  const outputStates = playbackSegments.map((segment) => segment.outputState);
+  const steps: CompiledMotionStep[] = playbackSegments.flatMap((segment) =>
+    segment.blocks.map((block, branchIndex) => ({
+      instanceId: `${segment.instanceId}/branch-${branchIndex + 1}-${block.id}`,
+      blockId: block.id,
+      kind: block.kind,
+      startsAtMs: segment.startsAtMs,
+      durationMs: segment.durationMs,
+      easing: segment.easing,
+    })),
   );
-  const outputStates = Array.from({ length: activeBlocks.length }, () =>
-    copyMotionState(finalState),
-  );
-  let reverseState = copyMotionState(finalState);
-  for (let index = activeBlocks.length - 1; index >= 0; index -= 1) {
-    outputStates[index] = copyMotionState(reverseState);
-    inputStates[index] = getBlockInputState(activeBlocks[index], reverseState);
-    reverseState = inputStates[index];
+  let leadingDelayMs = 0;
+  let encounteredAction = false;
+  let actionDurationMs = 0;
+  for (const segment of playbackSegments) {
+    const isWait = segment.blocks.every((block) => block.kind === 'wait');
+    if (isWait && !encounteredAction) leadingDelayMs += segment.durationMs;
+    if (!isWait) {
+      encounteredAction = true;
+      actionDurationMs += segment.durationMs;
+    }
   }
   const legacyFromState: MotionFrameState = {
     ...finalState,
@@ -3922,7 +4613,8 @@ export function compileElementMotion(
     scale: clamp(instruction.fromScale, 0.05, 4),
     rotation: clamp(element.rotation + instruction.fromRotation, -1_440, 1_440),
   };
-  const initialState = inputStates[0] ?? legacyFromState;
+  const initialState =
+    playbackSegments.length > 0 ? plannedProgram.inputState : legacyFromState;
   const from = {
     translateX: initialState.translateX,
     translateY: initialState.translateY,
@@ -3938,9 +4630,9 @@ export function compileElementMotion(
     rotation: finalState.rotation,
   };
   const sequenceDurationMs = clamp(
-    cursorMs || Math.round(instruction.durationMs),
+    plannedProgram.durationMs || Math.round(instruction.durationMs),
     0,
-    60_000,
+    MAX_COMPILED_MOTION_DURATION_MS,
   );
   let frameState = copyMotionState(initialState);
   const keyframes: CompiledMotionKeyframe[] = [
@@ -3959,21 +4651,53 @@ export function compileElementMotion(
     elapsedMs: number,
     easing: Easing | 'steps(1, end)',
   ) => {
-    if (sequenceDurationMs <= 0) return;
+    if (
+      sequenceDurationMs <= 0 ||
+      keyframes.length >= MAX_COMPILED_MOTION_KEYFRAMES - 1
+    ) {
+      return;
+    }
     keyframes[keyframes.length - 1].easing = easing;
+    const offset = Math.max(
+      keyframes.at(-1)?.offset ?? 0,
+      clamp(elapsedMs / sequenceDurationMs, 0, 1),
+    );
     keyframes.push({
-      offset: clamp(elapsedMs / sequenceDurationMs, 0, 1),
+      offset,
       ...copyMotionState(state),
       easing,
     });
   };
 
-  for (let index = 0; index < steps.length; index += 1) {
-    const step = steps[index];
+  for (let index = 0; index < playbackSegments.length; index += 1) {
+    if (keyframes.length >= MAX_COMPILED_MOTION_KEYFRAMES - 1) break;
+    const step = playbackSegments[index];
     const block = activeBlocks[index];
     if (step.durationMs <= 0 || sequenceDurationMs <= 0) continue;
     const output = outputStates[index];
     const endMs = step.startsAtMs + step.durationMs;
+
+    if (step.resetBefore) {
+      keyframes[keyframes.length - 1].easing = 'steps(1, end)';
+      frameState = copyMotionState(inputStates[index]);
+      if (keyframes.length < MAX_COMPILED_MOTION_KEYFRAMES - 1) {
+        const offset = Math.max(
+          keyframes.at(-1)?.offset ?? 0,
+          clamp(step.startsAtMs / sequenceDurationMs, 0, 1),
+        );
+        keyframes.push({
+          offset,
+          ...copyMotionState(frameState),
+          easing: step.easing,
+        });
+      }
+    }
+
+    if (step.blocks.length > 1) {
+      frameState = copyMotionState(output);
+      pushFrame(frameState, endMs, step.easing);
+      continue;
+    }
 
     if (block.kind === 'bounce') {
       let localMs = 0;
@@ -4680,7 +5404,15 @@ export function compileElementMotion(
   }
   const finalKeyframe = keyframes.at(-1);
   if (finalKeyframe?.offset !== 1) {
-    keyframes.push({ offset: 1, ...finalState, easing: instruction.easing });
+    if (keyframes.length < MAX_COMPILED_MOTION_KEYFRAMES) {
+      keyframes.push({ offset: 1, ...finalState, easing: instruction.easing });
+    } else if (finalKeyframe) {
+      Object.assign(finalKeyframe, {
+        offset: 1,
+        ...finalState,
+        easing: instruction.easing,
+      });
+    }
   } else if (finalKeyframe) {
     Object.assign(finalKeyframe, finalState);
   }
@@ -5364,6 +6096,7 @@ function validateMotion(value: unknown): string | null {
   if (!isRecord(value)) return 'Project contains invalid motion instructions';
   if (
     value.schemaVersion !== undefined &&
+    value.schemaVersion !== 1 &&
     value.schemaVersion !== MOTION_SCHEMA_VERSION
   ) {
     return 'Project uses an unsupported motion version';
@@ -5372,55 +6105,125 @@ function validateMotion(value: unknown): string | null {
     return 'Project uses an unsupported motion trigger';
   }
   if (value.blocks !== undefined) {
-    if (
-      !Array.isArray(value.blocks) ||
-      value.blocks.length > MAX_MOTION_BLOCKS
-    ) {
+    if (!Array.isArray(value.blocks)) {
       return 'Project contains an invalid animation block program';
     }
     const ids = new Set<string>();
-    for (const block of value.blocks) {
-      if (
-        !isRecord(block) ||
-        typeof block.id !== 'string' ||
-        !block.id ||
-        !isMotionBlockKind(block.kind) ||
-        ids.has(block.id)
-      ) {
-        return 'Project contains an invalid animation block program';
+    let nodeCount = 0;
+    const validateBlocks = (
+      blocks: unknown[],
+      depth: number,
+      allowEvents: boolean,
+    ): string | null => {
+      if (depth > MAX_MOTION_NESTING_DEPTH) {
+        return 'Project animation blocks are nested too deeply';
       }
-      if (
-        block.sourceElementId !== undefined &&
-        block.sourceElementId !== null &&
-        (typeof block.sourceElementId !== 'string' ||
-          !block.sourceElementId.trim() ||
-          block.sourceElementId.length > MAX_MOTION_EVENT_SOURCE_ID_LENGTH)
-      ) {
-        return 'Project contains an invalid animation source layer';
-      }
-      if (block.kind === 'bounce' && block.jumps !== undefined) {
-        if (
-          !Array.isArray(block.jumps) ||
-          block.jumps.length > MAX_BOUNCE_JUMPS
-        ) {
-          return 'Project contains an invalid bounce sequence';
+      for (const block of blocks) {
+        nodeCount += 1;
+        if (nodeCount > MAX_MOTION_BLOCKS) {
+          return 'Project contains too many animation blocks';
         }
-        const jumpIds = new Set<string>();
-        for (const jump of block.jumps) {
+        if (
+          !isRecord(block) ||
+          typeof block.id !== 'string' ||
+          !block.id ||
+          !isMotionBlockKind(block.kind) ||
+          ids.has(block.id) ||
+          (!allowEvents && isMotionEventBlockKind(block.kind))
+        ) {
+          return 'Project contains an invalid animation block program';
+        }
+        ids.add(block.id);
+        if (
+          block.sourceElementId !== undefined &&
+          block.sourceElementId !== null &&
+          (typeof block.sourceElementId !== 'string' ||
+            !block.sourceElementId.trim() ||
+            block.sourceElementId.length > MAX_MOTION_EVENT_SOURCE_ID_LENGTH)
+        ) {
+          return 'Project contains an invalid animation source layer';
+        }
+        if (block.kind === 'bounce' && block.jumps !== undefined) {
           if (
-            !isRecord(jump) ||
-            typeof jump.id !== 'string' ||
-            !jump.id ||
-            jumpIds.has(jump.id) ||
-            (jump.direction !== 'left' && jump.direction !== 'right')
+            !Array.isArray(block.jumps) ||
+            block.jumps.length > MAX_BOUNCE_JUMPS
           ) {
             return 'Project contains an invalid bounce sequence';
           }
-          jumpIds.add(jump.id);
+          const jumpIds = new Set<string>();
+          for (const jump of block.jumps) {
+            if (
+              !isRecord(jump) ||
+              typeof jump.id !== 'string' ||
+              !jump.id ||
+              jumpIds.has(jump.id) ||
+              (jump.direction !== 'left' && jump.direction !== 'right')
+            ) {
+              return 'Project contains an invalid bounce sequence';
+            }
+            jumpIds.add(jump.id);
+          }
+        }
+
+        const children = block.children;
+        if (isMotionContainerBlockKind(block.kind)) {
+          if (
+            value.schemaVersion === 1 ||
+            !Array.isArray(children) ||
+            (block.kind === 'parallel' &&
+              children.length > MAX_PARALLEL_MOTION_BLOCKS)
+          ) {
+            return 'Project contains an invalid animation block container';
+          }
+          if (block.kind === 'parallel') {
+            const kinds = new Set<ParallelMotionBlockKind>();
+            let durationMs: number | null = null;
+            let easing: Easing | null = null;
+            for (const child of children) {
+              if (
+                !isRecord(child) ||
+                !isParallelMotionBlockKind(child.kind) ||
+                kinds.has(child.kind)
+              ) {
+                return 'Project contains an invalid parallel animation group';
+              }
+              const normalized = createMotionBlock(child.kind, 'parallel');
+              const childDuration = normalizeMotionBlockNumericField(
+                normalized,
+                'durationMs',
+                child.durationMs,
+              );
+              const childEasing = normalizeEasing(child.easing);
+              if (
+                (durationMs !== null && childDuration !== durationMs) ||
+                (easing !== null && childEasing !== easing)
+              ) {
+                return 'Parallel blocks must use the same time and easing';
+              }
+              durationMs = childDuration;
+              easing = childEasing;
+              kinds.add(child.kind);
+            }
+          }
+          const nestedError = validateBlocks(children, depth + 1, false);
+          if (nestedError) return nestedError;
+        } else {
+          if (
+            children !== undefined &&
+            (!Array.isArray(children) || children.length > 0)
+          ) {
+            return 'Only control blocks can contain animation blocks';
+          }
         }
       }
-      ids.add(block.id);
-    }
+      return null;
+    };
+
+    const blocksError = validateBlocks(value.blocks, 0, true);
+    if (blocksError) return blocksError;
+    // Runtime budgets are enforced for new editor mutations and publication.
+    // Restores remain permissive so older schema-1 drafts that relied on the
+    // historical 60-second compiler clamp can still be opened and repaired.
   }
   return null;
 }

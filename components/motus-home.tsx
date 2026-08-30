@@ -35,7 +35,11 @@ import {
   parseStoredSlugSet,
   type LibraryReadingProgress,
 } from '@/lib/motus-library';
-import { getProjectScenes, type MotusProject } from '@/lib/motus-model';
+import {
+  countMotionBlocks,
+  getProjectScenes,
+  type MotusProject,
+} from '@/lib/motus-model';
 
 const discoverWorks = MOTUS_LIBRARY_WORKS.slice(0, 4);
 const READING_PROGRESS_STORAGE_KEY = 'motus:reading-progress:v1';
@@ -166,7 +170,7 @@ export function MotusHome() {
     const elements = scenes.flatMap((scene) => scene.elements);
     return {
       blocks: elements.reduce(
-        (total, element) => total + element.motion.blocks.length,
+        (total, element) => total + countMotionBlocks(element.motion.blocks),
         0,
       ),
       cover:

@@ -145,6 +145,11 @@ import {
   MAX_ELEMENT_LETTER_SPACING,
   MAX_ELEMENT_LINE_HEIGHT,
   MAX_BOUNCE_JUMPS,
+  MAX_COMPILED_MOTION_DURATION_MS,
+  MAX_COMPILED_MOTION_KEYFRAMES,
+  MAX_COMPILED_MOTION_STEPS,
+  MAX_MOTION_NESTING_DEPTH,
+  MAX_PARALLEL_MOTION_BLOCKS,
   MAX_MOTION_BLOCKS,
   MOTION_BLOCK_CATEGORIES,
   MOTION_BLOCK_CATALOG,
@@ -169,6 +174,7 @@ import {
   canAddSceneToProject,
   cloneProject,
   compileElementMotion,
+  countMotionBlocks,
   constrainElementToCanvas,
   createBlankChapter,
   createBlankProject,
@@ -185,7 +191,11 @@ import {
   detectImageFormat,
   distributeSelectedElements,
   findProjectScene,
+  findMotionBlock,
+  findMotionBlockSiblings,
   findSupportedImageFile,
+  getCompiledMotionKeyframeEstimate,
+  getExpandedMotionStepCount,
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
@@ -193,15 +203,19 @@ import {
   getEditorShortcut,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
+  getMotionProgramRuntimeIssue,
+  getMotionProgramDurationMs,
   getProjectStorageBytes,
   getProjectScenes,
   getSceneThumbnailElements,
   getTabIndexForKey,
   hasFileDrag,
+  hasExecutableMotionActions,
   hasPointerDragStarted,
   hasUnpublishedChanges,
-  insertMotionActionBefore,
+  isMotionContainerBlockKind,
   isMotionEventBlockKind,
+  isParallelMotionBlockKind,
   normalizeBounceJumpNumericField,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
@@ -250,6 +264,7 @@ import {
   type MotusScene,
   type ProjectHistoryEntry,
   type PublicationVisibility,
+  type MotionProgramRuntimeIssue,
 } from '@/lib/motus-model';
 import {
   DRAFT_POINTER_KEY,
@@ -493,6 +508,10 @@ function programDragId(blockId: string) {
   return `program:${blockId}`;
 }
 
+function motionContainerDropId(blockId: string) {
+  return `motion-container:${blockId}`;
+}
+
 function readMotionDragData(value: unknown): ActiveMotionDrag | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<ActiveMotionDrag>;
@@ -508,11 +527,13 @@ function readMotionDragData(value: unknown): ActiveMotionDrag | null {
 
 function DraggableBlockPaletteCard({
   disabled,
+  dragDisabled = false,
   elementId,
   entry,
   onAdd,
 }: {
   disabled: boolean;
+  dragDisabled?: boolean;
   elementId: string;
   entry: MotionBlockCatalogEntry;
   onAdd: () => void;
@@ -526,7 +547,7 @@ function DraggableBlockPaletteCard({
       label: entry.label,
       category: entry.category,
     } satisfies ActiveMotionDrag,
-    disabled,
+    disabled: disabled || dragDisabled,
   });
 
   return (
@@ -557,7 +578,11 @@ function DraggableBlockPaletteCard({
               ? entry.parameters.map((parameter) => parameter.label).join(' · ')
               : entry.kind === 'wait'
                 ? 'Editable wait time'
-                : 'Editable duration and easing'}
+                : entry.kind === 'repeat'
+                  ? 'Holds a sequential block stack'
+                  : entry.kind === 'parallel'
+                    ? 'Holds compatible simultaneous blocks'
+                    : 'Editable duration and easing'}
           </small>
         </span>
         <Plus aria-hidden="true" />
@@ -567,7 +592,7 @@ function DraggableBlockPaletteCard({
         {...(listeners ?? {})}
         aria-label={`Drag ${entry.label} into the program`}
         className="block-palette-drag-handle"
-        disabled={disabled}
+        disabled={disabled || dragDisabled}
         title="Drag into the program"
         type="button"
       >
@@ -648,6 +673,618 @@ function StaticMotionBlock({
     </li>
   );
 }
+
+type MotionTreeEditorActions = {
+  addBounceJump: (blockId: string) => void;
+  chooseInsertion: (containerId: string) => void;
+  duplicateBounceJump: (blockId: string, jumpId: string) => void;
+  duplicate: (blockId: string) => void;
+  move: (blockId: string, direction: -1 | 1) => void;
+  moveBounceJump: (blockId: string, jumpId: string, direction: -1 | 1) => void;
+  moveNextInside: (containerId: string) => void;
+  moveOut: (blockId: string) => void;
+  numericDraftProps: (
+    key: string,
+    value: number,
+    normalize: (candidate: number) => number,
+    commit: (candidate: number) => void,
+  ) => {
+    onBlur: (event: ReactFocusEvent<HTMLInputElement>) => void;
+    onChange: (event: ReactChangeEvent<HTMLInputElement>) => void;
+    onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+    onKeyUp: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+    onPointerCancel: () => void;
+    onPointerUp: () => void;
+    value: string;
+  };
+  removeBounceJump: (blockId: string, jumpId: string) => void;
+  remove: (blockId: string) => void;
+  setParallelTiming: (
+    containerId: string,
+    field: 'durationMs' | 'easing',
+    value: number | Easing,
+    transactionKey?: string | null,
+  ) => void;
+  update: (
+    blockId: string,
+    mutate: (block: MotionBlock) => void,
+    transactionKey?: string | null,
+  ) => void;
+  updateBounceJump: (
+    blockId: string,
+    jumpId: string,
+    mutate: (jump: BounceJump) => void,
+    transactionKey?: string | null,
+  ) => void;
+};
+
+/* oxlint-disable react/react-compiler -- dnd-kit supplies an imperative activator ref and listener object for the root container grip. */
+function MotionTreeBlockContent({
+  actions,
+  block,
+  depth,
+  dragHandle,
+  indexLabel,
+  parentKind,
+  siblingCount,
+  siblingIndex,
+}: {
+  actions: MotionTreeEditorActions;
+  block: MotionBlock;
+  depth: number;
+  dragHandle: MotionBlockDragHandle | null;
+  indexLabel: string;
+  parentKind: MotionBlockKind | null;
+  siblingCount: number;
+  siblingIndex: number;
+}) {
+  const catalogEntry = MOTION_BLOCK_CATALOG.find(
+    (entry) => entry.kind === block.kind,
+  );
+  const isContainer = isMotionContainerBlockKind(block.kind);
+  const isParallelChild = parentKind === 'parallel';
+  const parallelDuration = block.durationMs;
+  const parallelEasing = block.easing;
+  const canAddInside =
+    isContainer &&
+    depth < MAX_MOTION_NESTING_DEPTH &&
+    (block.kind !== 'parallel' ||
+      block.children.length < MAX_PARALLEL_MOTION_BLOCKS);
+  const { isOver: isContainerDropOver, setNodeRef: setContainerDropRef } =
+    useDroppable({
+      id: motionContainerDropId(block.id),
+      data: {
+        source: 'motion-container-dropzone',
+        containerId: block.id,
+      },
+      disabled: !canAddInside,
+    });
+
+  const numericBlockProps = (
+    field:
+      | 'durationMs'
+      | 'x'
+      | 'y'
+      | 'value'
+      | 'secondaryValue'
+      | 'repetitions',
+  ) =>
+    actions.numericDraftProps(
+      `block:${block.id}:${field}`,
+      block[field],
+      (candidate) => normalizeMotionBlockNumericField(block, field, candidate),
+      (candidate) =>
+        actions.update(
+          block.id,
+          (item) => {
+            item[field] = normalizeMotionBlockNumericField(
+              item,
+              field,
+              candidate,
+            );
+          },
+          `block:${block.id}:${field}`,
+        ),
+    );
+
+  return (
+    <>
+      <div className="motion-block-head motion-tree-block-head">
+        {dragHandle ? (
+          <button
+            {...dragHandle.attributes}
+            {...(dragHandle.listeners ?? {})}
+            aria-label={`Drag ${block.label}, step ${indexLabel}`}
+            className="motion-block-grip motion-block-drag-handle"
+            data-dragging={dragHandle.isDragging || undefined}
+            ref={dragHandle.setActivatorNodeRef}
+            title="Drag this whole block group"
+            type="button"
+          >
+            {indexLabel}
+          </button>
+        ) : (
+          <span className="motion-block-grip">{indexLabel}</span>
+        )}
+
+        <div className="motion-block-title">
+          <small>{block.category.toUpperCase()}</small>
+          <strong>{block.label}</strong>
+        </div>
+
+        <div className="motion-block-inline-fields motion-tree-inline-fields">
+          {block.kind === 'repeat' ? (
+            <div className="motion-inline-field">
+              <span>Times</span>
+              <span className="motion-inline-number">
+                <Input
+                  {...numericBlockProps('repetitions')}
+                  aria-label={`${block.label} repetitions`}
+                  max="20"
+                  min="1"
+                  step="1"
+                  type="number"
+                />
+                <small aria-hidden="true">×</small>
+              </span>
+            </div>
+          ) : block.kind === 'parallel' ? (
+            <>
+              <span className="motion-inline-token">
+                {block.children.length} together
+              </span>
+              <div className="motion-inline-field">
+                <span>Time</span>
+                <span className="motion-inline-number">
+                  <Input
+                    {...actions.numericDraftProps(
+                      `block:${block.id}:parallel-duration`,
+                      parallelDuration,
+                      (candidate) =>
+                        normalizeMotionBlockNumericField(
+                          block,
+                          'durationMs',
+                          candidate,
+                        ),
+                      (candidate) =>
+                        actions.setParallelTiming(
+                          block.id,
+                          'durationMs',
+                          candidate,
+                          `block:${block.id}:parallel-duration`,
+                        ),
+                    )}
+                    aria-label="Run together duration"
+                    max="10000"
+                    min="100"
+                    step="50"
+                    type="number"
+                  />
+                  <small aria-hidden="true">ms</small>
+                </span>
+              </div>
+              <div className="motion-inline-field">
+                <span>Easing</span>
+                <NativeSelect
+                  aria-label="Run together easing"
+                  onChange={(event) =>
+                    actions.setParallelTiming(
+                      block.id,
+                      'easing',
+                      event.target.value as Easing,
+                    )
+                  }
+                  size="sm"
+                  value={parallelEasing}
+                >
+                  <NativeSelectOption value="linear">Linear</NativeSelectOption>
+                  <NativeSelectOption value="ease-out">
+                    Ease out
+                  </NativeSelectOption>
+                  <NativeSelectOption value="ease-in-out">
+                    Ease in/out
+                  </NativeSelectOption>
+                </NativeSelect>
+              </div>
+            </>
+          ) : (
+            <>
+              {catalogEntry?.usesDirection ? (
+                <div className="motion-inline-field">
+                  <span>Direction</span>
+                  <NativeSelect
+                    aria-label={`${block.label} direction`}
+                    onChange={(event) =>
+                      actions.update(block.id, (item) => {
+                        item.direction = event.target
+                          .value as MotionBlock['direction'];
+                      })
+                    }
+                    size="sm"
+                    value={block.direction}
+                  >
+                    <NativeSelectOption value="left">Left</NativeSelectOption>
+                    <NativeSelectOption value="right">Right</NativeSelectOption>
+                    <NativeSelectOption value="up">Up</NativeSelectOption>
+                    <NativeSelectOption value="down">Down</NativeSelectOption>
+                  </NativeSelect>
+                </div>
+              ) : null}
+              {catalogEntry?.parameters.map((parameter) => (
+                <div className="motion-inline-field" key={parameter.field}>
+                  <span>{parameter.label}</span>
+                  <span className="motion-inline-number">
+                    <Input
+                      {...numericBlockProps(parameter.field)}
+                      aria-label={`${block.label} ${parameter.label}`}
+                      max={parameter.max}
+                      min={parameter.min}
+                      step={parameter.step}
+                      type="number"
+                    />
+                    {parameter.unit ? (
+                      <small aria-hidden="true">{parameter.unit}</small>
+                    ) : null}
+                  </span>
+                </div>
+              ))}
+              {isParallelChild ? (
+                <span className="motion-inline-token">Shared timing</span>
+              ) : block.kind !== 'bounce' ? (
+                <>
+                  <div className="motion-inline-field">
+                    <span>{block.kind === 'wait' ? 'Wait' : 'Time'}</span>
+                    <span className="motion-inline-number">
+                      <Input
+                        {...numericBlockProps('durationMs')}
+                        aria-label={`${block.label} duration`}
+                        max="10000"
+                        min={block.kind === 'wait' ? '0' : '100'}
+                        step="50"
+                        type="number"
+                      />
+                      <small aria-hidden="true">ms</small>
+                    </span>
+                  </div>
+                  {block.kind !== 'wait' ? (
+                    <div className="motion-inline-field">
+                      <span>Easing</span>
+                      <NativeSelect
+                        aria-label={`${block.label} easing`}
+                        onChange={(event) =>
+                          actions.update(block.id, (item) => {
+                            item.easing = event.target.value as Easing;
+                          })
+                        }
+                        size="sm"
+                        value={block.easing}
+                      >
+                        <NativeSelectOption value="linear">
+                          Linear
+                        </NativeSelectOption>
+                        <NativeSelectOption value="ease-out">
+                          Ease out
+                        </NativeSelectOption>
+                        <NativeSelectOption value="ease-in-out">
+                          Ease in/out
+                        </NativeSelectOption>
+                      </NativeSelect>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        <div className="motion-block-actions motion-tree-actions">
+          <button
+            aria-label={`${block.enabled ? 'Disable' : 'Enable'} ${block.label}`}
+            onClick={() =>
+              actions.update(block.id, (item) => {
+                item.enabled = !item.enabled;
+              })
+            }
+            title={block.enabled ? 'Disable' : 'Enable'}
+            type="button"
+          >
+            {block.enabled ? <Eye /> : <EyeOff />}
+          </button>
+          <button
+            aria-label={`Move ${block.label} earlier`}
+            disabled={siblingIndex === 0}
+            onClick={() => actions.move(block.id, -1)}
+            title="Move earlier"
+            type="button"
+          >
+            <ArrowUp />
+          </button>
+          <button
+            aria-label={`Move ${block.label} later`}
+            disabled={siblingIndex === siblingCount - 1}
+            onClick={() => actions.move(block.id, 1)}
+            title="Move later"
+            type="button"
+          >
+            <ArrowDown />
+          </button>
+          {depth > 0 ? (
+            <button
+              aria-label={`Move ${block.label} out one level`}
+              onClick={() => actions.moveOut(block.id)}
+              title="Move out one level"
+              type="button"
+            >
+              <ArrowLeft />
+            </button>
+          ) : null}
+          {isContainer ? (
+            <button
+              aria-label={`Move next block inside ${block.label}`}
+              disabled={siblingIndex >= siblingCount - 1 || !canAddInside}
+              onClick={() => actions.moveNextInside(block.id)}
+              title="Move next block inside"
+              type="button"
+            >
+              <ArrowRight />
+            </button>
+          ) : null}
+          <button
+            aria-label={`Duplicate ${block.label}`}
+            disabled={parentKind === 'parallel'}
+            onClick={() => actions.duplicate(block.id)}
+            title="Duplicate"
+            type="button"
+          >
+            <Copy />
+          </button>
+          <button
+            aria-label={`Delete ${block.label}`}
+            onClick={() => actions.remove(block.id)}
+            title="Delete"
+            type="button"
+          >
+            <Trash2 />
+          </button>
+        </div>
+      </div>
+
+      {block.kind === 'bounce' ? (
+        <details className="motion-tree-bounce">
+          <summary>{block.jumps.length} editable jumps</summary>
+          <BouncePathPreview jumps={block.jumps} />
+          <div className="motion-tree-jumps">
+            {block.jumps.map((jump, jumpIndex) => (
+              <fieldset key={jump.id}>
+                <legend>Jump {jumpIndex + 1}</legend>
+                <div className="motion-tree-jump-actions">
+                  <button
+                    aria-label={`Move jump ${jumpIndex + 1} earlier`}
+                    disabled={jumpIndex === 0}
+                    onClick={() =>
+                      actions.moveBounceJump(block.id, jump.id, -1)
+                    }
+                    type="button"
+                  >
+                    <ArrowUp />
+                  </button>
+                  <button
+                    aria-label={`Move jump ${jumpIndex + 1} later`}
+                    disabled={jumpIndex === block.jumps.length - 1}
+                    onClick={() => actions.moveBounceJump(block.id, jump.id, 1)}
+                    type="button"
+                  >
+                    <ArrowDown />
+                  </button>
+                  <button
+                    aria-label={`Duplicate jump ${jumpIndex + 1}`}
+                    disabled={block.jumps.length >= MAX_BOUNCE_JUMPS}
+                    onClick={() =>
+                      actions.duplicateBounceJump(block.id, jump.id)
+                    }
+                    type="button"
+                  >
+                    <Copy />
+                  </button>
+                  <button
+                    aria-label={`Delete jump ${jumpIndex + 1}`}
+                    disabled={block.jumps.length <= 1}
+                    onClick={() => actions.removeBounceJump(block.id, jump.id)}
+                    type="button"
+                  >
+                    <Trash2 />
+                  </button>
+                </div>
+                <div className="motion-tree-jump-field">
+                  <span>Direction</span>
+                  <NativeSelect
+                    aria-label={`Jump ${jumpIndex + 1} direction`}
+                    onChange={(event) =>
+                      actions.updateBounceJump(block.id, jump.id, (item) => {
+                        item.direction = event.target
+                          .value as BounceJump['direction'];
+                      })
+                    }
+                    size="sm"
+                    value={jump.direction}
+                  >
+                    <NativeSelectOption value="left">← Left</NativeSelectOption>
+                    <NativeSelectOption value="right">
+                      Right →
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </div>
+                {(['height', 'spread', 'durationMs'] as const).map((field) => (
+                  <label key={field}>
+                    <span>
+                      {field === 'durationMs'
+                        ? 'Time'
+                        : field === 'height'
+                          ? 'Height'
+                          : 'Spread'}
+                    </span>
+                    <Input
+                      {...actions.numericDraftProps(
+                        `jump:${jump.id}:${field}`,
+                        jump[field],
+                        (candidate) =>
+                          normalizeBounceJumpNumericField(
+                            jump,
+                            field,
+                            candidate,
+                          ),
+                        (candidate) =>
+                          actions.updateBounceJump(
+                            block.id,
+                            jump.id,
+                            (item) => {
+                              item[field] = normalizeBounceJumpNumericField(
+                                item,
+                                field,
+                                candidate,
+                              );
+                            },
+                            `jump:${jump.id}:${field}`,
+                          ),
+                      )}
+                      aria-label={`Jump ${jumpIndex + 1} ${field}`}
+                      max={field === 'durationMs' ? 10000 : 2000}
+                      min={field === 'durationMs' ? 80 : 0}
+                      step={field === 'durationMs' ? 20 : 5}
+                      type="number"
+                    />
+                  </label>
+                ))}
+                <div className="motion-tree-jump-field">
+                  <span>Easing</span>
+                  <NativeSelect
+                    aria-label={`Jump ${jumpIndex + 1} easing`}
+                    onChange={(event) =>
+                      actions.updateBounceJump(block.id, jump.id, (item) => {
+                        item.easing = event.target.value as Easing;
+                      })
+                    }
+                    size="sm"
+                    value={jump.easing}
+                  >
+                    <NativeSelectOption value="linear">
+                      Linear
+                    </NativeSelectOption>
+                    <NativeSelectOption value="ease-out">
+                      Ease out
+                    </NativeSelectOption>
+                    <NativeSelectOption value="ease-in-out">
+                      Ease in/out
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </div>
+              </fieldset>
+            ))}
+            <Button
+              disabled={block.jumps.length >= MAX_BOUNCE_JUMPS}
+              onClick={() => actions.addBounceJump(block.id)}
+              size="sm"
+              variant="outline"
+            >
+              <Plus /> Add jump
+            </Button>
+          </div>
+        </details>
+      ) : null}
+
+      {isContainer ? (
+        <section className="motion-block-children-shell">
+          <header>
+            <span>
+              {block.kind === 'repeat'
+                ? 'RUN IN ORDER'
+                : 'START AT THE SAME TIME'}
+            </span>
+            <Button
+              disabled={!canAddInside}
+              onClick={() => actions.chooseInsertion(block.id)}
+              size="sm"
+              variant="secondary"
+            >
+              <Plus /> Add block inside
+            </Button>
+          </header>
+          <ol
+            aria-label={`${block.label} nested blocks`}
+            className="motion-block-children"
+          >
+            {block.children.map((child, childIndex) => (
+              <NestedMotionTreeBlock
+                actions={actions}
+                block={child}
+                depth={depth + 1}
+                indexLabel={`${indexLabel}.${childIndex + 1}`}
+                key={child.id}
+                parentKind={block.kind}
+                siblingCount={block.children.length}
+                siblingIndex={childIndex}
+              />
+            ))}
+            {block.children.length === 0 ? (
+              <li className="motion-block-children-empty">
+                Add a block from the library. This container is currently
+                skipped during playback.
+              </li>
+            ) : null}
+            <li
+              aria-label={`Drop a block inside ${block.label}`}
+              className="motion-container-drop-target"
+              data-over={isContainerDropOver || undefined}
+              ref={setContainerDropRef}
+            >
+              <Plus aria-hidden="true" />
+              <span>Drop block inside</span>
+            </li>
+          </ol>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+function NestedMotionTreeBlock({
+  actions,
+  block,
+  depth,
+  indexLabel,
+  parentKind,
+  siblingCount,
+  siblingIndex,
+}: {
+  actions: MotionTreeEditorActions;
+  block: MotionBlock;
+  depth: number;
+  indexLabel: string;
+  parentKind: MotionBlockKind;
+  siblingCount: number;
+  siblingIndex: number;
+}) {
+  return (
+    <li
+      className={`motion-block motion-tree-child block-${block.category}`}
+      data-depth={depth}
+      data-disabled={!block.enabled || undefined}
+      data-kind={block.kind}
+    >
+      <MotionTreeBlockContent
+        actions={actions}
+        block={block}
+        depth={depth}
+        dragHandle={null}
+        indexLabel={indexLabel}
+        parentKind={parentKind}
+        siblingCount={siblingCount}
+        siblingIndex={siblingIndex}
+      />
+    </li>
+  );
+}
+/* oxlint-enable react/react-compiler */
 
 function MotionProgramDropzone({
   active,
@@ -883,6 +1520,115 @@ const motionPresets: Array<{
 
 function uniqueId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+type MotionBlockLocation = {
+  block: MotionBlock;
+  depth: number;
+  index: number;
+  parent: MotionBlock | null;
+  siblings: MotionBlock[];
+};
+
+function findMotionBlockLocation(
+  blocks: MotionBlock[],
+  blockId: string,
+  parent: MotionBlock | null = null,
+  depth = 0,
+): MotionBlockLocation | null {
+  const index = blocks.findIndex((block) => block.id === blockId);
+  if (index >= 0) {
+    return { block: blocks[index], depth, index, parent, siblings: blocks };
+  }
+  for (const block of blocks) {
+    const nested = findMotionBlockLocation(
+      block.children,
+      blockId,
+      block,
+      depth + 1,
+    );
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function cloneMotionBlockSubtree(block: MotionBlock): MotionBlock {
+  const copy = structuredClone(block);
+  const refreshIds = (item: MotionBlock) => {
+    item.id = uniqueId(`block-${item.kind}`);
+    item.jumps = item.jumps.map((jump) => ({
+      ...jump,
+      id: uniqueId('jump'),
+    }));
+    item.children.forEach(refreshIds);
+  };
+  refreshIds(copy);
+  return copy;
+}
+
+function getMotionSubtreeDepth(block: MotionBlock): number {
+  return block.children.reduce(
+    (deepest, child) => Math.max(deepest, 1 + getMotionSubtreeDepth(child)),
+    0,
+  );
+}
+
+function describeMotionRuntimeIssue(issue: MotionProgramRuntimeIssue): string {
+  if (issue === 'expanded-steps') {
+    return `This change would exceed the ${MAX_COMPILED_MOTION_STEPS}-step playback limit`;
+  }
+  if (issue === 'keyframes') {
+    return `This change would exceed the ${MAX_COMPILED_MOTION_KEYFRAMES}-keyframe playback limit`;
+  }
+  return `This change would run longer than ${MAX_COMPILED_MOTION_DURATION_MS / 1_000} seconds`;
+}
+
+function getBlockingMotionRuntimeIssue(
+  currentBlocks: readonly MotionBlock[],
+  candidateBlocks: readonly MotionBlock[],
+): MotionProgramRuntimeIssue | null {
+  const candidateIssue = getMotionProgramRuntimeIssue(candidateBlocks);
+  if (!candidateIssue) return null;
+
+  const currentExcess = [
+    Math.max(
+      0,
+      getExpandedMotionStepCount(currentBlocks) - MAX_COMPILED_MOTION_STEPS,
+    ),
+    Math.max(
+      0,
+      getCompiledMotionKeyframeEstimate(currentBlocks) -
+        MAX_COMPILED_MOTION_KEYFRAMES,
+    ),
+    Math.max(
+      0,
+      getMotionProgramDurationMs(currentBlocks) -
+        MAX_COMPILED_MOTION_DURATION_MS,
+    ),
+  ];
+  const candidateExcess = [
+    Math.max(
+      0,
+      getExpandedMotionStepCount(candidateBlocks) - MAX_COMPILED_MOTION_STEPS,
+    ),
+    Math.max(
+      0,
+      getCompiledMotionKeyframeEstimate(candidateBlocks) -
+        MAX_COMPILED_MOTION_KEYFRAMES,
+    ),
+    Math.max(
+      0,
+      getMotionProgramDurationMs(candidateBlocks) -
+        MAX_COMPILED_MOTION_DURATION_MS,
+    ),
+  ];
+  const doesNotWorsen = candidateExcess.every(
+    (value, index) => value <= currentExcess[index],
+  );
+  const improves = candidateExcess.some(
+    (value, index) => value < currentExcess[index],
+  );
+  return doesNotWorsen && improves ? null : candidateIssue;
 }
 
 function nowIso() {
@@ -1757,6 +2503,9 @@ export function MotusStudio() {
   const [expandedMotionBlockId, setExpandedMotionBlockId] = useState<
     string | null
   >(null);
+  const [motionInsertionParentId, setMotionInsertionParentId] = useState<
+    string | null
+  >(null);
   const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
   const [pendingProjectImport, setPendingProjectImport] =
     useState<PendingProjectImport | null>(null);
@@ -1783,6 +2532,7 @@ export function MotusStudio() {
   const historyTransaction = useRef<string | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
+  const blockPaletteSearchInput = useRef<HTMLInputElement>(null);
   const canvasStage = useRef<HTMLDivElement>(null);
   const studioGrid = useRef<HTMLDivElement>(null);
   const motionProperties = useRef<HTMLDivElement>(null);
@@ -1801,6 +2551,16 @@ export function MotusStudio() {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
+
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setMotionInsertionParentId(null);
+    });
+    return () => {
+      active = false;
+    };
+  }, [activeSceneId, selectedElementId]);
 
   const resetTransientCanvasState = useCallback(() => {
     activePointerCleanup.current?.();
@@ -2870,6 +3630,7 @@ export function MotusStudio() {
   const addMotionBlock = (
     kind: MotionBlockKind,
     beforeBlockId: string | null = null,
+    parentBlockId: string | null = motionInsertionParentId,
   ) => {
     if (!selectedElement) {
       setNotice('Select a layer before adding an animation block');
@@ -2879,26 +3640,185 @@ export function MotusStudio() {
       setNotice('Choose the trigger from the fixed event block');
       return;
     }
-    if (selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS) {
+    if (countMotionBlocks(selectedElement.motion.blocks) >= MAX_MOTION_BLOCKS) {
       setNotice(
         `A layer can contain up to ${MAX_MOTION_BLOCKS} animation blocks`,
       );
       return;
     }
     const block = createMotionBlock(kind, uniqueId(`block-${kind}`));
-    updateElement(selectedElement.id, (item) => {
-      item.motion.blocks = insertMotionActionBefore(
-        item.motion.blocks,
-        block,
-        beforeBlockId,
+    const requestedParent = parentBlockId
+      ? findMotionBlock(selectedElement.motion.blocks, parentBlockId)
+      : null;
+    if (parentBlockId && !requestedParent) {
+      setMotionInsertionParentId(null);
+      setNotice('That control block is no longer available');
+      return;
+    }
+    if (
+      requestedParent &&
+      (!isMotionContainerBlockKind(requestedParent.kind) ||
+        (requestedParent.kind === 'parallel' &&
+          (!isParallelMotionBlockKind(kind) ||
+            requestedParent.children.some((child) => child.kind === kind) ||
+            requestedParent.children.length >= MAX_PARALLEL_MOTION_BLOCKS)))
+    ) {
+      setNotice(
+        requestedParent.kind === 'parallel'
+          ? 'Run together accepts one Move, Rotate, Scale, Opacity, Blur, or Reveal block per channel'
+          : 'Only Repeat and Run together can contain blocks',
       );
+      return;
+    }
+    const candidateBlocks = structuredClone(selectedElement.motion.blocks);
+    if (parentBlockId) {
+      const parentLocation = findMotionBlockLocation(
+        candidateBlocks,
+        parentBlockId,
+      );
+      const parent = parentLocation?.block;
+      if (
+        !parentLocation ||
+        !parent ||
+        !isMotionContainerBlockKind(parent.kind)
+      ) {
+        setMotionInsertionParentId(null);
+        setNotice('That control block is no longer available');
+        return;
+      }
+      if (parentLocation.depth >= MAX_MOTION_NESTING_DEPTH) {
+        setNotice(
+          `Control blocks can be nested ${MAX_MOTION_NESTING_DEPTH} levels deep`,
+        );
+        return;
+      }
+      if (parent.kind === 'parallel') {
+        const sharedDuration =
+          parent.children[0]?.durationMs ??
+          normalizeMotionBlockNumericField(
+            parent,
+            'durationMs',
+            parent.durationMs,
+          );
+        const sharedEasing = parent.children[0]?.easing ?? parent.easing;
+        parent.durationMs = sharedDuration;
+        parent.easing = sharedEasing;
+        block.durationMs = sharedDuration;
+        block.easing = sharedEasing;
+      }
+      parent.children.push(block);
+    } else {
+      const insertionIndex = beforeBlockId
+        ? candidateBlocks.findIndex(
+            (candidate) => candidate.id === beforeBlockId,
+          )
+        : candidateBlocks.length;
+      if (insertionIndex <= 0) {
+        setNotice('That block insertion point is no longer available');
+        return;
+      }
+      candidateBlocks.splice(insertionIndex, 0, block);
+    }
+    const runtimeIssue = getBlockingMotionRuntimeIssue(
+      selectedElement.motion.blocks,
+      candidateBlocks,
+    );
+    if (runtimeIssue) {
+      setNotice(describeMotionRuntimeIssue(runtimeIssue));
+      return;
+    }
+    updateElement(selectedElement.id, (item) => {
+      item.motion.blocks = candidateBlocks;
     });
+    setMotionInsertionParentId(null);
     setNotice(
-      beforeBlockId
-        ? `${block.label} block inserted into the program`
-        : `${block.label} block added`,
+      requestedParent
+        ? `${block.label} added inside ${requestedParent.label}`
+        : beforeBlockId
+          ? `${block.label} block inserted into the program`
+          : `${block.label} block added`,
     );
     setExpandedMotionBlockId(kind === 'bounce' ? block.id : null);
+  };
+
+  const moveRootMotionBlockInside = (blockId: string, containerId: string) => {
+    if (!selectedElement) return;
+    const candidateBlocks = structuredClone(selectedElement.motion.blocks);
+    const sourceLocation = findMotionBlockLocation(candidateBlocks, blockId);
+    const containerLocation = findMotionBlockLocation(
+      candidateBlocks,
+      containerId,
+    );
+    if (
+      !sourceLocation ||
+      sourceLocation.parent ||
+      sourceLocation.index <= 0 ||
+      !containerLocation ||
+      !isMotionContainerBlockKind(containerLocation.block.kind) ||
+      sourceLocation.block.id === containerLocation.block.id ||
+      findMotionBlock([sourceLocation.block], containerId)
+    ) {
+      setNotice('That block cannot be moved into this container');
+      return;
+    }
+    if (
+      containerLocation.depth +
+        1 +
+        getMotionSubtreeDepth(sourceLocation.block) >
+      MAX_MOTION_NESTING_DEPTH
+    ) {
+      setNotice(
+        `Control blocks can be nested ${MAX_MOTION_NESTING_DEPTH} levels deep`,
+      );
+      return;
+    }
+    if (
+      containerLocation.block.kind === 'parallel' &&
+      (!isParallelMotionBlockKind(sourceLocation.block.kind) ||
+        containerLocation.block.children.some(
+          (child) => child.kind === sourceLocation.block.kind,
+        ) ||
+        containerLocation.block.children.length >= MAX_PARALLEL_MOTION_BLOCKS)
+    ) {
+      setNotice('Run together only accepts one compatible block per channel');
+      return;
+    }
+    const [movedBlock] = sourceLocation.siblings.splice(
+      sourceLocation.index,
+      1,
+    );
+    if (!movedBlock) return;
+    if (containerLocation.block.kind === 'parallel') {
+      const sharedDuration =
+        containerLocation.block.children[0]?.durationMs ??
+        normalizeMotionBlockNumericField(
+          containerLocation.block,
+          'durationMs',
+          containerLocation.block.durationMs,
+        );
+      const sharedEasing =
+        containerLocation.block.children[0]?.easing ??
+        containerLocation.block.easing;
+      containerLocation.block.durationMs = sharedDuration;
+      containerLocation.block.easing = sharedEasing;
+      movedBlock.durationMs = sharedDuration;
+      movedBlock.easing = sharedEasing;
+    }
+    containerLocation.block.children.push(movedBlock);
+    const runtimeIssue = getBlockingMotionRuntimeIssue(
+      selectedElement.motion.blocks,
+      candidateBlocks,
+    );
+    if (runtimeIssue) {
+      setNotice(describeMotionRuntimeIssue(runtimeIssue));
+      return;
+    }
+    updateElement(selectedElement.id, (item) => {
+      item.motion.blocks = candidateBlocks;
+    });
+    setNotice(
+      `${movedBlock.label} moved inside ${containerLocation.block.label}`,
+    );
   };
 
   const startMotionDrag = (event: DragStartEvent) => {
@@ -2923,8 +3843,15 @@ export function MotusStudio() {
       overSource === 'program' && typeof overData?.blockId === 'string'
         ? overData.blockId
         : null;
+    const overContainerId =
+      overSource === 'motion-container-dropzone' &&
+      typeof overData?.containerId === 'string'
+        ? overData.containerId
+        : null;
     const droppedInProgram =
-      event.over?.id === MOTION_PROGRAM_DROP_ID || overSource === 'program';
+      event.over?.id === MOTION_PROGRAM_DROP_ID ||
+      overSource === 'program' ||
+      Boolean(overContainerId);
 
     setActiveMotionDrag(null);
     if (
@@ -2940,11 +3867,15 @@ export function MotusStudio() {
     }
 
     if (drag.source === 'palette' && drag.kind) {
-      addMotionBlock(drag.kind, overBlockId);
+      addMotionBlock(drag.kind, overBlockId, overContainerId);
       return;
     }
 
     if (drag.source !== 'program' || !drag.blockId) return;
+    if (overContainerId) {
+      moveRootMotionBlockInside(drag.blockId, overContainerId);
+      return;
+    }
     const sourceIndex = selectedElement.motion.blocks.findIndex(
       (block) => block.id === drag.blockId,
     );
@@ -2984,17 +3915,27 @@ export function MotusStudio() {
     mutate: (block: MotionBlock) => void,
     transactionKey: string | null = null,
   ) => {
-    if (!selectedElement) return;
+    if (!selectedElement) return false;
+    const candidateBlocks = structuredClone(selectedElement.motion.blocks);
+    const candidateBlock = findMotionBlock(candidateBlocks, blockId);
+    if (!candidateBlock) return false;
+    mutate(candidateBlock);
+    const runtimeIssue = getBlockingMotionRuntimeIssue(
+      selectedElement.motion.blocks,
+      candidateBlocks,
+    );
+    if (runtimeIssue) {
+      setNotice(describeMotionRuntimeIssue(runtimeIssue));
+      return false;
+    }
     updateElement(
       selectedElement.id,
       (item) => {
-        const block = item.motion.blocks.find(
-          (candidate) => candidate.id === blockId,
-        );
-        if (block) mutate(block);
+        item.motion.blocks = candidateBlocks;
       },
       transactionKey,
     );
+    return true;
   };
 
   const changeMotionEvent = (eventKind: MotionEventBlockKind) => {
@@ -3028,27 +3969,42 @@ export function MotusStudio() {
 
   const duplicateMotionBlock = (blockId: string) => {
     if (!selectedElement) return;
-    if (selectedElement.motion.blocks.length >= MAX_MOTION_BLOCKS) {
+    const source = findMotionBlock(selectedElement.motion.blocks, blockId);
+    if (!source || isMotionEventBlockKind(source.kind)) return;
+    const subtreeSize = countMotionBlocks([source]);
+    if (
+      countMotionBlocks(selectedElement.motion.blocks) + subtreeSize >
+      MAX_MOTION_BLOCKS
+    ) {
       setNotice(
         `A layer can contain up to ${MAX_MOTION_BLOCKS} animation blocks`,
       );
       return;
     }
+    const candidateBlocks = structuredClone(selectedElement.motion.blocks);
+    const location = findMotionBlockLocation(candidateBlocks, blockId);
+    if (
+      !location ||
+      isMotionEventBlockKind(location.block.kind) ||
+      location.parent?.kind === 'parallel'
+    ) {
+      return;
+    }
+    location.siblings.splice(
+      location.index + 1,
+      0,
+      cloneMotionBlockSubtree(location.block),
+    );
+    const runtimeIssue = getBlockingMotionRuntimeIssue(
+      selectedElement.motion.blocks,
+      candidateBlocks,
+    );
+    if (runtimeIssue) {
+      setNotice(describeMotionRuntimeIssue(runtimeIssue));
+      return;
+    }
     updateElement(selectedElement.id, (item) => {
-      const index = item.motion.blocks.findIndex(
-        (block) => block.id === blockId,
-      );
-      const source = item.motion.blocks[index];
-      if (!source || isMotionEventBlockKind(source.kind)) return;
-      const copy: MotionBlock = {
-        ...structuredClone(source),
-        id: uniqueId(`block-${source.kind}`),
-        jumps: source.jumps.map((jump) => ({
-          ...jump,
-          id: uniqueId('jump'),
-        })),
-      };
-      item.motion.blocks.splice(index + 1, 0, copy);
+      item.motion.blocks = candidateBlocks;
     });
     setNotice('Animation block duplicated');
   };
@@ -3070,24 +4026,24 @@ export function MotusStudio() {
   };
 
   const addBounceJump = (blockId: string) => {
-    updateMotionBlock(blockId, (block) => {
+    const updated = updateMotionBlock(blockId, (block) => {
       if (block.jumps.length >= MAX_BOUNCE_JUMPS) return;
       block.jumps.push(
         createBounceJump(block.jumps.length, { id: uniqueId('jump') }),
       );
     });
-    setNotice('Bounce jump added');
+    if (updated) setNotice('Bounce jump added');
   };
 
   const duplicateBounceJump = (blockId: string, jumpId: string) => {
-    updateMotionBlock(blockId, (block) => {
+    const updated = updateMotionBlock(blockId, (block) => {
       if (block.jumps.length >= MAX_BOUNCE_JUMPS) return;
       const index = block.jumps.findIndex((jump) => jump.id === jumpId);
       const source = block.jumps[index];
       if (!source) return;
       block.jumps.splice(index + 1, 0, { ...source, id: uniqueId('jump') });
     });
-    setNotice('Bounce jump duplicated');
+    if (updated) setNotice('Bounce jump duplicated');
   };
 
   const moveBounceJump = (
@@ -3095,7 +4051,7 @@ export function MotusStudio() {
     jumpId: string,
     direction: -1 | 1,
   ) => {
-    updateMotionBlock(blockId, (block) => {
+    const updated = updateMotionBlock(blockId, (block) => {
       const index = block.jumps.findIndex((jump) => jump.id === jumpId);
       const target = index + direction;
       if (index < 0 || target < 0 || target >= block.jumps.length) return;
@@ -3104,42 +4060,212 @@ export function MotusStudio() {
         block.jumps[index],
       ];
     });
-    setNotice('Bounce path reordered');
+    if (updated) setNotice('Bounce path reordered');
   };
 
   const removeBounceJump = (blockId: string, jumpId: string) => {
-    updateMotionBlock(blockId, (block) => {
+    const updated = updateMotionBlock(blockId, (block) => {
       if (block.jumps.length <= 1) return;
       block.jumps = block.jumps.filter((jump) => jump.id !== jumpId);
     });
-    setNotice('Bounce jump removed');
+    if (updated) setNotice('Bounce jump removed');
   };
 
   const moveMotionBlock = (blockId: string, direction: -1 | 1) => {
     if (!selectedElement) return;
     updateElement(selectedElement.id, (item) => {
-      const index = item.motion.blocks.findIndex(
-        (block) => block.id === blockId,
-      );
+      const siblings = findMotionBlockSiblings(item.motion.blocks, blockId);
+      if (!siblings) return;
+      const index = siblings.findIndex((block) => block.id === blockId);
       const target = index + direction;
-      if (index <= 0 || target <= 0 || target >= item.motion.blocks.length)
+      const fixedEventOffset = isMotionEventBlockKind(siblings[0]?.kind)
+        ? 1
+        : 0;
+      if (
+        index < fixedEventOffset ||
+        target < fixedEventOffset ||
+        target >= siblings.length
+      )
         return;
-      [item.motion.blocks[index], item.motion.blocks[target]] = [
-        item.motion.blocks[target],
-        item.motion.blocks[index],
-      ];
+      [siblings[index], siblings[target]] = [siblings[target], siblings[index]];
     });
     setNotice('Animation sequence reordered');
   };
 
   const removeMotionBlock = (blockId: string) => {
     if (!selectedElement) return;
+    const removedBlock = findMotionBlock(
+      selectedElement.motion.blocks,
+      blockId,
+    );
+    const removesInsertionTarget = Boolean(
+      removedBlock &&
+      motionInsertionParentId &&
+      findMotionBlock([removedBlock], motionInsertionParentId),
+    );
     updateElement(selectedElement.id, (item) => {
-      item.motion.blocks = item.motion.blocks.filter(
-        (block) => block.id !== blockId,
-      );
+      const location = findMotionBlockLocation(item.motion.blocks, blockId);
+      if (!location || isMotionEventBlockKind(location.block.kind)) return;
+      location.siblings.splice(location.index, 1);
     });
+    if (removesInsertionTarget) setMotionInsertionParentId(null);
     setNotice('Animation block removed');
+  };
+
+  const chooseMotionInsertion = (containerId: string) => {
+    if (!selectedElement) return;
+    const location = findMotionBlockLocation(
+      selectedElement.motion.blocks,
+      containerId,
+    );
+    if (
+      !location ||
+      !isMotionContainerBlockKind(location.block.kind) ||
+      location.depth >= MAX_MOTION_NESTING_DEPTH
+    ) {
+      setNotice(
+        `Control blocks can be nested ${MAX_MOTION_NESTING_DEPTH} levels deep`,
+      );
+      return;
+    }
+    setMotionInsertionParentId(containerId);
+    setBlockPaletteCategory(
+      location.block.kind === 'parallel' ? 'all' : 'motion',
+    );
+    setBlockPaletteSearch('');
+    setNotice(`Choose a block to add inside ${location.block.label}`);
+    window.requestAnimationFrame(() => {
+      blockPaletteSearchInput.current?.focus();
+    });
+  };
+
+  const moveMotionBlockOut = (blockId: string) => {
+    if (!selectedElement) return;
+    const candidateBlocks = structuredClone(selectedElement.motion.blocks);
+    const location = findMotionBlockLocation(candidateBlocks, blockId);
+    if (!location?.parent) return;
+    const parentLocation = findMotionBlockLocation(
+      candidateBlocks,
+      location.parent.id,
+    );
+    if (!parentLocation) return;
+    const [block] = location.siblings.splice(location.index, 1);
+    if (!block) return;
+    parentLocation.siblings.splice(parentLocation.index + 1, 0, block);
+    const runtimeIssue = getBlockingMotionRuntimeIssue(
+      selectedElement.motion.blocks,
+      candidateBlocks,
+    );
+    if (runtimeIssue) {
+      setNotice(describeMotionRuntimeIssue(runtimeIssue));
+      return;
+    }
+    updateElement(selectedElement.id, (item) => {
+      item.motion.blocks = candidateBlocks;
+    });
+    setNotice(`${block.label} moved out one level`);
+  };
+
+  const moveNextMotionBlockInside = (containerId: string) => {
+    if (!selectedElement) return;
+    const candidateBlocks = structuredClone(selectedElement.motion.blocks);
+    const location = findMotionBlockLocation(candidateBlocks, containerId);
+    if (
+      !location ||
+      !isMotionContainerBlockKind(location.block.kind) ||
+      location.depth >= MAX_MOTION_NESTING_DEPTH
+    ) {
+      setNotice('No following block can be moved inside');
+      return;
+    }
+    const next = location.siblings[location.index + 1];
+    if (!next || isMotionEventBlockKind(next.kind)) {
+      setNotice('No following block can be moved inside');
+      return;
+    }
+    if (
+      location.depth + 1 + getMotionSubtreeDepth(next) >
+      MAX_MOTION_NESTING_DEPTH
+    ) {
+      setNotice(
+        `Control blocks can be nested ${MAX_MOTION_NESTING_DEPTH} levels deep`,
+      );
+      return;
+    }
+    if (
+      location.block.kind === 'parallel' &&
+      (!isParallelMotionBlockKind(next.kind) ||
+        location.block.children.some((child) => child.kind === next.kind) ||
+        location.block.children.length >= MAX_PARALLEL_MOTION_BLOCKS)
+    ) {
+      setNotice('Run together only accepts one compatible block per channel');
+      return;
+    }
+    location.siblings.splice(location.index + 1, 1);
+    if (location.block.kind === 'parallel') {
+      const sharedDuration =
+        location.block.children[0]?.durationMs ??
+        normalizeMotionBlockNumericField(
+          location.block,
+          'durationMs',
+          location.block.durationMs,
+        );
+      const sharedEasing =
+        location.block.children[0]?.easing ?? location.block.easing;
+      location.block.durationMs = sharedDuration;
+      location.block.easing = sharedEasing;
+      next.durationMs = sharedDuration;
+      next.easing = sharedEasing;
+    }
+    location.block.children.push(next);
+    const runtimeIssue = getBlockingMotionRuntimeIssue(
+      selectedElement.motion.blocks,
+      candidateBlocks,
+    );
+    if (runtimeIssue) {
+      setNotice(describeMotionRuntimeIssue(runtimeIssue));
+      return;
+    }
+    updateElement(selectedElement.id, (item) => {
+      item.motion.blocks = candidateBlocks;
+    });
+    setNotice(`${next.label} moved inside ${location.block.label}`);
+  };
+
+  const setParallelMotionTiming = (
+    containerId: string,
+    field: 'durationMs' | 'easing',
+    value: number | Easing,
+    transactionKey: string | null = null,
+  ) => {
+    const updated = updateMotionBlock(
+      containerId,
+      (container) => {
+        if (container.kind !== 'parallel') return;
+        if (field === 'durationMs') {
+          container.durationMs = normalizeMotionBlockNumericField(
+            container,
+            'durationMs',
+            value,
+          );
+        } else {
+          container.easing = value as Easing;
+        }
+        for (const child of container.children) {
+          if (field === 'durationMs') {
+            child.durationMs = normalizeMotionBlockNumericField(
+              child,
+              'durationMs',
+              value,
+            );
+          } else {
+            child.easing = value as Easing;
+          }
+        }
+      },
+      transactionKey,
+    );
+    if (updated) setNotice('Run together timing updated');
   };
 
   const applyMotionPreset = (presetId: string, mode: 'replace' | 'append') => {
@@ -3185,19 +4311,30 @@ export function MotusStudio() {
     );
     if (
       mode === 'append' &&
-      selectedElement.motion.blocks.length + generatedActions.length >
+      countMotionBlocks(selectedElement.motion.blocks) +
+        generatedActions.length >
         MAX_MOTION_BLOCKS
     ) {
       setNotice('This preset does not fit in the remaining block slots');
       return;
     }
+    const candidateBlocks =
+      mode === 'replace'
+        ? generatedBlocks
+        : [...selectedElement.motion.blocks, ...generatedActions];
+    const runtimeIssue = getBlockingMotionRuntimeIssue(
+      selectedElement.motion.blocks,
+      candidateBlocks,
+    );
+    if (runtimeIssue) {
+      setNotice(describeMotionRuntimeIssue(runtimeIssue));
+      return;
+    }
     updateElement(selectedElement.id, (item) => {
+      item.motion.blocks = candidateBlocks;
       if (mode === 'replace') {
-        item.motion.blocks = generatedBlocks;
         const eventKind = generatedBlocks[0]?.kind;
         if (isMotionEventBlockKind(eventKind)) item.motion.event = eventKind;
-      } else {
-        item.motion.blocks = [...item.motion.blocks, ...generatedActions];
       }
     });
     setCatalogOpen(false);
@@ -4842,6 +5979,43 @@ export function MotusStudio() {
     setNotice('Panel layouts reset');
   };
 
+  const selectedMotionBlockCount = selectedElement
+    ? countMotionBlocks(selectedElement.motion.blocks)
+    : 0;
+  const motionInsertionParent =
+    selectedElement && motionInsertionParentId
+      ? findMotionBlock(selectedElement.motion.blocks, motionInsertionParentId)
+      : null;
+  const canAddPaletteBlock = (kind: MotionBlockKind) => {
+    if (!selectedElement || selectedMotionBlockCount >= MAX_MOTION_BLOCKS) {
+      return false;
+    }
+    if (!motionInsertionParent) return true;
+    if (motionInsertionParent.kind !== 'parallel') return true;
+    return (
+      isParallelMotionBlockKind(kind) &&
+      motionInsertionParent.children.length < MAX_PARALLEL_MOTION_BLOCKS &&
+      !motionInsertionParent.children.some((child) => child.kind === kind)
+    );
+  };
+  const motionTreeEditorActions: MotionTreeEditorActions = {
+    addBounceJump,
+    chooseInsertion: chooseMotionInsertion,
+    duplicateBounceJump,
+    duplicate: duplicateMotionBlock,
+    move: moveMotionBlock,
+    moveBounceJump,
+    moveNextInside: moveNextMotionBlockInside,
+    moveOut: moveMotionBlockOut,
+    numericDraftProps,
+    removeBounceJump,
+    remove: removeMotionBlock,
+    setParallelTiming: setParallelMotionTiming,
+    update: (blockId, mutate, transactionKey) =>
+      updateMotionBlock(blockId, mutate, transactionKey),
+    updateBounceJump,
+  };
+
   return (
     <main className="studio-shell">
       <input
@@ -6413,7 +7587,7 @@ export function MotusStudio() {
                           <strong>{selectedElement.name}</strong>
                         </div>
                         <small>
-                          {selectedElement.motion.blocks.length} blocks ·{' '}
+                          {selectedMotionBlockCount} blocks ·{' '}
                           {
                             compileElementMotion(selectedElement)
                               .sequenceDurationMs
@@ -6461,11 +7635,36 @@ export function MotusStudio() {
                             </h2>
                           </div>
                           <small>
-                            {MAX_MOTION_BLOCKS -
-                              selectedElement.motion.blocks.length}{' '}
-                            left
+                            {MAX_MOTION_BLOCKS - selectedMotionBlockCount} left
                           </small>
                         </header>
+
+                        {motionInsertionParent ? (
+                          <output
+                            aria-live="polite"
+                            className="block-insertion-target"
+                          >
+                            <div>
+                              <ArrowRight aria-hidden="true" />
+                              <span>
+                                Adding inside{' '}
+                                <strong>{motionInsertionParent.label}</strong>
+                                {motionInsertionParent.kind === 'parallel'
+                                  ? ' · compatible channels only'
+                                  : ''}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setMotionInsertionParentId(null);
+                                setNotice('Nested block insertion cancelled');
+                              }}
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                          </output>
+                        ) : null}
 
                         <div className="block-palette-search">
                           <Search aria-hidden="true" />
@@ -6486,6 +7685,7 @@ export function MotusStudio() {
                               }
                             }}
                             placeholder="Search blocks"
+                            ref={blockPaletteSearchInput}
                             type="search"
                             value={blockPaletteSearch}
                           />
@@ -6615,9 +7815,9 @@ export function MotusStudio() {
                                       <li key={entry.kind}>
                                         <DraggableBlockPaletteCard
                                           disabled={
-                                            selectedElement.motion.blocks
-                                              .length >= MAX_MOTION_BLOCKS
+                                            !canAddPaletteBlock(entry.kind)
                                           }
+                                          dragDisabled={false}
                                           elementId={selectedElement.id}
                                           entry={entry}
                                           onAdd={() =>
@@ -6665,7 +7865,7 @@ export function MotusStudio() {
                         <div>
                           <span>SCRIPT</span>
                           <strong>
-                            {selectedElement.motion.blocks.length} blocks ·{' '}
+                            {selectedMotionBlockCount} blocks ·{' '}
                             {
                               compileElementMotion(selectedElement)
                                 .sequenceDurationMs
@@ -6702,13 +7902,8 @@ export function MotusStudio() {
                                     (candidate) =>
                                       candidate.visible &&
                                       candidate.id !== selectedElement.id &&
-                                      candidate.motion.blocks.some(
-                                        (candidateBlock) =>
-                                          candidateBlock.enabled &&
-                                          !isMotionEventBlockKind(
-                                            candidateBlock.kind,
-                                          ) &&
-                                          candidateBlock.kind !== 'wait',
+                                      hasExecutableMotionActions(
+                                        candidate.motion.blocks,
                                       ),
                                   )
                                 : [];
@@ -6720,6 +7915,32 @@ export function MotusStudio() {
                                   candidate.id === block.sourceElementId,
                               ),
                             );
+                            if (isMotionContainerBlockKind(block.kind)) {
+                              return (
+                                <SortableMotionBlock
+                                  block={block}
+                                  elementId={selectedElement.id}
+                                  key={block.id}
+                                >
+                                  {(dragHandle) => (
+                                    <MotionTreeBlockContent
+                                      actions={motionTreeEditorActions}
+                                      block={block}
+                                      depth={0}
+                                      dragHandle={dragHandle}
+                                      indexLabel={String(
+                                        blockIndex + 1,
+                                      ).padStart(2, '0')}
+                                      parentKind={null}
+                                      siblingCount={
+                                        selectedElement.motion.blocks.length - 1
+                                      }
+                                      siblingIndex={blockIndex - 1}
+                                    />
+                                  )}
+                                </SortableMotionBlock>
+                              );
+                            }
                             const renderBlock = (
                               dragHandle: MotionBlockDragHandle | null,
                             ) => {
@@ -7861,7 +9082,7 @@ export function MotusStudio() {
                         <Button
                           disabled={
                             !selectedElement ||
-                            selectedElement.motion.blocks.length +
+                            countMotionBlocks(selectedElement.motion.blocks) +
                               (preset.blocks.length - 1) >
                               MAX_MOTION_BLOCKS
                           }

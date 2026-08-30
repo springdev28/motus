@@ -8,6 +8,8 @@ import {
   ELEMENT_FONT_WEIGHTS,
   ELEMENT_TEXT_ALIGNMENTS,
   MAX_BOUNCE_JUMPS,
+  MAX_COMPILED_MOTION_DURATION_MS,
+  MAX_COMPILED_MOTION_KEYFRAMES,
   MAX_ELEMENT_FONT_SIZE,
   MAX_ELEMENT_ID_LENGTH,
   MAX_ELEMENT_LETTER_SPACING,
@@ -53,12 +55,16 @@ import {
   findSupportedImageFile,
   findProjectScene,
   getPublicationReadiness,
+  getCompiledMotionKeyframeEstimate,
   getDraftSaveStatus,
   getDraftExitAction,
   getEditorShortcut,
   getDefaultElementTypography,
   getFitCanvasWidth,
   getKeyboardNudgeDelta,
+  getExpandedMotionStepCount,
+  getMotionProgramDurationMs,
+  getMotionProgramRuntimeIssue,
   getProjectStorageBytes,
   getProjectScenes,
   getSceneThumbnailElements,
@@ -67,6 +73,7 @@ import {
   hasPointerDragStarted,
   hasUnpublishedChanges,
   insertMotionActionBefore,
+  isMotionContainerBlockKind,
   isMotionEventBlockKind,
   normalizeBounceJumpNumericField,
   normalizeElementTypography,
@@ -1236,11 +1243,11 @@ void test('motion registry is exhaustive, categorized, and has bounded finite de
     MOTION_BLOCK_CATALOG.map((entry) => entry.category),
   );
 
-  assert.equal(MOTION_BLOCK_CATALOG.length, 168);
-  assert.equal(new Set(catalogKinds).size, 168);
-  assert.equal(addableEntries.length, 162);
-  assert.equal(MOTION_BLOCK_KINDS.length, 168);
-  assert.equal(new Set(MOTION_BLOCK_KINDS).size, 168);
+  assert.equal(MOTION_BLOCK_CATALOG.length, 170);
+  assert.equal(new Set(catalogKinds).size, 170);
+  assert.equal(addableEntries.length, 164);
+  assert.equal(MOTION_BLOCK_KINDS.length, 170);
+  assert.equal(new Set(MOTION_BLOCK_KINDS).size, 170);
   assert.deepEqual(
     [...catalogKinds].sort(),
     [...MOTION_BLOCK_KINDS].sort(),
@@ -1268,6 +1275,7 @@ void test('motion registry is exhaustive, categorized, and has bounded finite de
     assert.equal(block.category, entry.category);
     assert.equal(block.label, entry.label);
     assert.equal(block.enabled, true);
+    assert.deepEqual(block.children, []);
     assert.ok(entry.label.trim(), `${entry.kind} needs a label`);
     assert.ok(entry.description.trim(), `${entry.kind} needs a description`);
     assert.ok(
@@ -1883,7 +1891,11 @@ void test('every exposed block control changes its compiled animation', () => {
   };
 
   for (const entry of MOTION_BLOCK_CATALOG) {
-    if (isMotionEventBlockKind(entry.kind)) continue;
+    if (
+      isMotionEventBlockKind(entry.kind) ||
+      isMotionContainerBlockKind(entry.kind)
+    )
+      continue;
     const baseline = compileCatalogBlock(entry.kind);
 
     for (const parameter of entry.parameters) {
@@ -1952,6 +1964,7 @@ void test('every catalog numeric boundary survives restore without playback satu
   };
 
   for (const entry of MOTION_BLOCK_CATALOG) {
+    if (isMotionContainerBlockKind(entry.kind)) continue;
     for (const parameter of entry.parameters) {
       const block = createMotionBlock(entry.kind, `normalize-${entry.kind}`);
       const minimum = normalizeMotionBlockNumericField(
@@ -2047,7 +2060,11 @@ void test('every addable default block compiles to a finite visible one-step pro
   };
 
   for (const entry of MOTION_BLOCK_CATALOG) {
-    if (isMotionEventBlockKind(entry.kind)) continue;
+    if (
+      isMotionEventBlockKind(entry.kind) ||
+      isMotionContainerBlockKind(entry.kind)
+    )
+      continue;
 
     const element = createDefaultProject().chapters[0].scenes[0].elements[0];
     element.opacity = expectedFinalChannels.opacity;
@@ -2115,6 +2132,360 @@ void test('every addable default block compiles to a finite visible one-step pro
         : `${entry.kind} must visibly change at least one compiled channel`,
     );
   }
+});
+
+void test('motion schema 1 programs migrate to recursive schema 2 without changing leaves', () => {
+  const project = createDefaultProject();
+  const element = project.chapters[0].scenes[0].elements[0];
+  const event = createMotionBlock('scene-enter', 'legacy-event');
+  const move = createMotionBlock('move', 'legacy-move');
+  move.x = 245;
+  move.durationMs = 640;
+  element.motion.blocks = [event, move];
+
+  const legacyMotion = element.motion as unknown as Record<string, unknown>;
+  legacyMotion.schemaVersion = 1;
+  for (const block of legacyMotion.blocks as Array<Record<string, unknown>>) {
+    delete block.children;
+  }
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  const restoredMotion = restored.chapters[0].scenes[0].elements[0].motion;
+  assert.equal(restoredMotion.schemaVersion, MOTION_SCHEMA_VERSION);
+  assert.deepEqual(
+    restoredMotion.blocks.map((block) => [
+      block.id,
+      block.kind,
+      block.children,
+    ]),
+    [
+      ['legacy-event', 'scene-enter', []],
+      ['legacy-move', 'move', []],
+    ],
+  );
+  assert.equal(restoredMotion.blocks[1].x, 245);
+  assert.equal(restoredMotion.blocks[1].durationMs, 640);
+});
+
+void test('repeat schedules finite nested blocks in order with stable instances', () => {
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
+  const repeat = createMotionBlock('repeat', 'repeat-three');
+  repeat.repetitions = 3;
+  const move = createMotionBlock('move', 'repeat-move');
+  move.durationMs = 100;
+  const wait = createMotionBlock('wait', 'repeat-wait');
+  wait.durationMs = 50;
+  repeat.children = [move, wait];
+  const rotate = createMotionBlock('rotate', 'after-repeat');
+  rotate.durationMs = 200;
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'repeat-event'),
+    repeat,
+    rotate,
+  ];
+
+  const first = compileElementMotion(element);
+  const second = compileElementMotion(element);
+  assert.equal(first.sequenceDurationMs, 650);
+  assert.deepEqual(
+    first.steps.map((step) => [step.kind, step.startsAtMs, step.durationMs]),
+    [
+      ['move', 0, 100],
+      ['wait', 100, 50],
+      ['move', 150, 100],
+      ['wait', 250, 50],
+      ['move', 300, 100],
+      ['wait', 400, 50],
+      ['rotate', 450, 200],
+    ],
+  );
+  assert.equal(new Set(first.steps.map((step) => step.instanceId)).size, 7);
+  assert.deepEqual(first, second);
+});
+
+void test('repeat visibly resets and replays absolute entry effects', () => {
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
+  const repeat = createMotionBlock('repeat', 'repeat-opacity');
+  repeat.repetitions = 2;
+  const opacity = createMotionBlock('opacity', 'repeat-opacity-child');
+  opacity.value = 0;
+  opacity.durationMs = 200;
+  repeat.children = [opacity];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'repeat-opacity-event'),
+    repeat,
+  ];
+
+  const compiled = compileElementMotion(element);
+  assert.equal(compiled.sequenceDurationMs, 400);
+  assert.equal(compiled.steps.length, 2);
+  const boundaryFrames = compiled.keyframes.filter(
+    (frame) => frame.offset === 0.5,
+  );
+  assert.ok(boundaryFrames.some((frame) => frame.opacity === element.opacity));
+  assert.ok(boundaryFrames.some((frame) => frame.opacity === 0));
+});
+
+void test('run together merges compatible channels into one exact shared tween', () => {
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
+  const parallel = createMotionBlock('parallel', 'parallel-pair');
+  const move = createMotionBlock('move', 'parallel-move');
+  const opacity = createMotionBlock('opacity', 'parallel-opacity');
+  move.durationMs = 400;
+  opacity.durationMs = 400;
+  move.easing = 'ease-in-out';
+  opacity.easing = 'ease-in-out';
+  parallel.children = [move, opacity];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'parallel-event'),
+    parallel,
+  ];
+
+  const compiled = compileElementMotion(element);
+  assert.equal(compiled.sequenceDurationMs, 400);
+  assert.deepEqual(
+    compiled.steps.map((step) => [step.kind, step.startsAtMs, step.durationMs]),
+    [
+      ['move', 0, 400],
+      ['opacity', 0, 400],
+    ],
+  );
+  assert.equal(compiled.keyframes[0].translateX, -move.x);
+  assert.equal(compiled.keyframes[0].opacity, opacity.value);
+  assert.equal(compiled.keyframes.at(-1)?.translateX, 0);
+  assert.equal(compiled.keyframes.at(-1)?.opacity, element.opacity);
+});
+
+void test('run together rejects conflicts and mismatched timing during import', () => {
+  const project = createDefaultProject();
+  const element = project.chapters[0].scenes[0].elements[0];
+  const parallel = createMotionBlock('parallel', 'invalid-parallel');
+  const firstMove = createMotionBlock('move', 'first-move');
+  const secondMove = createMotionBlock('move', 'second-move');
+  parallel.children = [firstMove, secondMove];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'invalid-parallel-event'),
+    parallel,
+  ];
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(project)).error,
+    'Project contains an invalid parallel animation group',
+  );
+
+  parallel.children = [
+    firstMove,
+    { ...createMotionBlock('opacity', 'mismatched-opacity'), durationMs: 900 },
+  ];
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(project)).error,
+    'Parallel blocks must use the same time and easing',
+  );
+});
+
+void test('recursive motion programs round-trip without sharing child objects', () => {
+  const project = createDefaultProject();
+  const element = project.chapters[0].scenes[0].elements[0];
+  const repeat = createMotionBlock('repeat', 'roundtrip-repeat');
+  const parallel = createMotionBlock('parallel', 'roundtrip-parallel');
+  parallel.children = [
+    createMotionBlock('move', 'roundtrip-move'),
+    createMotionBlock('opacity', 'roundtrip-opacity'),
+  ];
+  repeat.children = [parallel];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'roundtrip-event'),
+    repeat,
+  ];
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  const restoredRepeat =
+    restored.chapters[0].scenes[0].elements[0].motion.blocks[1];
+  assert.deepEqual(restoredRepeat, repeat);
+  assert.notEqual(restoredRepeat, repeat);
+  assert.notEqual(restoredRepeat.children[0], parallel);
+  assert.notEqual(restoredRepeat.children[0].children[0], parallel.children[0]);
+});
+
+void test('nested runtime estimates stop high-cycle repeats before reader work explodes', () => {
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
+  const outer = createMotionBlock('repeat', 'budget-outer');
+  const inner = createMotionBlock('repeat', 'budget-inner');
+  const orbit = createMotionBlock('orbit', 'budget-orbit');
+  outer.repetitions = 20;
+  inner.repetitions = 20;
+  orbit.repetitions = 20;
+  orbit.durationMs = 100;
+  inner.children = [orbit];
+  outer.children = [inner];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'budget-event'),
+    outer,
+  ];
+
+  assert.equal(getExpandedMotionStepCount(element.motion.blocks), 400);
+  assert.ok(
+    getCompiledMotionKeyframeEstimate(element.motion.blocks) >
+      MAX_COMPILED_MOTION_KEYFRAMES,
+  );
+  assert.equal(
+    getMotionProgramRuntimeIssue(element.motion.blocks),
+    'keyframes',
+  );
+  assert.ok(
+    compileElementMotion(element).keyframes.length <=
+      MAX_COMPILED_MOTION_KEYFRAMES,
+  );
+});
+
+void test('keyframe estimates conservatively cover every catalog leaf and repeat', () => {
+  for (const catalogEntry of MOTION_BLOCK_CATALOG) {
+    if (
+      isMotionEventBlockKind(catalogEntry.kind) ||
+      isMotionContainerBlockKind(catalogEntry.kind)
+    ) {
+      continue;
+    }
+    const element = createDefaultProject().chapters[0].scenes[0].elements[0];
+    const repeat = createMotionBlock('repeat', `estimate-${catalogEntry.kind}`);
+    const block = createMotionBlock(
+      catalogEntry.kind,
+      `estimate-${catalogEntry.kind}-child`,
+    );
+    block.repetitions = 20;
+    repeat.repetitions = 13;
+    repeat.children = [block];
+    element.motion.blocks = [
+      createMotionBlock('scene-enter', `estimate-${catalogEntry.kind}-event`),
+      repeat,
+    ];
+
+    const estimate = getCompiledMotionKeyframeEstimate(element.motion.blocks);
+    const actual = compileElementMotion(element).keyframes.length;
+    assert.ok(
+      estimate >= actual,
+      `${catalogEntry.kind} estimated ${estimate} frames but compiled ${actual}`,
+    );
+  }
+});
+
+void test('runtime duration budget rejects new truncated repeats and flags publication', () => {
+  const project = createDefaultProject();
+  const element = project.chapters[0].scenes[0].elements[0];
+  const event = createMotionBlock('scene-enter', 'duration-budget-event');
+  const repeat = createMotionBlock('repeat', 'duration-budget-repeat');
+  const move = createMotionBlock('move', 'duration-budget-move');
+  repeat.repetitions = 20;
+  move.durationMs = 10_000;
+  repeat.children = [move];
+
+  assert.ok(
+    getMotionProgramDurationMs([event, repeat]) >
+      MAX_COMPILED_MOTION_DURATION_MS,
+  );
+  assert.equal(getMotionProgramRuntimeIssue([event, repeat]), 'duration');
+  assert.deepEqual(insertMotionActionBefore([event], repeat), [event]);
+
+  element.motion.blocks = [event, repeat];
+  assert.ok(
+    getPublicationReadiness(project).issues.includes(
+      'Shorten a motion program to 60 seconds or less',
+    ),
+  );
+});
+
+void test('legacy flat programs beyond the new runtime budget still restore safely', () => {
+  const project = createDefaultProject();
+  const element = project.chapters[0].scenes[0].elements[0];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'legacy-budget-event'),
+    ...Array.from({ length: 7 }, (_, index) => {
+      const move = createMotionBlock('move', `legacy-budget-${index}`);
+      move.durationMs = 10_000;
+      return move;
+    }),
+  ];
+  const legacyMotion = element.motion as unknown as Record<string, unknown>;
+  legacyMotion.schemaVersion = 1;
+  for (const block of legacyMotion.blocks as Array<Record<string, unknown>>) {
+    delete block.children;
+  }
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  const restoredElement = restored.chapters[0].scenes[0].elements[0];
+  assert.equal(restoredElement.motion.schemaVersion, MOTION_SCHEMA_VERSION);
+  assert.equal(restoredElement.motion.blocks.length, 8);
+  assert.equal(
+    compileElementMotion(restoredElement).sequenceDurationMs,
+    MAX_COMPILED_MOTION_DURATION_MS,
+  );
+  const partiallyRepaired = structuredClone(restoredElement.motion.blocks);
+  partiallyRepaired[1].durationMs = 100;
+  assert.equal(getMotionProgramDurationMs(partiallyRepaired), 60_100);
+  assert.equal(getMotionProgramRuntimeIssue(partiallyRepaired), 'duration');
+  partiallyRepaired[2].durationMs = 100;
+  assert.equal(getMotionProgramRuntimeIssue(partiallyRepaired), null);
+});
+
+void test('parallel container timing normalizes to its retained child timing', () => {
+  const project = createDefaultProject();
+  const element = project.chapters[0].scenes[0].elements[0];
+  const parallel = createMotionBlock('parallel', 'timing-parallel');
+  const move = createMotionBlock('move', 'timing-move');
+  const opacity = createMotionBlock('opacity', 'timing-opacity');
+  parallel.durationMs = 700;
+  move.durationMs = 900;
+  opacity.durationMs = 900;
+  parallel.children = [move, opacity];
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'timing-event'),
+    parallel,
+  ];
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  const restoredParallel =
+    restored.chapters[0].scenes[0].elements[0].motion.blocks[1];
+  assert.equal(restoredParallel.durationMs, 900);
+  assert.equal(
+    compileElementMotion(restored.chapters[0].scenes[0].elements[0])
+      .sequenceDurationMs,
+    900,
+  );
+});
+
+void test('compiled offsets never decrease across repeated fractional beats', () => {
+  const element = createDefaultProject().chapters[0].scenes[0].elements[0];
+  const repeat = createMotionBlock('repeat', 'offset-repeat');
+  const silhouette = createMotionBlock('silhouette', 'offset-silhouette');
+  const ladder = createMotionBlock('ladder-up', 'offset-ladder');
+  const glow = createMotionBlock('glow', 'offset-glow');
+  repeat.repetitions = 13;
+  silhouette.durationMs = 1_501;
+  silhouette.repetitions = 11;
+  repeat.children = [silhouette];
+  ladder.durationMs = 7_361;
+  ladder.repetitions = 7;
+  glow.durationMs = 4_057;
+  glow.repetitions = 11;
+  element.motion.blocks = [
+    createMotionBlock('scene-enter', 'offset-event'),
+    repeat,
+    ladder,
+    glow,
+  ];
+
+  const offsets = compileElementMotion(element).keyframes.map(
+    (frame) => frame.offset,
+  );
+  assert.ok(offsets.every(Number.isFinite));
+  assert.ok(
+    offsets.every(
+      (offset, index) => index === 0 || offset >= offsets[index - 1],
+    ),
+  );
 });
 
 void test('path, filter, flip, and transition blocks retain representative semantics', () => {
@@ -3046,7 +3417,7 @@ void test('project import reports schema, layer, motion, and asset failures prec
 
   const unsupportedMotion = createDefaultProject();
   unsupportedMotion.chapters[0].scenes[0].elements[0].motion.schemaVersion =
-    2 as typeof MOTION_SCHEMA_VERSION;
+    3 as typeof MOTION_SCHEMA_VERSION;
   assert.equal(
     restoreProjectWithError(JSON.stringify(unsupportedMotion)).error,
     'Project uses an unsupported motion version',
