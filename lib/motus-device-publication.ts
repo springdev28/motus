@@ -1,5 +1,6 @@
 import { readNewestMotusDraft } from './motus-draft-storage.ts';
 import {
+  PROJECT_SCHEMA_VERSION,
   cloneProject,
   getProjectScenes,
   resolveReaderSource,
@@ -68,7 +69,7 @@ function createPublishedProject(
 ): MotusProject {
   const snapshot = structuredClone(revision);
   return {
-    schemaVersion: 8,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     id: projectId,
     title: snapshot.title,
     creatorName: snapshot.creatorName,

@@ -1,4 +1,4 @@
-export const PROJECT_SCHEMA_VERSION = 8 as const;
+export const PROJECT_SCHEMA_VERSION = 9 as const;
 export const MOTION_SCHEMA_VERSION = 2 as const;
 export const MOTUS_PROJECT_FORMATS = ['vertical-scroll', 'page'] as const;
 export type MotusProjectFormat = (typeof MOTUS_PROJECT_FORMATS)[number];
@@ -9,6 +9,21 @@ export const MIN_ELEMENT_HEIGHT = 50;
 
 export type ElementType = 'shape' | 'text' | 'speech' | 'image';
 export type TextElementType = Extract<ElementType, 'text' | 'speech'>;
+export const ELEMENT_IMAGE_FITS = ['cover', 'contain'] as const;
+export type ElementImageFit = (typeof ELEMENT_IMAGE_FITS)[number];
+export const MIN_ELEMENT_IMAGE_FOCAL_POSITION = 0;
+export const MAX_ELEMENT_IMAGE_FOCAL_POSITION = 100;
+export const DEFAULT_ELEMENT_IMAGE_FOCAL_POSITION = 50;
+export type ElementImageFraming = {
+  fit: ElementImageFit;
+  focalX: number;
+  focalY: number;
+};
+export const DEFAULT_ELEMENT_IMAGE_FRAMING = {
+  fit: 'cover',
+  focalX: DEFAULT_ELEMENT_IMAGE_FOCAL_POSITION,
+  focalY: DEFAULT_ELEMENT_IMAGE_FOCAL_POSITION,
+} as const satisfies ElementImageFraming;
 export const ELEMENT_FONT_PRESETS = [
   'editorial',
   'modern',
@@ -2662,6 +2677,9 @@ export type MotusElement = {
   text?: string;
   typography?: ElementTypography;
   src?: string;
+  imageFit?: ElementImageFit;
+  imageFocalX?: number;
+  imageFocalY?: number;
   visible: boolean;
   locked: boolean;
   motion: ElementMotion;
@@ -3042,6 +3060,40 @@ const finite = (value: unknown, fallback: number) =>
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value));
+
+const isElementImageFit = (value: unknown): value is ElementImageFit =>
+  typeof value === 'string' &&
+  (ELEMENT_IMAGE_FITS as readonly string[]).includes(value);
+
+export function normalizeElementImageFraming(
+  value: unknown,
+): ElementImageFraming {
+  const candidate =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    fit: isElementImageFit(candidate.imageFit)
+      ? candidate.imageFit
+      : DEFAULT_ELEMENT_IMAGE_FRAMING.fit,
+    focalX: clamp(
+      finite(candidate.imageFocalX, DEFAULT_ELEMENT_IMAGE_FRAMING.focalX),
+      MIN_ELEMENT_IMAGE_FOCAL_POSITION,
+      MAX_ELEMENT_IMAGE_FOCAL_POSITION,
+    ),
+    focalY: clamp(
+      finite(candidate.imageFocalY, DEFAULT_ELEMENT_IMAGE_FRAMING.focalY),
+      MIN_ELEMENT_IMAGE_FOCAL_POSITION,
+      MAX_ELEMENT_IMAGE_FOCAL_POSITION,
+    ),
+  };
+}
+
+export function getElementImageFraming(
+  element: Pick<MotusElement, 'imageFit' | 'imageFocalX' | 'imageFocalY'>,
+): ElementImageFraming {
+  return normalizeElementImageFraming(element);
+}
 
 const DEFAULT_ELEMENT_TYPOGRAPHY: Record<TextElementType, ElementTypography> = {
   text: {
@@ -5775,8 +5827,9 @@ export function createElement(
     image: 'Image',
   };
   const typography = normalizeElementTypography(type, overrides.typography);
+  const imageFraming = normalizeElementImageFraming(overrides);
 
-  return constrainElementToCanvas({
+  const element = constrainElementToCanvas({
     id: `${type}-${Date.now()}-${index}`,
     name: `${labels[type]} ${index}`,
     type,
@@ -5798,7 +5851,20 @@ export function createElement(
     motion: motion(80, 0, 900, 0.15),
     ...overrides,
     typography,
+    ...(type === 'image'
+      ? {
+          imageFit: imageFraming.fit,
+          imageFocalX: imageFraming.focalX,
+          imageFocalY: imageFraming.focalY,
+        }
+      : {}),
   });
+  if (type !== 'image') {
+    delete element.imageFit;
+    delete element.imageFocalX;
+    delete element.imageFocalY;
+  }
+  return element;
 }
 
 export function createCopyName(name: string, maxLength: number): string {
@@ -6411,6 +6477,12 @@ const isSafeImageSource = (value: unknown): value is string =>
   value.length <= Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 128 &&
   /^data:image\/(?:png|webp);base64,[a-z0-9+/=\s]+$/i.test(value);
 
+const isValidElementImageFocalPosition = (value: unknown): value is number =>
+  typeof value === 'number' &&
+  Number.isFinite(value) &&
+  value >= MIN_ELEMENT_IMAGE_FOCAL_POSITION &&
+  value <= MAX_ELEMENT_IMAGE_FOCAL_POSITION;
+
 function validateMotion(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)) return 'Project contains invalid motion instructions';
@@ -6552,6 +6624,7 @@ function validateScenes(
   value: unknown,
   context: string,
   projectSceneIds = new Set<string>(),
+  validateImageFraming = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one scene`;
@@ -6622,12 +6695,28 @@ function validateScenes(
       ) {
         return `${context} contains an unsafe or oversized image source`;
       }
+      if (
+        validateImageFraming &&
+        elementValue.type === 'image' &&
+        ((elementValue.imageFit !== undefined &&
+          !isElementImageFit(elementValue.imageFit)) ||
+          (elementValue.imageFocalX !== undefined &&
+            !isValidElementImageFocalPosition(elementValue.imageFocalX)) ||
+          (elementValue.imageFocalY !== undefined &&
+            !isValidElementImageFocalPosition(elementValue.imageFocalY)))
+      ) {
+        return `${context} contains invalid image framing`;
+      }
     }
   }
   return null;
 }
 
-function validateChapters(value: unknown, context: string): string | null {
+function validateChapters(
+  value: unknown,
+  context: string,
+  validateImageFraming = false,
+): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one chapter`;
   }
@@ -6657,6 +6746,7 @@ function validateChapters(value: unknown, context: string): string | null {
       chapterValue.scenes,
       `${context} chapter ${index + 1}`,
       projectSceneIds,
+      validateImageFraming,
     );
     if (sceneError) return sceneError;
     sceneCount += (chapterValue.scenes as unknown[]).length;
@@ -6692,6 +6782,7 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
         : defaultSceneBackground,
       elements: (item.elements as UnknownRecord[]).map((elementValue) => {
         const type = elementValue.type as ElementType;
+        const imageFraming = normalizeElementImageFraming(elementValue);
         const defaults = {
           width: type === 'text' ? 440 : 260,
           height: type === 'text' ? 120 : 220,
@@ -6723,6 +6814,13 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
             type === 'image' && isSafeImageSource(elementValue.src)
               ? elementValue.src
               : undefined,
+          ...(type === 'image'
+            ? {
+                imageFit: imageFraming.fit,
+                imageFocalX: imageFraming.focalX,
+                imageFocalY: imageFraming.focalY,
+              }
+            : {}),
           visible: elementValue.visible !== false,
           locked: Boolean(elementValue.locked),
           motion: migrateMotion(
@@ -6899,6 +6997,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 5 &&
     candidate.schemaVersion !== 6 &&
     candidate.schemaVersion !== 7 &&
+    candidate.schemaVersion !== 8 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {
@@ -6916,6 +7015,7 @@ export function restoreProjectWithError(
   const schemaVersion = candidate.schemaVersion as number;
   const usesChapterHierarchy = schemaVersion >= 7;
   const usesWorkMetadata = schemaVersion >= 8;
+  const usesImageFraming = schemaVersion >= 9;
   if (usesChapterHierarchy && !isProjectFormat(candidate.format)) {
     return { project: null, error: 'Project uses an unsupported format' };
   }
@@ -6938,8 +7038,13 @@ export function restoreProjectWithError(
       : fallbackId;
   const legacyChapterId = `${projectId.slice(0, MAX_ELEMENT_ID_LENGTH - 10)}-chapter-1`;
   const hierarchyError = usesChapterHierarchy
-    ? validateChapters(candidate.chapters, 'Project')
-    : validateScenes(candidate.scenes, 'Project');
+    ? validateChapters(candidate.chapters, 'Project', usesImageFraming)
+    : validateScenes(
+        candidate.scenes,
+        'Project',
+        new Set<string>(),
+        usesImageFraming,
+      );
   if (hierarchyError) return { project: null, error: hierarchyError };
 
   const publicationValues = candidate.publications ?? [];
@@ -6988,10 +7093,13 @@ export function restoreProjectWithError(
       ? validateChapters(
           publicationValue.chapters,
           `Publication revision ${revision}`,
+          usesImageFraming,
         )
       : validateScenes(
           publicationValue.scenes,
           `Publication revision ${revision}`,
+          new Set<string>(),
+          usesImageFraming,
         );
     if (revisionError) return { project: null, error: revisionError };
   }

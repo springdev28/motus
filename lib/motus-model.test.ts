@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
+  DEFAULT_ELEMENT_IMAGE_FRAMING,
+  ELEMENT_IMAGE_FITS,
   ELEMENT_FONT_PRESETS,
   ELEMENT_FONT_WEIGHTS,
   ELEMENT_TEXT_ALIGNMENTS,
@@ -59,6 +61,7 @@ import {
   getDraftSaveStatus,
   getDraftExitAction,
   getEditorShortcut,
+  getElementImageFraming,
   getElementVisualBounds,
   getDefaultElementTypography,
   getFitCanvasWidth,
@@ -77,6 +80,7 @@ import {
   isMotionContainerBlockKind,
   isMotionEventBlockKind,
   normalizeBounceJumpNumericField,
+  normalizeElementImageFraming,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
@@ -1379,6 +1383,75 @@ void test('typography normalization allowlists choices and clamps numeric values
   assert.equal(normalizeElementTypography('shape', {}), undefined);
 });
 
+void test('image layers start centered and framing normalization stays bounded', () => {
+  assert.deepEqual(ELEMENT_IMAGE_FITS, ['cover', 'contain']);
+  const image = createElement('image', 1);
+  assert.deepEqual(getElementImageFraming(image), {
+    fit: 'cover',
+    focalX: 50,
+    focalY: 50,
+  });
+  assert.deepEqual(
+    getElementImageFraming(image),
+    DEFAULT_ELEMENT_IMAGE_FRAMING,
+  );
+
+  assert.deepEqual(
+    normalizeElementImageFraming({
+      imageFit: 'contain',
+      imageFocalX: -25,
+      imageFocalY: 175,
+    }),
+    { fit: 'contain', focalX: 0, focalY: 100 },
+  );
+  assert.deepEqual(
+    normalizeElementImageFraming({
+      imageFit: 'stretch',
+      imageFocalX: Number.NaN,
+      imageFocalY: Number.POSITIVE_INFINITY,
+    }),
+    DEFAULT_ELEMENT_IMAGE_FRAMING,
+  );
+  assert.deepEqual(
+    normalizeElementImageFraming(undefined),
+    DEFAULT_ELEMENT_IMAGE_FRAMING,
+  );
+
+  const shape = createElement('shape', 2, {
+    imageFit: 'contain',
+    imageFocalX: 12,
+    imageFocalY: 88,
+  });
+  assert.equal(Object.hasOwn(shape, 'imageFit'), false);
+  assert.equal(Object.hasOwn(shape, 'imageFocalX'), false);
+  assert.equal(Object.hasOwn(shape, 'imageFocalY'), false);
+});
+
+void test('image element copies preserve independent framing controls', () => {
+  const source = createElement('image', 1, {
+    id: 'source-image',
+    name: 'Portrait',
+    imageFit: 'cover',
+    imageFocalX: 18,
+    imageFocalY: 76,
+  });
+  const copy = createElementCopy(source, 'copied-image');
+
+  assert.deepEqual(getElementImageFraming(copy), {
+    fit: 'cover',
+    focalX: 18,
+    focalY: 76,
+  });
+  copy.imageFit = 'contain';
+  copy.imageFocalX = 90;
+  copy.imageFocalY = 10;
+  assert.deepEqual(getElementImageFraming(source), {
+    fit: 'cover',
+    focalX: 18,
+    focalY: 76,
+  });
+});
+
 void test('canvas fit sizing respects both workspace axes and safe fallbacks', () => {
   assert.equal(getFitCanvasWidth(800, 600, 48, 48), 414);
   assert.equal(getFitCanvasWidth(500, 1_000, 48, 48), 452);
@@ -1473,6 +1546,162 @@ void test('typography survives project and publication round trips', () => {
     restored.publications[0].chapters[0].scenes[0].elements[0].typography
       ?.fontSize,
     72,
+  );
+});
+
+void test('image framing survives draft and publication round trips independently', () => {
+  const project = createDefaultProject();
+  const image = createElement('image', 4, {
+    id: 'framed-image',
+    imageFit: 'cover',
+    imageFocalX: 22.5,
+    imageFocalY: 81,
+  });
+  project.chapters[0].scenes[0].elements.push(image);
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-30T03:00:00.000Z',
+  );
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  image.imageFit = 'contain';
+  image.imageFocalX = 64;
+  image.imageFocalY = 37;
+  const restored = restoreProject(JSON.stringify(project));
+
+  assert.ok(restored);
+  assert.deepEqual(
+    getElementImageFraming(
+      restored.chapters[0].scenes[0].elements.find(
+        (element) => element.id === image.id,
+      )!,
+    ),
+    { fit: 'contain', focalX: 64, focalY: 37 },
+  );
+  assert.deepEqual(
+    getElementImageFraming(
+      restored.publications[0].chapters[0].scenes[0].elements.find(
+        (element) => element.id === image.id,
+      )!,
+    ),
+    { fit: 'cover', focalX: 22.5, focalY: 81 },
+  );
+
+  const publicationDraft = restorePublicationToDraft(
+    restored,
+    restored.publications[0].id,
+  );
+  assert.ok(publicationDraft);
+  assert.deepEqual(
+    getElementImageFraming(
+      publicationDraft.chapters[0].scenes[0].elements.find(
+        (element) => element.id === image.id,
+      )!,
+    ),
+    { fit: 'cover', focalX: 22.5, focalY: 81 },
+  );
+});
+
+void test('version 8 image layers migrate to centered cover framing', () => {
+  const project = createDefaultProject();
+  const image = createElement('image', 4, { id: 'legacy-image' });
+  project.chapters[0].scenes[0].elements.push(image);
+  const revision = createPublicationRevision(project);
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  type LegacyFramingProject = {
+    schemaVersion: number;
+    chapters: Array<{
+      scenes: Array<{ elements: Array<Record<string, unknown>> }>;
+    }>;
+    publications: Array<{
+      chapters: Array<{
+        scenes: Array<{ elements: Array<Record<string, unknown>> }>;
+      }>;
+    }>;
+  };
+  const legacy = JSON.parse(JSON.stringify(project)) as LegacyFramingProject;
+  legacy.schemaVersion = 8;
+  for (const element of legacy.chapters[0].scenes[0].elements) {
+    delete element.imageFit;
+    delete element.imageFocalX;
+    delete element.imageFocalY;
+  }
+  for (const element of legacy.publications[0].chapters[0].scenes[0].elements) {
+    delete element.imageFit;
+    delete element.imageFocalX;
+    delete element.imageFocalY;
+  }
+
+  const restored = restoreProject(JSON.stringify(legacy));
+
+  assert.ok(restored);
+  assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
+  assert.deepEqual(
+    getElementImageFraming(
+      restored.chapters[0].scenes[0].elements.find(
+        (element) => element.id === image.id,
+      )!,
+    ),
+    DEFAULT_ELEMENT_IMAGE_FRAMING,
+  );
+  assert.deepEqual(
+    getElementImageFraming(
+      restored.publications[0].chapters[0].scenes[0].elements.find(
+        (element) => element.id === image.id,
+      )!,
+    ),
+    DEFAULT_ELEMENT_IMAGE_FRAMING,
+  );
+});
+
+void test('current projects reject malformed image framing and strip it from other layers', () => {
+  const malformedValues = [
+    { imageFit: 'stretch' },
+    { imageFocalX: -0.01 },
+    { imageFocalX: 100.01 },
+    { imageFocalY: null },
+    { imageFocalY: '50' },
+  ];
+
+  for (const malformedFraming of malformedValues) {
+    const project = createDefaultProject();
+    const image = createElement('image', 4, { id: 'invalid-image' });
+    Object.assign(image, malformedFraming);
+    project.chapters[0].scenes[0].elements.push(image);
+    assert.equal(
+      restoreProjectWithError(JSON.stringify(project)).error,
+      'Project chapter 1 contains invalid image framing',
+    );
+  }
+
+  const project = createDefaultProject();
+  const shape = project.chapters[0].scenes[0].elements[1];
+  Object.assign(shape, {
+    imageFit: 'contain',
+    imageFocalX: 14,
+    imageFocalY: 86,
+  });
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  const restoredShape = restored.chapters[0].scenes[0].elements[1];
+  assert.equal(Object.hasOwn(restoredShape, 'imageFit'), false);
+  assert.equal(Object.hasOwn(restoredShape, 'imageFocalX'), false);
+  assert.equal(Object.hasOwn(restoredShape, 'imageFocalY'), false);
+
+  const publicationProject = createDefaultProject();
+  publicationProject.chapters[0].scenes[0].elements.push(
+    createElement('image', 4, { id: 'published-invalid-image' }),
+  );
+  const revision = createPublicationRevision(publicationProject);
+  revision.chapters[0].scenes[0].elements.at(-1)!.imageFocalY = 125;
+  publicationProject.publications = [revision];
+  publicationProject.publishedRevision = revision.revision;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(publicationProject)).error,
+    'Publication revision 1 chapter 1 contains invalid image framing',
   );
 });
 
