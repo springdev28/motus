@@ -19,6 +19,7 @@ import {
   saveDevicePublication,
 } from './motus-device-publication.ts';
 import {
+  DEFAULT_READER_PRESENTATION,
   PROJECT_SCHEMA_VERSION,
   createDefaultProject,
   createPublicationRevision,
@@ -204,6 +205,62 @@ void test('device registry migrates schema 9 publication layers to the current r
   }
 });
 
+void test('device registry upgrades publications that predate reader presentation', () => {
+  const storage = new MemoryStorage();
+  const { project, revision } = publishProject();
+  const legacyRevision = structuredClone(revision) as unknown as Record<
+    string,
+    unknown
+  >;
+  delete legacyRevision.readerPresentation;
+  storage.setItem(
+    DEVICE_PUBLICATION_REGISTRY_STORAGE_KEY,
+    JSON.stringify({
+      schemaVersion: 1,
+      publications: [{ projectId: project.id, revision: legacyRevision }],
+    }),
+  );
+
+  const publications = listDevicePublications(storage);
+
+  assert.equal(publications.length, 1);
+  assert.deepEqual(
+    publications[0].project.readerPresentation,
+    DEFAULT_READER_PRESENTATION,
+  );
+  assert.deepEqual(
+    publications[0].revision.readerPresentation,
+    DEFAULT_READER_PRESENTATION,
+  );
+  assert.deepEqual(
+    publications[0].source.readerPresentation,
+    DEFAULT_READER_PRESENTATION,
+  );
+});
+
+void test('device registry rejects an explicitly invalid reader presentation', () => {
+  const storage = new MemoryStorage();
+  const { project, revision } = publishProject();
+  const invalidRevision = structuredClone(revision) as unknown as Record<
+    string,
+    unknown
+  >;
+  invalidRevision.readerPresentation = {
+    transition: 'fold',
+    direction: 'ltr',
+    durationMs: 360,
+  };
+  storage.setItem(
+    DEVICE_PUBLICATION_REGISTRY_STORAGE_KEY,
+    JSON.stringify({
+      schemaVersion: 1,
+      publications: [{ projectId: project.id, revision: invalidRevision }],
+    }),
+  );
+
+  assert.deepEqual(listDevicePublications(storage), []);
+});
+
 void test('failed registry writes preserve the previously verified publication', () => {
   const storage = new MemoryStorage();
   const first = publishProject();
@@ -296,10 +353,15 @@ void test('blocked storage reads fail closed without throwing from registry APIs
   );
 });
 
-void test('device publication preserves reader format, cover, rating, visibility, and metadata', () => {
+void test('device publication preserves reader presentation, format, cover, rating, visibility, and metadata', () => {
   const storage = new MemoryStorage();
   const project = createDefaultProject();
   project.format = 'page';
+  project.readerPresentation = {
+    transition: 'slide',
+    direction: 'rtl',
+    durationMs: 640,
+  };
   project.coverSceneId = project.chapters[0].scenes[2].id;
   project.contentRating = 'adults-only';
   project.visibility = 'public';
@@ -313,6 +375,19 @@ void test('device publication preserves reader format, cover, rating, visibility
   const publication = getCurrentDevicePublication(storage);
   assert.ok(publication);
   assert.equal(publication.source.format, 'page');
+  assert.deepEqual(publication.source.readerPresentation, {
+    transition: 'slide',
+    direction: 'rtl',
+    durationMs: 640,
+  });
+  assert.deepEqual(
+    publication.revision.readerPresentation,
+    publication.source.readerPresentation,
+  );
+  assert.deepEqual(
+    publication.project.readerPresentation,
+    publication.source.readerPresentation,
+  );
   assert.equal(publication.source.coverSceneId, project.coverSceneId);
   assert.equal(publication.source.contentRating, 'adults-only');
   assert.equal(publication.source.visibility, 'public');
@@ -326,10 +401,20 @@ void test('device publication preserves reader format, cover, rating, visibility
   ]);
 
   project.format = 'vertical-scroll';
+  project.readerPresentation = {
+    transition: 'cut',
+    direction: 'ltr',
+    durationMs: 100,
+  };
   project.contentRating = 'all-ages';
   project.visibility = 'private';
   project.metadata.genres = ['Draft-only genre'];
   assert.equal(publication.source.format, 'page');
+  assert.deepEqual(publication.source.readerPresentation, {
+    transition: 'slide',
+    direction: 'rtl',
+    durationMs: 640,
+  });
   assert.equal(publication.source.contentRating, 'adults-only');
   assert.equal(publication.source.visibility, 'public');
   assert.deepEqual(publication.source.metadata.genres, [

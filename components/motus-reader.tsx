@@ -1,7 +1,13 @@
 /* oxlint-disable next/no-html-link-for-pages -- Reader navigation uses stable public paths. */
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from 'react';
 import {
   ArrowDown,
   ArrowLeft,
@@ -38,6 +44,13 @@ import {
   parseStoredReadingProgress,
   parseStoredSlugSet,
 } from '@/lib/motus-library';
+import {
+  getAdjacentReaderPosition,
+  getReaderControlIntent,
+  getReaderTransitionPresentation,
+  getReaderVisibleSceneIndexes,
+  type ReaderNavigationIntent,
+} from '@/lib/motus-reader-navigation';
 import type {
   ContentRating,
   MotusProject,
@@ -218,6 +231,9 @@ export function MotusReader({ slug }: { slug: string }) {
     () => project?.chapters[0]?.id ?? '',
   );
   const [pageIndex, setPageIndex] = useState(0);
+  const [pageTurnIntent, setPageTurnIntent] =
+    useState<ReaderNavigationIntent | null>(null);
+  const [pageTransitionSequence, setPageTransitionSequence] = useState(0);
   const [playSession, setPlaySession] = useState(1);
   const [followed, setFollowed] = useState(false);
   const [followStorageAvailable, setFollowStorageAvailable] = useState(true);
@@ -290,6 +306,7 @@ export function MotusReader({ slug }: { slug: string }) {
       const projectReaderMode = readerModeForFormat(project.format);
       setMode(projectReaderMode);
       setActiveChapterId(resumedChapter.id);
+      setPageTurnIntent(null);
       setPageIndex(
         projectReaderMode === 'spread'
           ? resumedIndex - (resumedIndex % 2)
@@ -369,18 +386,27 @@ export function MotusReader({ slug }: { slug: string }) {
     [hydrated, project, work],
   );
 
-  const selectPage = (nextPageIndex: number) => {
+  const selectPage = (
+    nextPageIndex: number,
+    intent: ReaderNavigationIntent | null = null,
+  ) => {
     if (!project || !activeChapter) return;
     const resolved = Math.min(
       Math.max(nextPageIndex, 0),
       activeChapter.scenes.length - 1,
     );
+    setPageTurnIntent(intent);
+    if (intent) setPageTransitionSequence((sequence) => sequence + 1);
     setPageIndex(resolved);
     setPlaySession((session) => session + 1);
     recordProgress(activeChapter.id, resolved);
   };
 
-  const selectChapter = (nextChapterIndex: number, targetSceneIndex = 0) => {
+  const selectChapter = (
+    nextChapterIndex: number,
+    targetSceneIndex = 0,
+    intent: ReaderNavigationIntent | null = null,
+  ) => {
     if (!project) return;
     const resolvedChapterIndex = Math.min(
       Math.max(nextChapterIndex, 0),
@@ -391,6 +417,8 @@ export function MotusReader({ slug }: { slug: string }) {
       Math.max(targetSceneIndex, 0),
       chapter.scenes.length - 1,
     );
+    setPageTurnIntent(intent);
+    if (intent) setPageTransitionSequence((sequence) => sequence + 1);
     setActiveChapterId(chapter.id);
     setPageIndex(resolvedSceneIndex);
     setResumeTarget({
@@ -401,29 +429,19 @@ export function MotusReader({ slug }: { slug: string }) {
     recordProgress(chapter.id, resolvedSceneIndex);
   };
 
-  const selectPreviousPage = () => {
-    if (!activeChapter) return;
-    const pageStep = mode === 'spread' ? 2 : 1;
-    if (pageIndex > 0) selectPage(Math.max(0, pageIndex - pageStep));
-    else if (chapterIndex > 0) {
-      const previous = project!.chapters[chapterIndex - 1];
-      const lastSceneIndex = previous.scenes.length - 1;
-      selectChapter(
-        chapterIndex - 1,
-        mode === 'spread'
-          ? Math.max(0, lastSceneIndex - (lastSceneIndex % 2))
-          : lastSceneIndex,
-      );
-    }
-  };
-
-  const selectNextPage = () => {
-    if (!activeChapter || !project) return;
-    const pageStep = mode === 'spread' ? 2 : 1;
-    if (pageIndex + pageStep < activeChapter.scenes.length) {
-      selectPage(pageIndex + pageStep);
-    } else if (chapterIndex < project.chapters.length - 1) {
-      selectChapter(chapterIndex + 1);
+  const navigatePage = (intent: ReaderNavigationIntent) => {
+    if (!activeChapter || !project || mode === 'scroll') return;
+    const target = getAdjacentReaderPosition(
+      project.chapters.map((chapter) => chapter.scenes.length),
+      { chapterIndex, pageIndex },
+      mode,
+      intent,
+    );
+    if (!target) return;
+    if (target.chapterIndex === chapterIndex) {
+      selectPage(target.pageIndex, intent);
+    } else {
+      selectChapter(target.chapterIndex, target.pageIndex, intent);
     }
   };
 
@@ -503,6 +521,44 @@ export function MotusReader({ slug }: { slug: string }) {
       )) /
       Math.max(totalScenes, 1)) *
     100;
+  const pagedLayout = mode === 'spread' ? 'spread' : 'page';
+  const sceneCounts = project.chapters.map((chapter) => chapter.scenes.length);
+  const pageTargets = {
+    previous: getAdjacentReaderPosition(
+      sceneCounts,
+      { chapterIndex, pageIndex },
+      pagedLayout,
+      'previous',
+    ),
+    next: getAdjacentReaderPosition(
+      sceneCounts,
+      { chapterIndex, pageIndex },
+      pagedLayout,
+      'next',
+    ),
+  };
+  const leftControlIntent = getReaderControlIntent(
+    project.readerPresentation.direction,
+    'left',
+  );
+  const rightControlIntent = getReaderControlIntent(
+    project.readerPresentation.direction,
+    'right',
+  );
+  const pageTransition = getReaderTransitionPresentation(
+    project.readerPresentation.transition,
+    project.readerPresentation.direction,
+    pageTurnIntent,
+    false,
+  );
+  const visiblePageIndexes = getReaderVisibleSceneIndexes(
+    activeChapter.scenes.length,
+    pageIndex,
+    pagedLayout,
+  );
+  const pageTransitionStyle = {
+    '--reader-transition-duration': `${project.readerPresentation.durationMs}ms`,
+  } as CSSProperties;
 
   return (
     <div className="published-reader-shell">
@@ -665,9 +721,18 @@ export function MotusReader({ slug }: { slug: string }) {
                   className="published-reader-chapter-nav"
                 >
                   <Button
-                    aria-label="Previous chapter"
-                    disabled={chapterIndex === 0}
-                    onClick={() => selectChapter(chapterIndex - 1)}
+                    aria-label={`${leftControlIntent === 'previous' ? 'Previous' : 'Next'} chapter`}
+                    disabled={
+                      leftControlIntent === 'previous'
+                        ? chapterIndex === 0
+                        : chapterIndex === project.chapters.length - 1
+                    }
+                    onClick={() =>
+                      selectChapter(
+                        chapterIndex +
+                          (leftControlIntent === 'previous' ? -1 : 1),
+                      )
+                    }
                     size="sm"
                     variant="secondary"
                   >
@@ -677,9 +742,18 @@ export function MotusReader({ slug }: { slug: string }) {
                     {chapterIndex + 1} / {project.chapters.length}
                   </span>
                   <Button
-                    aria-label="Next chapter"
-                    disabled={chapterIndex === project.chapters.length - 1}
-                    onClick={() => selectChapter(chapterIndex + 1)}
+                    aria-label={`${rightControlIntent === 'previous' ? 'Previous' : 'Next'} chapter`}
+                    disabled={
+                      rightControlIntent === 'previous'
+                        ? chapterIndex === 0
+                        : chapterIndex === project.chapters.length - 1
+                    }
+                    onClick={() =>
+                      selectChapter(
+                        chapterIndex +
+                          (rightControlIntent === 'previous' ? -1 : 1),
+                      )
+                    }
                     size="sm"
                     variant="secondary"
                   >
@@ -690,7 +764,10 @@ export function MotusReader({ slug }: { slug: string }) {
                   <legend className="sr-only">Reading layout</legend>
                   <button
                     aria-pressed={mode === 'scroll'}
-                    onClick={() => setMode('scroll')}
+                    onClick={() => {
+                      setPageTurnIntent(null);
+                      setMode('scroll');
+                    }}
                     type="button"
                   >
                     <ArrowDown aria-hidden="true" />
@@ -698,7 +775,10 @@ export function MotusReader({ slug }: { slug: string }) {
                   </button>
                   <button
                     aria-pressed={mode === 'page'}
-                    onClick={() => setMode('page')}
+                    onClick={() => {
+                      setPageTurnIntent(null);
+                      setMode('page');
+                    }}
                     type="button"
                   >
                     <FileImage aria-hidden="true" />
@@ -707,6 +787,7 @@ export function MotusReader({ slug }: { slug: string }) {
                   <button
                     aria-pressed={mode === 'spread'}
                     onClick={() => {
+                      setPageTurnIntent(null);
                       setMode('spread');
                       setPageIndex((index) => index - (index % 2));
                     }}
@@ -718,7 +799,10 @@ export function MotusReader({ slug }: { slug: string }) {
                 </fieldset>
                 <Button
                   aria-label="Replay chapter motion"
-                  onClick={() => setPlaySession((session) => session + 1)}
+                  onClick={() => {
+                    setPageTurnIntent(null);
+                    setPlaySession((session) => session + 1);
+                  }}
                   size="sm"
                   variant="secondary"
                 >
@@ -749,34 +833,43 @@ export function MotusReader({ slug }: { slug: string }) {
                 ))}
               </div>
             ) : (
-              <div className="published-reader-paged" data-layout={mode}>
+              <div
+                className="published-reader-paged"
+                data-layout={mode}
+                data-reading-direction={project.readerPresentation.direction}
+                data-transition={pageTransition.effectiveStyle}
+                data-turn={pageTransition.entryEdge}
+                style={pageTransitionStyle}
+              >
                 <div
                   className="published-reader-page-leaf"
-                  key={`${activeChapter.id}-${mode}-${pageIndex}-${playSession}`}
+                  key={`${activeChapter.id}-${mode}-${pageIndex}-${pageTransitionSequence}`}
                 >
-                  {(mode === 'spread'
-                    ? activeChapter.scenes.slice(pageIndex, pageIndex + 2)
-                    : [activeChapter.scenes[pageIndex]]
-                  ).map((scene, spreadOffset) => (
+                  {visiblePageIndexes.map((sceneIndex, spreadOffset) => (
                     <ReaderScene
-                      index={pageIndex + spreadOffset}
-                      key={`${scene.id}-${playSession}-${pageIndex}`}
+                      index={sceneIndex}
+                      key={`${activeChapter.scenes[sceneIndex].id}-${playSession}-${pageIndex}`}
                       onEnter={(enteredIndex) =>
                         recordProgress(activeChapter.id, enteredIndex)
                       }
-                      scene={scene}
+                      scene={activeChapter.scenes[sceneIndex]}
                       sessionKey={playSession + spreadOffset}
                     />
                   ))}
                 </div>
                 <div className="published-reader-page-controls">
                   <Button
-                    disabled={pageIndex === 0 && chapterIndex === 0}
-                    onClick={selectPreviousPage}
+                    aria-label={
+                      leftControlIntent === 'previous'
+                        ? 'Previous page'
+                        : 'Next page'
+                    }
+                    disabled={!pageTargets[leftControlIntent]}
+                    onClick={() => navigatePage(leftControlIntent)}
                     variant="secondary"
                   >
                     <ChevronLeft />
-                    Previous
+                    {leftControlIntent === 'previous' ? 'Previous' : 'Next'}
                   </Button>
                   <span aria-atomic="true" aria-live="polite">
                     {mode === 'spread' ? 'Spread' : 'Page'}{' '}
@@ -785,14 +878,15 @@ export function MotusReader({ slug }: { slug: string }) {
                       : `${pageIndex + 1} of ${activeChapter.scenes.length}`}
                   </span>
                   <Button
-                    disabled={
-                      pageIndex + (mode === 'spread' ? 2 : 1) >=
-                        activeChapter.scenes.length &&
-                      chapterIndex === project.chapters.length - 1
+                    aria-label={
+                      rightControlIntent === 'previous'
+                        ? 'Previous page'
+                        : 'Next page'
                     }
-                    onClick={selectNextPage}
+                    disabled={!pageTargets[rightControlIntent]}
+                    onClick={() => navigatePage(rightControlIntent)}
                   >
-                    Next
+                    {rightControlIntent === 'previous' ? 'Previous' : 'Next'}
                     <ChevronRight />
                   </Button>
                 </div>

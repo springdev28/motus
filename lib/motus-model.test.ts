@@ -7,6 +7,7 @@ import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   DEFAULT_ELEMENT_IMAGE_FRAMING,
+  DEFAULT_READER_PRESENTATION,
   ELEMENT_IMAGE_FITS,
   ELEMENT_FONT_PRESETS,
   ELEMENT_FONT_WEIGHTS,
@@ -234,6 +235,20 @@ void test('blank projects start private with one editable scene', () => {
   assert.deepEqual(project.chapters[0].scenes[0].elements, []);
   assert.deepEqual(project.publications, []);
   assert.deepEqual(project.metadata, migratedMetadataFor('New creator'));
+  assert.deepEqual(project.readerPresentation, DEFAULT_READER_PRESENTATION);
+  assert.notEqual(project.readerPresentation, DEFAULT_READER_PRESENTATION);
+});
+
+void test('default projects start with an independent book presentation', () => {
+  const first = createDefaultProject();
+  const second = createDefaultProject();
+
+  assert.deepEqual(first.readerPresentation, {
+    transition: 'book',
+    direction: 'ltr',
+    durationMs: 360,
+  });
+  assert.notEqual(first.readerPresentation, second.readerPresentation);
 });
 
 void test('project backup names are portable and never empty', () => {
@@ -3971,6 +3986,62 @@ void test('multi-chapter revisions snapshot, diff, and restore the whole work', 
   assert.equal(getPublicationReadiness(restored).sceneCount, 4);
 });
 
+void test('reader presentation survives publication snapshot, diff, source, and restore flows', () => {
+  const project = createDefaultProject();
+  project.readerPresentation = {
+    transition: 'slide',
+    direction: 'rtl',
+    durationMs: 725,
+  };
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-31T08:00:00.000Z',
+  );
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  assert.deepEqual(revision.readerPresentation, {
+    transition: 'slide',
+    direction: 'rtl',
+    durationMs: 725,
+  });
+  assert.notEqual(revision.readerPresentation, project.readerPresentation);
+  assert.equal(hasUnpublishedChanges(project), false);
+
+  project.readerPresentation.transition = 'book';
+  project.readerPresentation.direction = 'ltr';
+  project.readerPresentation.durationMs = 910;
+  assert.equal(hasUnpublishedChanges(project), true);
+
+  const draftSource = resolveReaderSource(project);
+  const revisionSource = resolveReaderSource(project, revision);
+  assert.deepEqual(draftSource.readerPresentation, {
+    transition: 'book',
+    direction: 'ltr',
+    durationMs: 910,
+  });
+  assert.deepEqual(revisionSource.readerPresentation, {
+    transition: 'slide',
+    direction: 'rtl',
+    durationMs: 725,
+  });
+  assert.notEqual(
+    revisionSource.readerPresentation,
+    revision.readerPresentation,
+  );
+  revisionSource.readerPresentation.durationMs = 1_100;
+  assert.equal(revision.readerPresentation.durationMs, 725);
+
+  const restored = restorePublicationToDraft(
+    project,
+    revision.id,
+    '2026-08-31T08:30:00.000Z',
+  );
+  assert.ok(restored);
+  assert.deepEqual(restored.readerPresentation, revision.readerPresentation);
+  assert.notEqual(restored.readerPresentation, revision.readerPresentation);
+});
+
 void test('invalid project data is rejected', () => {
   assert.equal(
     restoreProject('{"schemaVersion":4,"title":"Broken","scenes":[]}'),
@@ -5180,6 +5251,86 @@ void test('schema 11 migration preserves masks and discards forward mesh fields'
   const restoredPart = restored.chapters[0].scenes[0].elements[1];
   assert.equal(restoredPart.imageRigPart?.maskPoints?.length, 3);
   assert.equal(restoredPart.imageRigPart?.mesh, undefined);
+});
+
+void test('schema 12 projects and revisions receive the reader presentation default', () => {
+  const project = createDefaultProject();
+  project.readerPresentation = {
+    transition: 'slide',
+    direction: 'rtl',
+    durationMs: 780,
+  };
+  const revision = createPublicationRevision(project);
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+  const legacy = structuredClone(project) as unknown as {
+    schemaVersion: number;
+    readerPresentation?: unknown;
+    publications: Array<{ readerPresentation?: unknown }>;
+  };
+  legacy.schemaVersion = 12;
+  delete legacy.readerPresentation;
+  delete legacy.publications[0].readerPresentation;
+
+  const restored = restoreProject(JSON.stringify(legacy));
+
+  assert.ok(restored);
+  assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
+  assert.deepEqual(restored.readerPresentation, DEFAULT_READER_PRESENTATION);
+  assert.deepEqual(
+    restored.publications[0].readerPresentation,
+    DEFAULT_READER_PRESENTATION,
+  );
+  assert.notEqual(
+    restored.readerPresentation,
+    restored.publications[0].readerPresentation,
+  );
+});
+
+void test('schema 13 rejects invalid project and publication reader presentation values', () => {
+  const invalidPresentations: unknown[] = [
+    undefined,
+    null,
+    { transition: 'fold', direction: 'ltr', durationMs: 360 },
+    { transition: 'book', direction: 'down', durationMs: 360 },
+    { transition: 'book', direction: 'ltr', durationMs: 99 },
+    { transition: 'book', direction: 'ltr', durationMs: 2_001 },
+    { transition: 'book', direction: 'ltr', durationMs: 360.5 },
+  ];
+
+  for (const readerPresentation of invalidPresentations) {
+    const candidate = structuredClone(createDefaultProject()) as unknown as
+      | Record<string, unknown>
+      | { readerPresentation?: unknown };
+    if (readerPresentation === undefined) {
+      delete candidate.readerPresentation;
+    } else {
+      candidate.readerPresentation = readerPresentation;
+    }
+    assert.equal(
+      restoreProjectWithError(JSON.stringify(candidate)).error,
+      'Project reader presentation is invalid',
+    );
+  }
+
+  for (const readerPresentation of invalidPresentations) {
+    const candidate = createDefaultProject();
+    const revision = createPublicationRevision(candidate);
+    candidate.publications = [revision];
+    candidate.publishedRevision = revision.revision;
+    const serialized = structuredClone(candidate) as unknown as {
+      publications: Array<{ readerPresentation?: unknown }>;
+    };
+    if (readerPresentation === undefined) {
+      delete serialized.publications[0].readerPresentation;
+    } else {
+      serialized.publications[0].readerPresentation = readerPresentation;
+    }
+    assert.equal(
+      restoreProjectWithError(JSON.stringify(serialized)).error,
+      'Project publication reader presentation is invalid',
+    );
+  }
 });
 
 void test('current schema preserves valid meshes and rejects malformed meshes', () => {

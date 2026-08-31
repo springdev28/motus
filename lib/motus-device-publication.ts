@@ -3,6 +3,7 @@ import {
   PROJECT_SCHEMA_VERSION,
   cloneProject,
   getProjectScenes,
+  normalizeReaderPresentation,
   resolveReaderSource,
   restoreProject,
   type MotusProject,
@@ -67,7 +68,20 @@ function createPublishedProject(
   projectId: string,
   revision: MotusPublicationRevision,
 ): MotusProject {
-  const snapshot = structuredClone(revision);
+  type LegacyPublicationRevision = Omit<
+    MotusPublicationRevision,
+    'readerPresentation'
+  > & {
+    readerPresentation?: MotusPublicationRevision['readerPresentation'];
+  };
+  const legacySnapshot = structuredClone(revision) as LegacyPublicationRevision;
+  const snapshot: MotusPublicationRevision = {
+    ...legacySnapshot,
+    readerPresentation:
+      legacySnapshot.readerPresentation === undefined
+        ? normalizeReaderPresentation()
+        : legacySnapshot.readerPresentation,
+  };
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: projectId,
@@ -80,6 +94,7 @@ function createPublishedProject(
     visibility: snapshot.visibility,
     metadata: structuredClone(snapshot.metadata),
     format: snapshot.format,
+    readerPresentation: structuredClone(snapshot.readerPresentation),
     coverSceneId: snapshot.coverSceneId,
     publishedRevision: snapshot.revision,
     publications: [snapshot],
