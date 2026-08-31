@@ -7,10 +7,12 @@ import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   DEFAULT_ELEMENT_IMAGE_FRAMING,
+  DEFAULT_ELEMENT_SHAPE_PRESET,
   DEFAULT_READER_PRESENTATION,
   ELEMENT_IMAGE_FITS,
   ELEMENT_FONT_PRESETS,
   ELEMENT_FONT_WEIGHTS,
+  ELEMENT_SHAPE_PRESETS,
   ELEMENT_TEXT_ALIGNMENTS,
   MAX_BOUNCE_JUMPS,
   MAX_COMPILED_MOTION_DURATION_MS,
@@ -67,6 +69,7 @@ import {
   getDraftExitAction,
   getEditorShortcut,
   getElementImageFraming,
+  getElementShapePreset,
   getElementRigCascadeDeleteIds,
   getElementRigDepth,
   getElementRigDescendantIds,
@@ -93,6 +96,7 @@ import {
   normalizeBounceJumpNumericField,
   normalizeElementImageFraming,
   normalizeElementImageRigPart,
+  normalizeElementShapePreset,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
@@ -5331,6 +5335,254 @@ void test('schema 13 rejects invalid project and publication reader presentation
       'Project publication reader presentation is invalid',
     );
   }
+});
+
+void test('shape preset normalization, creation, and copying use the schema-14 allowlist', () => {
+  assert.equal(PROJECT_SCHEMA_VERSION, 14);
+  assert.equal(DEFAULT_ELEMENT_SHAPE_PRESET, 'orb');
+  assert.deepEqual(ELEMENT_SHAPE_PRESETS, [
+    'orb',
+    'rectangle',
+    'rounded-panel',
+    'frame',
+    'divider',
+    'burst',
+    'focus-rays',
+    'speed-lines',
+    'halftone',
+    'rain',
+    'arrow',
+    'star',
+    'heart',
+    'lightning',
+  ]);
+  assert.equal(new Set(ELEMENT_SHAPE_PRESETS).size, 14);
+
+  for (const [index, preset] of ELEMENT_SHAPE_PRESETS.entries()) {
+    assert.equal(normalizeElementShapePreset(preset), preset);
+    const element = createElement('shape', index + 1, {
+      id: `shape-${preset}`,
+      shapePreset: preset,
+    });
+    assert.equal(element.shapePreset, preset);
+    assert.equal(getElementShapePreset(element), preset);
+  }
+  for (const invalid of [
+    undefined,
+    null,
+    '',
+    'triangle',
+    42,
+    Number.NaN,
+    {},
+    [],
+  ]) {
+    assert.equal(normalizeElementShapePreset(invalid), 'orb');
+  }
+
+  const defaultShape = createElement('shape', 20);
+  const normalizedShape = createElement('shape', 21, {
+    shapePreset: 'triangle' as never,
+  });
+  const text = createElement('text', 22, { shapePreset: 'star' });
+  assert.equal(defaultShape.shapePreset, 'orb');
+  assert.equal(normalizedShape.shapePreset, 'orb');
+  assert.equal(Object.hasOwn(text, 'shapePreset'), false);
+  assert.equal(getElementShapePreset(text), 'orb');
+
+  const source = createElement('shape', 23, {
+    id: 'copy-source-star',
+    shapePreset: 'star',
+  });
+  const copy = createElementCopy(source, 'copy-star');
+  assert.equal(copy.shapePreset, 'star');
+  assert.notEqual(copy, source);
+  assert.notEqual(copy.motion, source.motion);
+  assert.notEqual(copy.motion.blocks, source.motion.blocks);
+  copy.motion.blocks[0].enabled = false;
+  assert.notEqual(
+    copy.motion.blocks[0].enabled,
+    source.motion.blocks[0].enabled,
+  );
+});
+
+void test('current schema strictly validates draft and publication shape presets', () => {
+  const createShapeProject = () => {
+    const project = createBlankProject(
+      'shape-preset-validation',
+      '2026-08-31T11:00:00.000Z',
+    );
+    project.chapters[0].scenes[0].elements = [
+      createElement('shape', 1, {
+        id: 'validated-shape',
+        shapePreset: 'heart',
+      }),
+      createElement('text', 2, { id: 'validated-text' }),
+    ];
+    return project;
+  };
+  const invalidMutators: Array<
+    (candidate: ReturnType<typeof createShapeProject>) => void
+  > = [
+    (candidate) => {
+      delete candidate.chapters[0].scenes[0].elements[0].shapePreset;
+    },
+    (candidate) => {
+      (
+        candidate.chapters[0].scenes[0].elements[0] as unknown as {
+          shapePreset?: unknown;
+        }
+      ).shapePreset = 'triangle';
+    },
+    (candidate) => {
+      candidate.chapters[0].scenes[0].elements[1].shapePreset = 'star';
+    },
+  ];
+
+  for (const mutate of invalidMutators) {
+    const candidate = createShapeProject();
+    mutate(candidate);
+    assert.equal(
+      restoreProjectWithError(JSON.stringify(candidate)).error,
+      'Project chapter 1 contains an invalid shape preset',
+    );
+  }
+
+  for (const mutate of invalidMutators) {
+    const candidate = createShapeProject();
+    const revision = createPublicationRevision(
+      candidate,
+      '2026-08-31T11:01:00.000Z',
+    );
+    candidate.publications = [revision];
+    candidate.publishedRevision = revision.revision;
+    const publicationCandidate = {
+      ...candidate,
+      chapters: structuredClone(candidate.chapters),
+      publications: structuredClone(candidate.publications),
+    };
+    const publicationAsProject = {
+      ...candidate,
+      chapters: publicationCandidate.publications[0].chapters,
+    };
+    mutate(publicationAsProject);
+    publicationCandidate.publications[0].chapters =
+      publicationAsProject.chapters;
+    assert.equal(
+      restoreProjectWithError(JSON.stringify(publicationCandidate)).error,
+      'Publication revision 1 chapter 1 contains an invalid shape preset',
+    );
+  }
+});
+
+void test('schema 13 backfills shape presets in drafts and publication revisions', () => {
+  const project = createBlankProject(
+    'schema-13-shape-migration',
+    '2026-08-31T12:00:00.000Z',
+  );
+  project.readerPresentation = {
+    transition: 'slide',
+    direction: 'rtl',
+    durationMs: 640,
+  };
+  project.chapters[0].scenes[0].elements = [
+    createElement('shape', 1, {
+      id: 'legacy-draft-shape',
+      shapePreset: 'star',
+    }),
+    createElement('text', 2, { id: 'legacy-draft-text' }),
+  ];
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-31T12:01:00.000Z',
+  );
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  const legacy = structuredClone(project) as unknown as {
+    schemaVersion: number;
+    chapters: Array<{
+      scenes: Array<{
+        elements: Array<{ type: string; shapePreset?: unknown }>;
+      }>;
+    }>;
+    publications: Array<{
+      chapters: Array<{
+        scenes: Array<{
+          elements: Array<{ type: string; shapePreset?: unknown }>;
+        }>;
+      }>;
+    }>;
+  };
+  legacy.schemaVersion = 13;
+  delete legacy.chapters[0].scenes[0].elements[0].shapePreset;
+  legacy.chapters[0].scenes[0].elements[1].shapePreset = 'heart';
+  delete legacy.publications[0].chapters[0].scenes[0].elements[0].shapePreset;
+  legacy.publications[0].chapters[0].scenes[0].elements[1].shapePreset =
+    'lightning';
+
+  const restored = restoreProject(JSON.stringify(legacy));
+  assert.ok(restored);
+  assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
+  assert.deepEqual(restored.readerPresentation, project.readerPresentation);
+  assert.deepEqual(
+    restored.publications[0].readerPresentation,
+    project.readerPresentation,
+  );
+  const draftElements = restored.chapters[0].scenes[0].elements;
+  const publicationElements =
+    restored.publications[0].chapters[0].scenes[0].elements;
+  assert.equal(draftElements[0].shapePreset, 'orb');
+  assert.equal(publicationElements[0].shapePreset, 'orb');
+  assert.equal(Object.hasOwn(draftElements[1], 'shapePreset'), false);
+  assert.equal(Object.hasOwn(publicationElements[1], 'shapePreset'), false);
+});
+
+void test('all 14 current shape presets round-trip independently through publications', () => {
+  const project = createBlankProject(
+    'shape-preset-round-trip',
+    '2026-08-31T13:00:00.000Z',
+  );
+  project.chapters[0].scenes[0].elements = ELEMENT_SHAPE_PRESETS.map(
+    (preset, index) =>
+      createElement('shape', index + 1, {
+        id: `round-trip-${preset}`,
+        name: `Round trip ${preset}`,
+        shapePreset: preset,
+        x: (index % 4) * 260,
+        y: Math.floor(index / 4) * 230,
+      }),
+  );
+  const revision = createPublicationRevision(
+    project,
+    '2026-08-31T13:01:00.000Z',
+  );
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  const draftElements = restored.chapters[0].scenes[0].elements;
+  const publicationElements =
+    restored.publications[0].chapters[0].scenes[0].elements;
+  assert.deepEqual(
+    draftElements.map((element) => element.shapePreset),
+    ELEMENT_SHAPE_PRESETS,
+  );
+  assert.deepEqual(
+    publicationElements.map((element) => element.shapePreset),
+    ELEMENT_SHAPE_PRESETS,
+  );
+  assert.notEqual(draftElements, publicationElements);
+  for (let index = 0; index < draftElements.length; index += 1) {
+    assert.notEqual(draftElements[index], publicationElements[index]);
+    assert.notEqual(
+      draftElements[index].motion,
+      publicationElements[index].motion,
+    );
+  }
+  draftElements[13].shapePreset = 'orb';
+  assert.equal(publicationElements[13].shapePreset, 'lightning');
 });
 
 void test('current schema preserves valid meshes and rejects malformed meshes', () => {

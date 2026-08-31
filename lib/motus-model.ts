@@ -4,7 +4,7 @@ import {
   type ElementImageRigMesh,
 } from './motus-mesh-warp.ts';
 
-export const PROJECT_SCHEMA_VERSION = 13 as const;
+export const PROJECT_SCHEMA_VERSION = 14 as const;
 export const MOTION_SCHEMA_VERSION = 2 as const;
 export const MOTUS_PROJECT_FORMATS = [
   'vertical-scroll',
@@ -56,6 +56,32 @@ export const MIN_ELEMENT_WIDTH = 60;
 export const MIN_ELEMENT_HEIGHT = 50;
 
 export type ElementType = 'group' | 'shape' | 'text' | 'speech' | 'image';
+export const ELEMENT_SHAPE_PRESETS = [
+  'orb',
+  'rectangle',
+  'rounded-panel',
+  'frame',
+  'divider',
+  'burst',
+  'focus-rays',
+  'speed-lines',
+  'halftone',
+  'rain',
+  'arrow',
+  'star',
+  'heart',
+  'lightning',
+] as const;
+export type ElementShapePreset = (typeof ELEMENT_SHAPE_PRESETS)[number];
+export const DEFAULT_ELEMENT_SHAPE_PRESET = 'orb' as const;
+
+export function normalizeElementShapePreset(
+  value: unknown,
+): ElementShapePreset {
+  return ELEMENT_SHAPE_PRESETS.includes(value as ElementShapePreset)
+    ? (value as ElementShapePreset)
+    : DEFAULT_ELEMENT_SHAPE_PRESET;
+}
 export type TextElementType = Extract<ElementType, 'text' | 'speech'>;
 export const ELEMENT_IMAGE_FITS = ['cover', 'contain'] as const;
 export type ElementImageFit = (typeof ELEMENT_IMAGE_FITS)[number];
@@ -2752,6 +2778,7 @@ export type MotusElement = {
   rotation: number;
   opacity: number;
   fill: string;
+  shapePreset?: ElementShapePreset;
   text?: string;
   typography?: ElementTypography;
   src?: string;
@@ -2764,6 +2791,14 @@ export type MotusElement = {
   locked: boolean;
   motion: ElementMotion;
 };
+
+export function getElementShapePreset(
+  element: Pick<MotusElement, 'type' | 'shapePreset'>,
+): ElementShapePreset {
+  return element.type === 'shape'
+    ? normalizeElementShapePreset(element.shapePreset)
+    : DEFAULT_ELEMENT_SHAPE_PRESET;
+}
 
 export function describeElementForAccessibility(element: MotusElement): string {
   if (element.type !== 'text' && element.type !== 'speech') return element.name;
@@ -6564,6 +6599,10 @@ export function createElement(
     rotation: 0,
     opacity: 1,
     fill: type === 'speech' ? '#fffaf0' : '#8c74ff',
+    shapePreset:
+      type === 'shape'
+        ? normalizeElementShapePreset(overrides.shapePreset)
+        : undefined,
     text:
       type === 'speech'
         ? 'Add your dialogue…'
@@ -6588,6 +6627,11 @@ export function createElement(
     delete element.imageFocalX;
     delete element.imageFocalY;
     delete element.imageRigPart;
+  }
+  if (type === 'shape') {
+    element.shapePreset = normalizeElementShapePreset(element.shapePreset);
+  } else {
+    delete element.shapePreset;
   }
   return element;
 }
@@ -7197,6 +7241,9 @@ const isElementType = (value: unknown): value is ElementType =>
   value === 'speech' ||
   value === 'image';
 
+const isElementShapePreset = (value: unknown): value is ElementShapePreset =>
+  ELEMENT_SHAPE_PRESETS.includes(value as ElementShapePreset);
+
 const isSafeColor = (value: unknown): value is string =>
   typeof value === 'string' &&
   /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value);
@@ -7418,6 +7465,7 @@ function validateScenes(
   validateRigging = false,
   validatePolygonMasks = false,
   validateImageMeshes = false,
+  validateShapePresets = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one scene`;
@@ -7473,6 +7521,15 @@ function validateScenes(
       }
       if (!isElementType(elementValue.type)) {
         return `${context} contains an unsupported layer type`;
+      }
+      if (
+        validateShapePresets &&
+        ((elementValue.type === 'shape' &&
+          !isElementShapePreset(elementValue.shapePreset)) ||
+          (elementValue.type !== 'shape' &&
+            elementValue.shapePreset !== undefined))
+      ) {
+        return `${context} contains an invalid shape preset`;
       }
       const motionError = validateMotion(elementValue.motion);
       if (motionError) return motionError;
@@ -7611,6 +7668,7 @@ function validateChapters(
   validateRigging = false,
   validatePolygonMasks = false,
   validateImageMeshes = false,
+  validateShapePresets = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one chapter`;
@@ -7645,6 +7703,7 @@ function validateChapters(
       validateRigging,
       validatePolygonMasks,
       validateImageMeshes,
+      validateShapePresets,
     );
     if (sceneError) return sceneError;
     sceneCount += (chapterValue.scenes as unknown[]).length;
@@ -7670,6 +7729,7 @@ function normalizeScenes(
   normalizeRigging = true,
   normalizePolygonMasks = true,
   normalizeImageMeshes = true,
+  normalizeShapePresets = true,
 ): MotusScene[] {
   return value.map((sceneValue) => {
     const item = sceneValue as UnknownRecord;
@@ -7724,6 +7784,13 @@ function normalizeScenes(
           fill: isSafeColor(elementValue.fill)
             ? elementValue.fill
             : defaults.fill,
+          ...(type === 'shape'
+            ? {
+                shapePreset: normalizeShapePresets
+                  ? normalizeElementShapePreset(elementValue.shapePreset)
+                  : DEFAULT_ELEMENT_SHAPE_PRESET,
+              }
+            : {}),
           text:
             typeof elementValue.text === 'string'
               ? elementValue.text
@@ -7765,6 +7832,7 @@ function normalizeChapters(
   normalizeRigging = true,
   normalizePolygonMasks = true,
   normalizeImageMeshes = true,
+  normalizeShapePresets = true,
 ): MotusChapter[] {
   return value.map((chapterValue) => {
     const chapter = chapterValue as UnknownRecord;
@@ -7780,6 +7848,7 @@ function normalizeChapters(
         normalizeRigging,
         normalizePolygonMasks,
         normalizeImageMeshes,
+        normalizeShapePresets,
       ),
     };
   });
@@ -7951,6 +8020,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 10 &&
     candidate.schemaVersion !== 11 &&
     candidate.schemaVersion !== 12 &&
+    candidate.schemaVersion !== 13 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {
@@ -7973,6 +8043,7 @@ export function restoreProjectWithError(
   const usesPolygonMasks = schemaVersion >= 11;
   const usesImageMeshes = schemaVersion >= 12;
   const usesReaderPresentation = schemaVersion >= 13;
+  const usesShapePresets = schemaVersion >= 14;
   if (usesChapterHierarchy && !isProjectFormat(candidate.format)) {
     return { project: null, error: 'Project uses an unsupported format' };
   }
@@ -8011,6 +8082,7 @@ export function restoreProjectWithError(
         usesRigging,
         usesPolygonMasks,
         usesImageMeshes,
+        usesShapePresets,
       )
     : validateScenes(
         candidate.scenes,
@@ -8020,6 +8092,7 @@ export function restoreProjectWithError(
         usesRigging,
         usesPolygonMasks,
         usesImageMeshes,
+        usesShapePresets,
       );
   if (hierarchyError) return { project: null, error: hierarchyError };
 
@@ -8082,6 +8155,7 @@ export function restoreProjectWithError(
           usesRigging,
           usesPolygonMasks,
           usesImageMeshes,
+          usesShapePresets,
         )
       : validateScenes(
           publicationValue.scenes,
@@ -8091,6 +8165,7 @@ export function restoreProjectWithError(
           usesRigging,
           usesPolygonMasks,
           usesImageMeshes,
+          usesShapePresets,
         );
     if (revisionError) return { project: null, error: revisionError };
   }
@@ -8104,6 +8179,7 @@ export function restoreProjectWithError(
             usesRigging,
             usesPolygonMasks,
             usesImageMeshes,
+            usesShapePresets,
           )
         : [
             {
@@ -8118,6 +8194,7 @@ export function restoreProjectWithError(
                 usesRigging,
                 usesPolygonMasks,
                 usesImageMeshes,
+                usesShapePresets,
               ),
             },
           ];
@@ -8184,6 +8261,7 @@ export function restoreProjectWithError(
         usesRigging,
         usesPolygonMasks,
         usesImageMeshes,
+        usesShapePresets,
       )
     : [
         {
@@ -8198,6 +8276,7 @@ export function restoreProjectWithError(
             usesRigging,
             usesPolygonMasks,
             usesImageMeshes,
+            usesShapePresets,
           ),
         },
       ];

@@ -146,6 +146,14 @@ import {
   saveDevicePublication,
 } from '@/lib/motus-device-publication';
 import {
+  ELEMENT_CATALOG_CATEGORIES,
+  MOTUS_ELEMENT_CATALOG,
+  MOTUS_SHAPE_PRESET_DEFINITIONS,
+  createElementCatalogItem,
+  getShapePresetDefinition,
+  type ElementCatalogCategory,
+} from '@/lib/motus-element-catalog';
+import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   ELEMENT_FONT_PRESETS,
@@ -209,6 +217,7 @@ import {
   getCompiledMotionKeyframeEstimate,
   getExpandedMotionStepCount,
   getElementImageFraming,
+  getElementShapePreset,
   getElementRigCascadeDeleteIds,
   getElementRigDepth,
   getElementRigDescendantIds,
@@ -273,6 +282,7 @@ import {
   type ElementAlignment,
   type ElementDistributionAxis,
   type ElementTextAlignment,
+  type ElementShapePreset,
   type ElementTypography,
   type ElementType,
   type MotusChapter,
@@ -523,7 +533,16 @@ const sceneBackgrounds = [
   },
 ] as const;
 
-type CatalogTab = 'works' | 'assets' | 'templates' | 'motion';
+type CatalogTab = 'works' | 'elements' | 'assets' | 'templates' | 'motion';
+type ElementCatalogCategoryFilter = 'all' | ElementCatalogCategory;
+
+const CATALOG_TABS: readonly CatalogTab[] = [
+  'works',
+  'elements',
+  'assets',
+  'templates',
+  'motion',
+];
 type ReaderMode = 'scroll' | 'page' | 'spread';
 
 const readerModeForFormat = (format: MotusProject['format']): ReaderMode =>
@@ -1822,7 +1841,7 @@ const toolItems = [
   { id: 'shape', label: 'Shape', icon: Square },
   { id: 'speech', label: 'Speech', icon: MessageSquareText },
   { id: 'motion', label: 'Blocks', icon: Code2 },
-  { id: 'catalog', label: 'Catalogs', icon: LibraryBig },
+  { id: 'catalog', label: 'Elements', icon: LibraryBig },
 ] as const;
 
 function findElement(
@@ -2032,6 +2051,68 @@ function elementIcon(type: ElementType) {
   return Circle;
 }
 
+function MotusShapeGlyph({
+  preset,
+  className = '',
+}: {
+  preset: ElementShapePreset;
+  className?: string;
+}) {
+  if (preset === 'orb') {
+    return <span aria-hidden="true" className="orb-highlight" />;
+  }
+
+  const definition = getShapePresetDefinition(preset);
+  return (
+    <svg
+      aria-hidden="true"
+      className={`shape-preset-glyph ${className}`.trim()}
+      focusable="false"
+      preserveAspectRatio="none"
+      viewBox="0 0 100 100"
+    >
+      {definition.primitives.map((primitive, index) => {
+        if (primitive.kind === 'path') {
+          return (
+            <path
+              d={primitive.d}
+              fill="currentColor"
+              fillRule={primitive.fillRule}
+              key={`${preset}-path-${index}`}
+              opacity={primitive.opacity}
+            />
+          );
+        }
+        if (primitive.kind === 'circle') {
+          return (
+            <circle
+              cx={primitive.cx}
+              cy={primitive.cy}
+              fill="currentColor"
+              key={`${preset}-circle-${index}`}
+              opacity={primitive.opacity}
+              r={primitive.r}
+            />
+          );
+        }
+        return (
+          <line
+            key={`${preset}-line-${index}`}
+            opacity={primitive.opacity}
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeWidth={primitive.strokeWidth}
+            x1={primitive.x1}
+            x2={primitive.x2}
+            y1={primitive.y1}
+            y2={primitive.y2}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 function renderElementContent(
   element: MotusElement,
   sceneElements: readonly MotusElement[] = [],
@@ -2175,7 +2256,7 @@ function renderElementContent(
     return <span className="element-text-content">{element.text}</span>;
   }
   if (element.type === 'group') return null;
-  return <span className="orb-highlight" />;
+  return <MotusShapeGlyph preset={getElementShapePreset(element)} />;
 }
 
 type CanvasTextEditorProps = {
@@ -2838,6 +2919,11 @@ function SceneView({
                 }
                 data-primary-selected={primarySelected || undefined}
                 data-selected={selected || undefined}
+                data-shape-preset={
+                  element.type === 'shape'
+                    ? getElementShapePreset(element)
+                    : undefined
+                }
                 onClick={
                   interactive && !editingText
                     ? (event) => {
@@ -3214,6 +3300,9 @@ export function MotusStudio() {
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('works');
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [elementCatalogSearch, setElementCatalogSearch] = useState('');
+  const [elementCatalogCategory, setElementCatalogCategory] =
+    useState<ElementCatalogCategoryFilter>('all');
   const [blockPaletteCategory, setBlockPaletteCategory] =
     useState<BlockPaletteCategory>('motion');
   const [blockPaletteSearch, setBlockPaletteSearch] = useState('');
@@ -3348,6 +3437,25 @@ export function MotusStudio() {
     setMobileStudioPane(nextPane);
     requestAnimationFrame(() => {
       document.getElementById(`mobile-pane-${nextPane}`)?.focus();
+    });
+  };
+
+  const handleCatalogTabKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    const currentIndex = CATALOG_TABS.indexOf(catalogTab);
+    const nextIndex = getTabIndexForKey(
+      currentIndex,
+      CATALOG_TABS.length,
+      event.key,
+    );
+    if (nextIndex === null) return;
+    const nextTab = CATALOG_TABS[nextIndex];
+
+    event.preventDefault();
+    setCatalogTab(nextTab);
+    requestAnimationFrame(() => {
+      document.getElementById(`catalog-tab-${nextTab}`)?.focus();
     });
   };
 
@@ -5444,7 +5552,7 @@ export function MotusStudio() {
     if (toolId === 'speech') addElement('speech');
     if (toolId === 'motion') setInspectorTab('motion');
     if (toolId === 'catalog') {
-      setCatalogTab('templates');
+      setCatalogTab('elements');
       setCatalogOpen(true);
     }
   };
@@ -5521,6 +5629,37 @@ export function MotusStudio() {
     if (!added) return;
     setCatalogOpen(false);
     setNotice(`${asset.name} reused in ${activeScene.name}`);
+  };
+
+  const addCatalogElement = (entryId: string) => {
+    const created = createElementCatalogItem(
+      entryId,
+      activeScene.elements.length + 1,
+      uniqueId,
+    );
+    if (!created) return;
+    if (
+      activeScene.elements.length + created.elements.length >
+      MAX_SCENE_ELEMENTS
+    ) {
+      setNotice(
+        `${created.entry.name} needs ${created.elements.length} layers · this scene only has ${MAX_SCENE_ELEMENTS - activeScene.elements.length} free`,
+      );
+      return;
+    }
+
+    commitProject((draft) => {
+      findProjectScene(draft, activeScene.id)?.scene.elements.push(
+        ...created.elements,
+      );
+    });
+    setSelectedElementId(created.rootElementId);
+    setInspectorTab('design');
+    setCatalogOpen(false);
+    setNotice(
+      `${created.entry.name} added · ${created.elements.length} editable layer${created.elements.length === 1 ? '' : 's'}`,
+    );
+    focusEditorTarget(activeScene.id, created.rootElementId);
   };
 
   const importProject = (file?: File) => {
@@ -6063,8 +6202,11 @@ export function MotusStudio() {
         setReaderPreviewKey((key) => key + 1);
         setReaderOpen(true);
         setNotice(`Previewing ${work.title}`);
-      } else if (catalogTarget === 'works' || catalogTarget === 'motion') {
-        setCatalogTab(catalogTarget);
+      } else if (
+        catalogTarget &&
+        CATALOG_TABS.includes(catalogTarget as CatalogTab)
+      ) {
+        setCatalogTab(catalogTarget as CatalogTab);
         setCatalogOpen(true);
       }
 
@@ -6747,6 +6889,37 @@ export function MotusStudio() {
       !normalizedCatalogSearch ||
       asset.name.toLocaleLowerCase().includes(normalizedCatalogSearch),
   );
+  const normalizedElementCatalogSearch = elementCatalogSearch
+    .trim()
+    .toLocaleLowerCase();
+  const filteredElementCatalog = MOTUS_ELEMENT_CATALOG.filter((entry) => {
+    if (
+      elementCatalogCategory !== 'all' &&
+      entry.category !== elementCatalogCategory
+    ) {
+      return false;
+    }
+    if (!normalizedElementCatalogSearch) return true;
+    const preset =
+      entry.kind === 'shape' ? entry.shapePreset : entry.previewPreset;
+    return [
+      entry.name,
+      entry.description,
+      entry.category,
+      preset,
+      ...entry.tags,
+    ]
+      .join(' ')
+      .toLocaleLowerCase()
+      .includes(normalizedElementCatalogSearch);
+  });
+  const elementCatalogCategoryCounts = new Map(
+    ELEMENT_CATALOG_CATEGORIES.map((category) => [
+      category.id,
+      MOTUS_ELEMENT_CATALOG.filter((entry) => entry.category === category.id)
+        .length,
+    ]),
+  );
   const publicationHasChanges = hasUnpublishedChanges(project);
   const publicationReadiness = getPublicationReadiness(project);
   const draftSaveStatus = getDraftSaveStatus({
@@ -7366,6 +7539,7 @@ export function MotusStudio() {
     <main className="studio-shell">
       <input
         accept=".png,.webp,image/png,image/webp"
+        aria-label="Upload a PNG or WebP image"
         className="sr-only"
         onChange={(event) => {
           void uploadImage(event.target.files?.[0]);
@@ -7376,6 +7550,7 @@ export function MotusStudio() {
       />
       <input
         accept=".json,.motus.json,application/json"
+        aria-label="Import a Motus project"
         className="sr-only"
         onChange={(event) => {
           importProject(event.target.files?.[0]);
@@ -7718,6 +7893,7 @@ export function MotusStudio() {
         <aside className="tool-rail" aria-label="Add and edit elements">
           {toolItems.map(({ id, label, icon: Icon }) => (
             <button
+              aria-label={label}
               aria-pressed={
                 id === 'select' || id === 'motion'
                   ? activeTool === id
@@ -8986,6 +9162,31 @@ export function MotusStudio() {
                         value={selectedElement.name}
                       />
                     </label>
+                    {selectedElement.type === 'shape' ? (
+                      <label htmlFor="selected-layer-shape-preset">
+                        <span>Shape style</span>
+                        <NativeSelect
+                          id="selected-layer-shape-preset"
+                          onChange={(event) =>
+                            updateElement(selectedElement.id, (item) => {
+                              item.shapePreset = event.target
+                                .value as ElementShapePreset;
+                            })
+                          }
+                          size="sm"
+                          value={getElementShapePreset(selectedElement)}
+                        >
+                          {MOTUS_SHAPE_PRESET_DEFINITIONS.map((definition) => (
+                            <NativeSelectOption
+                              key={definition.id}
+                              value={definition.id}
+                            >
+                              {definition.label}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </label>
+                    ) : null}
                     {selectedElement.type === 'text' ||
                     selectedElement.type === 'speech' ? (
                       <label htmlFor="selected-layer-text">
@@ -10612,8 +10813,8 @@ export function MotusStudio() {
           <DialogHeader>
             <DialogTitle>Motus catalogs</DialogTitle>
             <DialogDescription>
-              Read motion previews, reuse project images, start from a scene
-              template, or apply an editable block preset.
+              Add editable comic elements, read motion previews, reuse project
+              images, start from a scene template, or apply a block preset.
             </DialogDescription>
           </DialogHeader>
           <div
@@ -10622,36 +10823,65 @@ export function MotusStudio() {
             role="tablist"
           >
             <button
+              aria-controls="catalog-panel-works"
               aria-selected={catalogTab === 'works'}
+              id="catalog-tab-works"
               onClick={() => setCatalogTab('works')}
+              onKeyDown={handleCatalogTabKeyDown}
               role="tab"
+              tabIndex={catalogTab === 'works' ? 0 : -1}
               type="button"
             >
               <LibraryBig />
               Explore works
             </button>
             <button
-              aria-selected={catalogTab === 'assets'}
-              onClick={() => setCatalogTab('assets')}
+              aria-controls="catalog-panel-elements"
+              aria-selected={catalogTab === 'elements'}
+              id="catalog-tab-elements"
+              onClick={() => setCatalogTab('elements')}
+              onKeyDown={handleCatalogTabKeyDown}
               role="tab"
+              tabIndex={catalogTab === 'elements' ? 0 : -1}
+              type="button"
+            >
+              <Sparkles />
+              Elements
+            </button>
+            <button
+              aria-controls="catalog-panel-assets"
+              aria-selected={catalogTab === 'assets'}
+              id="catalog-tab-assets"
+              onClick={() => setCatalogTab('assets')}
+              onKeyDown={handleCatalogTabKeyDown}
+              role="tab"
+              tabIndex={catalogTab === 'assets' ? 0 : -1}
               type="button"
             >
               <ImagePlus />
               Project images
             </button>
             <button
+              aria-controls="catalog-panel-templates"
               aria-selected={catalogTab === 'templates'}
+              id="catalog-tab-templates"
               onClick={() => setCatalogTab('templates')}
+              onKeyDown={handleCatalogTabKeyDown}
               role="tab"
+              tabIndex={catalogTab === 'templates' ? 0 : -1}
               type="button"
             >
               <Layers3 />
               Scene templates
             </button>
             <button
+              aria-controls="catalog-panel-motion"
               aria-selected={catalogTab === 'motion'}
+              id="catalog-tab-motion"
               onClick={() => setCatalogTab('motion')}
+              onKeyDown={handleCatalogTabKeyDown}
               role="tab"
+              tabIndex={catalogTab === 'motion' ? 0 : -1}
               type="button"
             >
               <Code2 />
@@ -10660,7 +10890,12 @@ export function MotusStudio() {
           </div>
 
           {catalogTab === 'works' ? (
-            <section className="catalog-panel" aria-label="Works catalog">
+            <section
+              aria-labelledby="catalog-tab-works"
+              className="catalog-panel"
+              id="catalog-panel-works"
+              role="tabpanel"
+            >
               <div className="catalog-search">
                 <Search aria-hidden="true" />
                 <Input
@@ -10777,8 +11012,138 @@ export function MotusStudio() {
             </section>
           ) : null}
 
+          {catalogTab === 'elements' ? (
+            <section
+              aria-labelledby="catalog-tab-elements"
+              className="catalog-panel element-catalog-panel"
+              id="catalog-panel-elements"
+              role="tabpanel"
+            >
+              <div className="element-catalog-heading">
+                <div>
+                  <span>EDITABLE ELEMENTS</span>
+                  <h2>Build the page from native layers.</h2>
+                  <p>
+                    Every shape can be recolored, resized, rigged, nested, and
+                    animated. Kits arrive as grouped layers you can open and
+                    edit separately.
+                  </p>
+                </div>
+                <output aria-live="polite">
+                  {filteredElementCatalog.length} of{' '}
+                  {MOTUS_ELEMENT_CATALOG.length} elements
+                </output>
+              </div>
+              <div className="catalog-search element-catalog-search">
+                <Search aria-hidden="true" />
+                <Input
+                  aria-label="Search editable elements"
+                  onChange={(event) =>
+                    setElementCatalogSearch(event.target.value)
+                  }
+                  placeholder="Search panels, effects, symbols, and text kits…"
+                  value={elementCatalogSearch}
+                />
+              </div>
+              <fieldset className="element-category-list">
+                <legend className="sr-only">
+                  Filter editable elements by category
+                </legend>
+                <button
+                  aria-pressed={elementCatalogCategory === 'all'}
+                  onClick={() => setElementCatalogCategory('all')}
+                  type="button"
+                >
+                  All <span>{MOTUS_ELEMENT_CATALOG.length}</span>
+                </button>
+                {ELEMENT_CATALOG_CATEGORIES.map((category) => (
+                  <button
+                    aria-pressed={elementCatalogCategory === category.id}
+                    key={category.id}
+                    onClick={() => setElementCatalogCategory(category.id)}
+                    type="button"
+                  >
+                    {category.label}{' '}
+                    <span>{elementCatalogCategoryCounts.get(category.id)}</span>
+                  </button>
+                ))}
+              </fieldset>
+
+              {filteredElementCatalog.length ? (
+                <div className="element-catalog-grid">
+                  {filteredElementCatalog.map((entry) => (
+                    <article className="element-catalog-card" key={entry.id}>
+                      <div
+                        aria-hidden="true"
+                        className="element-catalog-preview"
+                      >
+                        <span
+                          className="element-catalog-shape element-shape"
+                          data-shape-preset={entry.previewPreset}
+                          style={
+                            {
+                              '--element-fill': entry.fill,
+                            } as CSSProperties
+                          }
+                        >
+                          <MotusShapeGlyph preset={entry.previewPreset} />
+                        </span>
+                        {entry.kind === 'kit' ? (
+                          <strong style={{ color: entry.previewTextColor }}>
+                            {entry.previewText}
+                          </strong>
+                        ) : null}
+                      </div>
+                      <div className="element-catalog-copy">
+                        <small>
+                          {ELEMENT_CATALOG_CATEGORIES.find(
+                            (category) => category.id === entry.category,
+                          )?.label ?? entry.category}{' '}
+                          · {entry.layerCount} editable layer
+                          {entry.layerCount === 1 ? '' : 's'}
+                        </small>
+                        <h3>{entry.name}</h3>
+                        <p>{entry.description}</p>
+                        <Button
+                          aria-label={`Add ${entry.name} to scene`}
+                          onClick={() => addCatalogElement(entry.id)}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          <Plus />
+                          Add to scene
+                        </Button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="catalog-empty">
+                  <Search />
+                  <strong>No matching elements</strong>
+                  <p>Clear the search or show every category.</p>
+                  <Button
+                    onClick={() => {
+                      setElementCatalogSearch('');
+                      setElementCatalogCategory('all');
+                    }}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Clear filters
+                  </Button>
+                </div>
+              )}
+            </section>
+          ) : null}
+
           {catalogTab === 'assets' ? (
-            <section className="catalog-panel" aria-label="Project images">
+            <section
+              aria-labelledby="catalog-tab-assets"
+              className="catalog-panel"
+              id="catalog-panel-assets"
+              role="tabpanel"
+            >
               <div className="catalog-search">
                 <Search aria-hidden="true" />
                 <Input
@@ -10865,8 +11230,10 @@ export function MotusStudio() {
 
           {catalogTab === 'templates' ? (
             <section
+              aria-labelledby="catalog-tab-templates"
               className="catalog-panel"
-              aria-label="Scene template catalog"
+              id="catalog-panel-templates"
+              role="tabpanel"
             >
               <div className="catalog-intro">
                 <span>SCENE CATALOG</span>
@@ -10908,8 +11275,10 @@ export function MotusStudio() {
 
           {catalogTab === 'motion' ? (
             <section
+              aria-labelledby="catalog-tab-motion"
               className="catalog-panel"
-              aria-label="Motion preset catalog"
+              id="catalog-panel-motion"
+              role="tabpanel"
             >
               <div className="catalog-intro">
                 <span>MOTION CATALOG</span>

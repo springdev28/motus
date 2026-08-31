@@ -23,6 +23,7 @@ import {
   PROJECT_SCHEMA_VERSION,
   createDefaultProject,
   createPublicationRevision,
+  type MotusElement,
   type MotusProject,
 } from './motus-model.ts';
 
@@ -203,6 +204,117 @@ void test('device registry migrates schema 9 publication layers to the current r
     assert.equal(element.pivotX, 50);
     assert.equal(element.pivotY, 50);
   }
+});
+
+void test('device registry backfills legacy publication shape presets across every reader snapshot', () => {
+  const storage = new MemoryStorage();
+  const { project, revision } = publishProject();
+  const legacyRevision = structuredClone(revision) as unknown as Record<
+    string,
+    unknown
+  >;
+  const shapeIds: string[] = [];
+  for (const chapter of legacyRevision.chapters as Array<
+    Record<string, unknown>
+  >) {
+    for (const scene of chapter.scenes as Array<Record<string, unknown>>) {
+      for (const element of scene.elements as Array<Record<string, unknown>>) {
+        if (element.type !== 'shape') continue;
+        shapeIds.push(element.id as string);
+        delete element.shapePreset;
+      }
+    }
+  }
+  assert.ok(shapeIds.length > 0);
+  storage.setItem(
+    DEVICE_PUBLICATION_REGISTRY_STORAGE_KEY,
+    JSON.stringify({
+      schemaVersion: 1,
+      publications: [{ projectId: project.id, revision: legacyRevision }],
+    }),
+  );
+
+  const publications = listDevicePublications(storage);
+
+  assert.equal(publications.length, 1);
+  assert.equal(publications[0].project.schemaVersion, PROJECT_SCHEMA_VERSION);
+  for (const chapters of [
+    publications[0].project.chapters,
+    publications[0].revision.chapters,
+    publications[0].source.chapters,
+  ]) {
+    const shapes = chapters
+      .flatMap((chapter) => chapter.scenes)
+      .flatMap((scene) => scene.elements)
+      .filter((element) => element.type === 'shape');
+    assert.deepEqual(
+      shapes.map((element) => ({
+        id: element.id,
+        shapePreset: element.shapePreset,
+      })),
+      shapeIds.map((id) => ({ id, shapePreset: 'orb' })),
+    );
+  }
+});
+
+void test('device registry preserves nondefault shape presets across save and list', () => {
+  const storage = new MemoryStorage();
+  const project = createDefaultProject();
+  const shape = project.chapters
+    .flatMap((chapter) => chapter.scenes)
+    .flatMap((scene) => scene.elements)
+    .find((element) => element.type === 'shape');
+  assert.ok(shape);
+  shape.shapePreset = 'lightning';
+  const { revision } = publishProject(project);
+
+  assert.equal(saveDevicePublication(storage, project.id, revision), true);
+  const publications = listDevicePublications(storage);
+
+  assert.equal(publications.length, 1);
+  for (const chapters of [
+    publications[0].project.chapters,
+    publications[0].revision.chapters,
+    publications[0].source.chapters,
+  ]) {
+    const listedShape: MotusElement | undefined = chapters
+      .flatMap((chapter) => chapter.scenes)
+      .flatMap((scene) => scene.elements)
+      .find((element) => element.id === shape.id);
+    assert.ok(listedShape);
+    assert.equal(listedShape.shapePreset, 'lightning');
+  }
+});
+
+void test('device registry rejects and fails closed on invalid shape presets', () => {
+  const storage = new MemoryStorage();
+  const { project, revision } = publishProject();
+  const invalidRevision = structuredClone(revision);
+  const invalidShape = invalidRevision.chapters
+    .flatMap((chapter) => chapter.scenes)
+    .flatMap((scene) => scene.elements)
+    .find((element) => element.type === 'shape');
+  assert.ok(invalidShape);
+  (invalidShape as unknown as Record<string, unknown>).shapePreset = 'triangle';
+
+  assert.equal(
+    saveDevicePublication(storage, project.id, invalidRevision),
+    false,
+  );
+  assert.equal(storage.getItem(DEVICE_PUBLICATION_REGISTRY_STORAGE_KEY), null);
+
+  storage.setItem(
+    DEVICE_PUBLICATION_REGISTRY_STORAGE_KEY,
+    JSON.stringify({
+      schemaVersion: 1,
+      publications: [{ projectId: project.id, revision: invalidRevision }],
+    }),
+  );
+  assert.deepEqual(listDevicePublications(storage), []);
+  assert.equal(
+    resolveDevicePublication(storage, getDevicePublicationSlug(project.id)),
+    null,
+  );
 });
 
 void test('device registry upgrades publications that predate reader presentation', () => {
