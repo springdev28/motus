@@ -1,5 +1,6 @@
 import { readNewestMotusDraft } from './motus-draft-storage.ts';
 import {
+  DEFAULT_ELEMENT_SHAPE_PRESET,
   PROJECT_SCHEMA_VERSION,
   cloneProject,
   getProjectScenes,
@@ -82,6 +83,13 @@ function createPublishedProject(
         ? normalizeReaderPresentation()
         : legacySnapshot.readerPresentation,
   };
+  for (const chapter of snapshot.chapters) {
+    for (const element of chapter.scenes.flatMap((scene) => scene.elements)) {
+      if (element.type === 'shape' && element.shapePreset === undefined) {
+        element.shapePreset = DEFAULT_ELEMENT_SHAPE_PRESET;
+      }
+    }
+  }
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: projectId,
