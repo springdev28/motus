@@ -3383,6 +3383,89 @@ export function getElementRigChildren(
   return elements.filter((element) => element.parentId === parentId);
 }
 
+export type ElementRigSiblingReorderOutcome =
+  | 'moved'
+  | 'unchanged'
+  | 'missing-layer'
+  | 'different-parent';
+export type ElementRigSiblingPlacement = 'at' | 'before' | 'after';
+
+/**
+ * Reorders one layer within the backing slots owned by its sibling stack.
+ * Non-siblings keep their exact slots, so moving a rig root never disturbs the
+ * authored order of nested parts or another branch.
+ */
+export function reorderElementRigSibling(
+  elements: readonly MotusElement[],
+  elementId: string,
+  overElementId: string,
+  placement: ElementRigSiblingPlacement = 'at',
+): {
+  elements: MotusElement[];
+  outcome: ElementRigSiblingReorderOutcome;
+} {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  const overElement = elements.find(
+    (candidate) => candidate.id === overElementId,
+  );
+  if (!element || !overElement) {
+    return { elements: [...elements], outcome: 'missing-layer' };
+  }
+  if (element.parentId !== overElement.parentId) {
+    return { elements: [...elements], outcome: 'different-parent' };
+  }
+
+  const siblingIndexes = elements.flatMap((candidate, index) =>
+    candidate.parentId === element.parentId ? [index] : [],
+  );
+  const siblingElements = siblingIndexes.map((index) => elements[index]);
+  const sourceIndex = siblingElements.findIndex(
+    (candidate) => candidate.id === elementId,
+  );
+  const targetIndex = siblingElements.findIndex(
+    (candidate) => candidate.id === overElementId,
+  );
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return { elements: [...elements], outcome: 'missing-layer' };
+  }
+  if (sourceIndex === targetIndex) {
+    return { elements: [...elements], outcome: 'unchanged' };
+  }
+
+  if (placement === 'at') {
+    const [moved] = siblingElements.splice(sourceIndex, 1);
+    siblingElements.splice(targetIndex, 0, moved);
+  } else {
+    const visualSiblings = [...siblingElements].reverse();
+    const visualSourceIndex = visualSiblings.findIndex(
+      (candidate) => candidate.id === elementId,
+    );
+    const [moved] = visualSiblings.splice(visualSourceIndex, 1);
+    const visualTargetIndex = visualSiblings.findIndex(
+      (candidate) => candidate.id === overElementId,
+    );
+    visualSiblings.splice(
+      visualTargetIndex + (placement === 'after' ? 1 : 0),
+      0,
+      moved,
+    );
+    siblingElements.splice(
+      0,
+      siblingElements.length,
+      ...visualSiblings.reverse(),
+    );
+  }
+  const reorderedBySlot = new Map(
+    siblingIndexes.map((slot, index) => [slot, siblingElements[index]]),
+  );
+  return {
+    elements: elements.map(
+      (candidate, index) => reorderedBySlot.get(index) ?? candidate,
+    ),
+    outcome: 'moved',
+  };
+}
+
 export function getElementRigDescendantIds(
   elements: readonly MotusElement[],
   elementId: string,
@@ -3567,6 +3650,134 @@ function rotateRigPointAroundElement(
     element.rotation,
   );
   return { x: pivot.x + rotated.x, y: pivot.y + rotated.y };
+}
+
+function inverseRotateRigPointAroundElement(
+  point: { x: number; y: number },
+  element: MotusElement,
+) {
+  const pivot = {
+    x: element.x + (element.width * element.pivotX) / 100,
+    y: element.y + (element.height * element.pivotY) / 100,
+  };
+  const rotated = rotateRigVector(
+    point.x - pivot.x,
+    point.y - pivot.y,
+    -element.rotation,
+  );
+  return { x: pivot.x + rotated.x, y: pivot.y + rotated.y };
+}
+
+function normalizeRigRotation(rotation: number) {
+  return ((((rotation + 180) % 360) + 360) % 360) - 180;
+}
+
+export type ElementRigReparentIssue =
+  | 'missing-layer'
+  | 'missing-parent'
+  | 'cycle'
+  | 'depth-limit';
+
+/**
+ * Changes one rig branch's transform parent without changing its rendered
+ * static pose. The branch keeps scene-authored coordinates, so every member is
+ * translated together and the branch root absorbs the ancestor-angle delta.
+ */
+export function reparentElementRigBranchPreservingPose(
+  elements: readonly MotusElement[],
+  elementId: string,
+  nextParentId: string | null,
+): {
+  changed: boolean;
+  elements: MotusElement[];
+  issue: ElementRigReparentIssue | null;
+} {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  if (!element) {
+    return { changed: false, elements: [...elements], issue: 'missing-layer' };
+  }
+  if (element.parentId === nextParentId) {
+    return { changed: false, elements: [...elements], issue: null };
+  }
+  const nextParent = nextParentId
+    ? elements.find((candidate) => candidate.id === nextParentId)
+    : null;
+  if (nextParentId && !nextParent) {
+    return { changed: false, elements: [...elements], issue: 'missing-parent' };
+  }
+  if (wouldCreateElementRigCycle(elements, elementId, nextParentId)) {
+    return { changed: false, elements: [...elements], issue: 'cycle' };
+  }
+
+  const currentDepth = getElementRigDepth(elements, elementId);
+  const descendantIds = getElementRigDescendantIds(elements, elementId);
+  const deepestBranch = Math.max(
+    0,
+    ...descendantIds.map(
+      (descendantId) =>
+        getElementRigDepth(elements, descendantId) - currentDepth,
+    ),
+  );
+  const nextDepth = nextParent
+    ? getElementRigDepth(elements, nextParent.id) + 1
+    : 0;
+  if (nextDepth + deepestBranch > MAX_ELEMENT_RIG_DEPTH) {
+    return { changed: false, elements: [...elements], issue: 'depth-limit' };
+  }
+
+  const oldAncestors = getElementRigAncestors(elements, elementId);
+  const nextAncestors = nextParent
+    ? [nextParent, ...getElementRigAncestors(elements, nextParent.id)]
+    : [];
+  const authoredPivot = {
+    x: element.x + (element.width * element.pivotX) / 100,
+    y: element.y + (element.height * element.pivotY) / 100,
+  };
+  const renderedPivot = oldAncestors.reduce(
+    (point, ancestor) => rotateRigPointAroundElement(point, ancestor),
+    authoredPivot,
+  );
+  const nextAuthoredPivot = [...nextAncestors]
+    .reverse()
+    .reduce(
+      (point, ancestor) => inverseRotateRigPointAroundElement(point, ancestor),
+      renderedPivot,
+    );
+  const deltaX = nextAuthoredPivot.x - authoredPivot.x;
+  const deltaY = nextAuthoredPivot.y - authoredPivot.y;
+  const oldAncestorRotation = oldAncestors.reduce(
+    (total, ancestor) => total + ancestor.rotation,
+    0,
+  );
+  const nextAncestorRotation = nextAncestors.reduce(
+    (total, ancestor) => total + ancestor.rotation,
+    0,
+  );
+  const branchIds = new Set([elementId, ...descendantIds]);
+
+  return {
+    changed: true,
+    elements: elements.map((candidate) => {
+      if (!branchIds.has(candidate.id)) return candidate;
+      if (candidate.id === elementId) {
+        return {
+          ...candidate,
+          parentId: nextParentId,
+          rotation: normalizeRigRotation(
+            candidate.rotation + oldAncestorRotation - nextAncestorRotation,
+          ),
+          x: candidate.x + deltaX,
+          y: candidate.y + deltaY,
+        };
+      }
+      return {
+        ...candidate,
+        x: candidate.x + deltaX,
+        y: candidate.y + deltaY,
+      };
+    }),
+    issue: null,
+  };
 }
 
 /** Returns visible bounds after the element and every rig ancestor rotate it. */
