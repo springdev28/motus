@@ -101,6 +101,7 @@ import { Button } from '@/components/ui/button';
 import { MotusLogo } from '@/components/motus-logo';
 import { MotusMeshImage } from '@/components/motus-mesh-image';
 import { MotusMeshWarpEditor } from '@/components/motus-mesh-warp-editor';
+import { MotusMotionTimeline } from '@/components/motus-motion-timeline';
 import { MotusRigJointFinder } from '@/components/motus-rig-joint-finder';
 import {
   MotusSmartCut,
@@ -288,6 +289,7 @@ import {
   type PublicationVisibility,
   type MotionProgramRuntimeIssue,
 } from '@/lib/motus-model';
+import type { MotionTimelineSpan } from '@/lib/motus-motion-timeline';
 import {
   DRAFT_POINTER_KEY,
   DRAFT_SLOT_A_KEY,
@@ -694,6 +696,7 @@ function SortableMotionBlock({
       data-dragging={isDragging || undefined}
       data-drag-over={isOver || undefined}
       data-kind={block.kind}
+      id={`motion-block-${block.id}`}
       ref={setNodeRef}
       style={style}
     >
@@ -719,6 +722,7 @@ function StaticMotionBlock({
       className={`motion-block block-${block.category}`}
       data-disabled={!block.enabled || undefined}
       data-kind={block.kind}
+      id={`motion-block-${block.id}`}
     >
       {children}
     </li>
@@ -2258,18 +2262,35 @@ function BouncePathPreview({ jumps }: { jumps: BounceJump[] }) {
 
 type ElementAnimationHandle = {
   cancel: () => void;
+  currentTime: () => number;
+  durationMs: number;
   finished: Promise<unknown>;
+  pause: () => void;
+  play: () => void;
+  seek: (timeMs: number) => void;
+};
+
+type ScenePlaybackController = {
+  cancel: () => void;
+  currentTime: () => number;
+  durationMs: number;
+  pause: () => void;
+  play: () => void;
+  seek: (timeMs: number) => void;
 };
 
 function animateElementProgram(
   element: MotusElement,
   node: HTMLDivElement,
   effectNode: HTMLDivElement = node,
+  sharedStartTime?: CSSNumberish | null,
+  allowReducedMotion = false,
 ): ElementAnimationHandle | null {
   if (
     !node.animate ||
     !element.visible ||
-    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    (!allowReducedMotion &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
   ) {
     return null;
   }
@@ -2310,15 +2331,35 @@ function animateElementProgram(
     })),
     timing,
   );
+  if (sharedStartTime !== undefined && sharedStartTime !== null) {
+    transformAnimation.startTime = sharedStartTime;
+    effectAnimation.startTime = sharedStartTime;
+  }
+  const animations = [transformAnimation, effectAnimation];
+  const readCurrentTime = () => {
+    const time = transformAnimation.currentTime;
+    return typeof time === 'number' && Number.isFinite(time) ? time : 0;
+  };
+  const seek = (timeMs: number) => {
+    const nextTime = Math.min(
+      Math.max(Number.isFinite(timeMs) ? timeMs : 0, 0),
+      timing.duration,
+    );
+    animations.forEach((animation) => {
+      animation.currentTime = nextTime;
+    });
+  };
   return {
-    cancel: () => {
-      transformAnimation.cancel();
-      effectAnimation.cancel();
-    },
+    cancel: () => animations.forEach((animation) => animation.cancel()),
+    currentTime: readCurrentTime,
+    durationMs: timing.duration,
     finished: Promise.all([
       transformAnimation.finished,
       effectAnimation.finished,
     ]).then(() => undefined),
+    pause: () => animations.forEach((animation) => animation.pause()),
+    play: () => animations.forEach((animation) => animation.play()),
+    seek,
   };
 }
 
@@ -2331,6 +2372,8 @@ type SceneViewProps = {
   playingKey?: number;
   playingElementId?: string;
   onPlaybackComplete?: () => void;
+  onPlaybackController?: (controller: ScenePlaybackController | null) => void;
+  playbackStartsPaused?: boolean;
   interactive?: boolean;
   readerTriggers?: boolean;
   onSelect?: (id: string, additive?: boolean) => void;
@@ -2367,6 +2410,8 @@ function SceneView({
   playingKey = 0,
   playingElementId,
   onPlaybackComplete,
+  onPlaybackController,
+  playbackStartsPaused = false,
   interactive = false,
   readerTriggers = false,
   onSelect,
@@ -2387,6 +2432,8 @@ function SceneView({
   const readerAnimations = useRef(new Map<string, ElementAnimationHandle>());
   const triggerReaderElementRef = useRef<ReaderTriggerElement>(() => undefined);
   const onPlaybackCompleteRef = useRef(onPlaybackComplete);
+  const onPlaybackControllerRef = useRef(onPlaybackController);
+  const playbackStartsPausedRef = useRef(playbackStartsPaused);
   const renderedElements = useMemo(
     () =>
       elementLimit === undefined
@@ -2400,8 +2447,17 @@ function SceneView({
   }, [onPlaybackComplete]);
 
   useEffect(() => {
+    onPlaybackControllerRef.current = onPlaybackController;
+  }, [onPlaybackController]);
+
+  useEffect(() => {
+    playbackStartsPausedRef.current = playbackStartsPaused;
+  }, [playbackStartsPaused]);
+
+  useEffect(() => {
     runningAnimations.current.forEach((animation) => animation.cancel());
     runningAnimations.current = [];
+    onPlaybackControllerRef.current?.(null);
 
     if (!playingKey || readerTriggers) return;
 
@@ -2418,14 +2474,19 @@ function SceneView({
       animations.forEach((animation) => animation.cancel());
       if (runningAnimations.current === animations) {
         runningAnimations.current = [];
+        onPlaybackControllerRef.current?.(null);
       }
     };
 
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    if (
+      !playbackStartsPausedRef.current &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ) {
       queueMicrotask(completePlayback);
       return cleanup;
     }
 
+    const sharedStartTime = document.timeline.currentTime;
     for (const element of renderedElements) {
       if (playingElementId && element.id !== playingElementId) continue;
       const node = elementNodes.current.get(element.id);
@@ -2434,8 +2495,11 @@ function SceneView({
         element,
         node,
         effectNodes.current.get(element.id),
+        sharedStartTime,
+        playbackStartsPausedRef.current,
       );
       if (!animation) continue;
+      if (playbackStartsPausedRef.current) animation.pause();
       animations.push(animation);
     }
 
@@ -2443,6 +2507,35 @@ function SceneView({
     if (animations.length === 0) {
       queueMicrotask(completePlayback);
     } else {
+      const durationMs = animations.reduce(
+        (longest, animation) => Math.max(longest, animation.durationMs),
+        0,
+      );
+      const controller: ScenePlaybackController = {
+        cancel: () => {
+          disposed = true;
+          animations.forEach((animation) => animation.cancel());
+        },
+        currentTime: () =>
+          animations.reduce(
+            (latest, animation) => Math.max(latest, animation.currentTime()),
+            0,
+          ),
+        durationMs,
+        pause: () => animations.forEach((animation) => animation.pause()),
+        play: () =>
+          animations.forEach((animation) => {
+            if (animation.currentTime() >= animation.durationMs) {
+              animation.seek(animation.durationMs);
+              animation.pause();
+            } else {
+              animation.play();
+            }
+          }),
+        seek: (timeMs) =>
+          animations.forEach((animation) => animation.seek(timeMs)),
+      };
+      onPlaybackControllerRef.current?.(controller);
       void Promise.allSettled(
         animations.map((animation) => animation.finished),
       ).then(completePlayback);
@@ -3086,6 +3179,9 @@ export function MotusStudio() {
   const [readerPreviewKey, setReaderPreviewKey] = useState(0);
   const [previewScope, setPreviewScope] = useState<PreviewScope>('selected');
   const [previewRunning, setPreviewRunning] = useState(false);
+  const [previewActive, setPreviewActive] = useState(false);
+  const [previewStartsPaused, setPreviewStartsPaused] = useState(false);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
   const [mobileStudioPane, setMobileStudioPane] =
     useState<MobileStudioPane>('stage');
   const [desktopPanelsEnabled, setDesktopPanelsEnabled] = useState(false);
@@ -3160,6 +3256,9 @@ export function MotusStudio() {
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
+  const canvasPlaybackController = useRef<ScenePlaybackController | null>(null);
+  const pendingPreviewSeek = useRef<number | null>(null);
+  const previewRunningRef = useRef(false);
   const copiedElements = useRef<CopiedElementSnapshot | null>(null);
   const motionSensors = useSensors(
     useSensor(PointerSensor, {
@@ -3182,8 +3281,14 @@ export function MotusStudio() {
 
   const resetTransientCanvasState = useCallback(() => {
     activePointerCleanup.current?.();
+    canvasPlaybackController.current?.cancel();
+    canvasPlaybackController.current = null;
+    pendingPreviewSeek.current = null;
+    previewRunningRef.current = false;
     setActiveAlignmentGuides([]);
     setPreviewRunning(false);
+    setPreviewActive(false);
+    setPreviewStartsPaused(false);
     setCanvasPreviewKey(0);
     setEditingTextElementId(null);
   }, []);
@@ -5232,7 +5337,13 @@ export function MotusStudio() {
     setCatalogOpen(false);
     setInspectorTab('motion');
     setPreviewScope('selected');
+    canvasPlaybackController.current?.cancel();
+    canvasPlaybackController.current = null;
+    pendingPreviewSeek.current = null;
+    previewRunningRef.current = true;
     setPreviewRunning(true);
+    setPreviewActive(true);
+    setPreviewStartsPaused(false);
     setMobileStudioPane('stage');
     setCanvasPreviewKey((key) => key + 1);
     setNotice(
@@ -6682,21 +6793,54 @@ export function MotusStudio() {
       }, 0),
     [activeScene.elements],
   );
-  const previewDurationMs =
-    previewScope === 'selected'
-      ? selectedPreviewDurationMs
-      : scenePreviewDurationMs;
-
   const finishCanvasPreview = useCallback(() => {
+    if (!previewRunningRef.current) return;
+    previewRunningRef.current = false;
+    canvasPlaybackController.current = null;
     setPreviewRunning(false);
+    setPreviewActive(false);
+    setPreviewStartsPaused(false);
     setCanvasPreviewKey(0);
     setNotice('Preview finished');
   }, []);
 
   const stopCanvasPreview = useCallback(() => {
+    previewRunningRef.current = false;
+    canvasPlaybackController.current?.cancel();
+    canvasPlaybackController.current = null;
+    pendingPreviewSeek.current = null;
     setPreviewRunning(false);
+    setPreviewActive(false);
+    setPreviewStartsPaused(false);
     setCanvasPreviewKey(0);
     setNotice('Preview stopped');
+  }, []);
+
+  const handleCanvasPlaybackController = useCallback(
+    (controller: ScenePlaybackController | null) => {
+      canvasPlaybackController.current = controller;
+      if (!controller || pendingPreviewSeek.current === null) return;
+      const nextTime = pendingPreviewSeek.current;
+      pendingPreviewSeek.current = null;
+      controller.pause();
+      controller.seek(nextTime);
+    },
+    [],
+  );
+
+  const getCanvasPreviewTime = useCallback(
+    () => canvasPlaybackController.current?.currentTime() ?? 0,
+    [],
+  );
+
+  const pauseCanvasPreview = useCallback(() => {
+    if (!canvasPlaybackController.current) return;
+    previewRunningRef.current = false;
+    canvasPlaybackController.current.pause();
+    setPreviewRunning(false);
+    setPreviewActive(true);
+    setPreviewStartsPaused(true);
+    setNotice('Preview paused');
   }, []);
 
   const startCanvasPreview = (scope: PreviewScope = previewScope) => {
@@ -6712,12 +6856,99 @@ export function MotusStudio() {
       );
       return;
     }
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setNotice(
+        'Motion is reduced · drag the timeline playhead to inspect frames',
+      );
+      return;
+    }
+    canvasPlaybackController.current?.cancel();
+    canvasPlaybackController.current = null;
+    pendingPreviewSeek.current = null;
+    previewRunningRef.current = true;
     setPreviewScope(scope);
     setPreviewRunning(true);
+    setPreviewActive(true);
+    setPreviewStartsPaused(false);
     setMobileStudioPane('stage');
     setCanvasPreviewKey((key) => key + 1);
     setNotice(
       `${scope === 'selected' ? selectedElement?.name : 'Scene'} preview · ${formatPreviewDuration(duration)}`,
+    );
+  };
+
+  const resumeCanvasPreview = () => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setNotice(
+        'Motion is reduced · drag the timeline playhead to inspect frames',
+      );
+      return;
+    }
+    const controller = canvasPlaybackController.current;
+    if (!controller || controller.currentTime() >= controller.durationMs - 1) {
+      startCanvasPreview();
+      return;
+    }
+    previewRunningRef.current = true;
+    controller.play();
+    setPreviewRunning(true);
+    setPreviewActive(true);
+    setPreviewStartsPaused(false);
+    setNotice('Preview resumed');
+  };
+
+  const seekCanvasPreview = (timeMs: number) => {
+    const duration =
+      previewScope === 'selected'
+        ? selectedPreviewDurationMs
+        : scenePreviewDurationMs;
+    if (duration <= 0) return;
+    const nextTime = Math.min(Math.max(timeMs, 0), duration);
+    previewRunningRef.current = false;
+    setPreviewRunning(false);
+    setPreviewActive(true);
+    setPreviewStartsPaused(true);
+    const controller = canvasPlaybackController.current;
+    if (controller) {
+      controller.pause();
+      controller.seek(nextTime);
+    } else {
+      pendingPreviewSeek.current = nextTime;
+      setPreviewStartsPaused(true);
+      setCanvasPreviewKey((key) => key + 1);
+    }
+    setNotice(`Playhead · ${formatPreviewDuration(nextTime)}`);
+  };
+
+  const changeTimelinePreviewScope = (scope: PreviewScope) => {
+    if (scope === previewScope) return;
+    previewRunningRef.current = false;
+    canvasPlaybackController.current?.cancel();
+    canvasPlaybackController.current = null;
+    pendingPreviewSeek.current = null;
+    setPreviewRunning(false);
+    setPreviewActive(false);
+    setPreviewStartsPaused(false);
+    setCanvasPreviewKey(0);
+    setPreviewScope(scope);
+    setNotice(`${scope === 'selected' ? 'Selected layer' : 'Scene'} timeline`);
+  };
+
+  const selectMotionTimelineSpan = (
+    elementId: string,
+    span: MotionTimelineSpan,
+  ) => {
+    setSelectedElementId(elementId);
+    setInspectorTab('motion');
+    setExpandedMotionBlockId(span.blockId);
+    setMobileStudioPane('blocks');
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(`motion-block-${span.blockId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    setNotice(
+      `${span.label} selected at ${formatPreviewDuration(span.startsAtMs)}`,
     );
   };
   const replayReader = () => {
@@ -7674,6 +7905,10 @@ export function MotusStudio() {
         <section
           className="workspace"
           aria-label="Comic scene editor"
+          data-motion-timeline={inspectorTab === 'motion' || undefined}
+          data-timeline-collapsed={
+            inspectorTab === 'motion' && timelineCollapsed ? true : undefined
+          }
           id="stage-pane"
         >
           <div className="workspace-toolbar">
@@ -7804,6 +8039,7 @@ export function MotusStudio() {
                 onKeyboardNudge={nudgeElement}
                 onKeyboardNudgeEnd={endHistoryTransaction}
                 onPlaybackComplete={finishCanvasPreview}
+                onPlaybackController={handleCanvasPlaybackController}
                 onPointerAction={beginPointerAction}
                 onSelect={selectElement}
                 onTextChange={changeTextOnCanvas}
@@ -7813,6 +8049,7 @@ export function MotusStudio() {
                     : undefined
                 }
                 playingKey={canvasPreviewKey}
+                playbackStartsPaused={previewStartsPaused}
                 scene={activeScene}
                 selectedId={selectedElementId}
                 selectedIds={selectedElementIdSet}
@@ -7821,75 +8058,26 @@ export function MotusStudio() {
           </div>
 
           {inspectorTab === 'motion' ? (
-            <section
-              aria-label="Preview controls"
-              className="preview-dock"
-              data-running={previewRunning || undefined}
-            >
-              <div className="preview-controls">
-                <button
-                  aria-label={
-                    previewRunning ? 'Replay preview' : 'Play preview'
-                  }
-                  className="preview-play-button"
-                  onClick={() => startCanvasPreview()}
-                  type="button"
-                >
-                  <Flag aria-hidden="true" fill="currentColor" />
-                  <span>{previewRunning ? 'Replay' : 'Play'}</span>
-                </button>
-                <button
-                  aria-label="Stop preview"
-                  className="preview-stop-button"
-                  disabled={!previewRunning}
-                  onClick={stopCanvasPreview}
-                  type="button"
-                >
-                  <Square aria-hidden="true" fill="currentColor" />
-                  <span>Stop</span>
-                </button>
-              </div>
-
-              <fieldset aria-label="Preview scope" className="preview-scope">
-                <button
-                  aria-pressed={previewScope === 'selected'}
-                  disabled={previewRunning}
-                  onClick={() => setPreviewScope('selected')}
-                  type="button"
-                >
-                  Selected
-                </button>
-                <button
-                  aria-pressed={previewScope === 'scene'}
-                  disabled={previewRunning}
-                  onClick={() => setPreviewScope('scene')}
-                  type="button"
-                >
-                  Scene
-                </button>
-              </fieldset>
-
-              <div aria-live="polite" className="preview-status">
-                <span>{previewRunning ? 'Playing' : 'Ready'}</span>
-                <strong>
-                  {previewScope === 'selected'
-                    ? (selectedElement?.name ?? 'No layer selected')
-                    : activeScene.name}
-                </strong>
-                <small>{formatPreviewDuration(previewDurationMs)}</small>
-                <span aria-hidden="true" className="preview-progress">
-                  <span
-                    className="preview-progress-fill"
-                    key={canvasPreviewKey}
-                    style={
-                      {
-                        '--preview-duration': `${Math.max(previewDurationMs, 1)}ms`,
-                      } as CSSProperties
-                    }
-                  />
-                </span>
-              </div>
-            </section>
+            <MotusMotionTimeline
+              active={previewActive}
+              collapsed={timelineCollapsed}
+              getCurrentTime={getCanvasPreviewTime}
+              onFinish={finishCanvasPreview}
+              onPause={pauseCanvasPreview}
+              onPlay={previewActive ? resumeCanvasPreview : startCanvasPreview}
+              onScopeChange={changeTimelinePreviewScope}
+              onSeek={seekCanvasPreview}
+              onSelectSpan={selectMotionTimelineSpan}
+              onStop={stopCanvasPreview}
+              onToggleCollapsed={() =>
+                setTimelineCollapsed((collapsed) => !collapsed)
+              }
+              playing={previewRunning}
+              scene={activeScene}
+              scope={previewScope}
+              selectedElementId={selectedElement?.id}
+              sessionKey={canvasPreviewKey}
+            />
           ) : null}
 
           <nav aria-label="Chapters" className="chapter-strip">
