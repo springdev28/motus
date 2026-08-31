@@ -21,6 +21,7 @@ import {
   KeyboardSensor,
   PointerSensor,
   closestCenter,
+  pointerWithin,
   useDraggable,
   useDroppable,
   useSensor,
@@ -248,7 +249,9 @@ import {
   normalizeMotionBlockNumericField,
   recordProjectHistory,
   removePublicationRevision,
+  reorderElementRigSibling,
   replaceMotionEvent,
+  reparentElementRigBranchPreservingPose,
   reorderChapters,
   reorderMotionActionBefore,
   reorderScenes,
@@ -602,6 +605,222 @@ function readMotionDragData(value: unknown): ActiveMotionDrag | null {
   )
     return null;
   return candidate as ActiveMotionDrag;
+}
+
+const LAYER_ROOT_DROP_ID = 'layer-root-dropzone';
+
+type ActiveLayerDrag = {
+  source: 'layer';
+  elementId: string;
+  parentId: string | null;
+  label: string;
+};
+
+type LayerDragHandle = {
+  attributes: DraggableAttributes;
+  listeners: DraggableSyntheticListeners;
+  setActivatorNodeRef: (element: HTMLElement | null) => void;
+  isDragging: boolean;
+};
+
+type LayerDropIntent = 'before' | 'parent' | 'after';
+
+type LayerDropData = {
+  source: 'layer-drop';
+  intent: LayerDropIntent;
+  targetElementId: string;
+  targetParentId: string | null;
+};
+
+function layerDragId(elementId: string) {
+  return `layer:${elementId}`;
+}
+
+function readLayerDragData(value: unknown): ActiveLayerDrag | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<ActiveLayerDrag>;
+  if (
+    candidate.source !== 'layer' ||
+    typeof candidate.elementId !== 'string' ||
+    typeof candidate.label !== 'string' ||
+    (candidate.parentId !== null && typeof candidate.parentId !== 'string')
+  ) {
+    return null;
+  }
+  return candidate as ActiveLayerDrag;
+}
+
+function layerDropId(intent: LayerDropIntent, elementId: string) {
+  return `layer-drop:${intent}:${elementId}`;
+}
+
+function readLayerDropData(value: unknown): LayerDropData | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<LayerDropData>;
+  if (
+    candidate.source !== 'layer-drop' ||
+    (candidate.intent !== 'before' &&
+      candidate.intent !== 'parent' &&
+      candidate.intent !== 'after') ||
+    typeof candidate.targetElementId !== 'string' ||
+    (candidate.targetParentId !== null &&
+      typeof candidate.targetParentId !== 'string')
+  ) {
+    return null;
+  }
+  return candidate as LayerDropData;
+}
+
+function LayerDropZone({
+  active,
+  element,
+  intent,
+  valid,
+}: {
+  active: boolean;
+  element: MotusElement;
+  intent: LayerDropIntent;
+  valid: boolean;
+}) {
+  const { isOver, setNodeRef } = useDroppable({
+    id: layerDropId(intent, element.id),
+    data: {
+      source: 'layer-drop',
+      intent,
+      targetElementId: element.id,
+      targetParentId: element.parentId,
+    } satisfies LayerDropData,
+    disabled: !active,
+  });
+  return (
+    <span
+      aria-hidden="true"
+      className="layer-drop-zone"
+      data-drag-over={isOver || undefined}
+      data-intent={intent}
+      data-valid={valid || undefined}
+      ref={setNodeRef}
+    />
+  );
+}
+
+function DraggableLayerRow({
+  activeDrag,
+  children,
+  depth,
+  disabled,
+  element,
+  nestAllowed,
+  primarySelected,
+  selected,
+}: {
+  activeDrag: ActiveLayerDrag | null;
+  children: (handle: LayerDragHandle) => ReactNode;
+  depth: number;
+  disabled: boolean;
+  element: MotusElement;
+  nestAllowed: boolean;
+  primarySelected: boolean;
+  selected: boolean;
+}) {
+  const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef } =
+    useDraggable({
+      id: layerDragId(element.id),
+      data: {
+        source: 'layer',
+        elementId: element.id,
+        parentId: element.parentId,
+        label: element.name,
+      } satisfies ActiveLayerDrag,
+      disabled,
+    });
+  const style = {
+    '--rig-depth': depth,
+    zIndex: isDragging ? 12 : undefined,
+  } as CSSProperties;
+  const reorderAllowed = Boolean(
+    activeDrag &&
+    activeDrag.elementId !== element.id &&
+    activeDrag.parentId === element.parentId,
+  );
+
+  return (
+    <div
+      aria-level={depth + 1}
+      className="layer-row"
+      data-dragging={isDragging || undefined}
+      data-primary-selected={primarySelected || undefined}
+      data-rig-depth={depth}
+      data-selected={selected || undefined}
+      ref={setNodeRef}
+      role="treeitem"
+      style={style}
+    >
+      {children({
+        attributes,
+        isDragging,
+        listeners,
+        setActivatorNodeRef,
+      })}
+      <LayerDropZone
+        active={Boolean(activeDrag)}
+        element={element}
+        intent="before"
+        valid={reorderAllowed}
+      />
+      <LayerDropZone
+        active={Boolean(activeDrag)}
+        element={element}
+        intent="parent"
+        valid={nestAllowed}
+      />
+      <LayerDropZone
+        active={Boolean(activeDrag)}
+        element={element}
+        intent="after"
+        valid={reorderAllowed}
+      />
+    </div>
+  );
+}
+
+function LayerRootDropTarget({ active }: { active: boolean }) {
+  const { isOver, setNodeRef } = useDroppable({
+    id: LAYER_ROOT_DROP_ID,
+    data: { source: 'layer-root' },
+  });
+  return (
+    <div
+      className="layer-root-drop"
+      data-active={active || undefined}
+      data-drag-over={isOver || undefined}
+      ref={setNodeRef}
+    >
+      <Layers3 aria-hidden="true" />
+      <span>
+        <strong>Scene root</strong>
+        <small>
+          {active
+            ? 'Drop here to detach the branch'
+            : 'Independent top-level layers'}
+        </small>
+      </span>
+    </div>
+  );
+}
+
+function LayerDragPreview({ drag }: { drag: ActiveLayerDrag }) {
+  return (
+    <div className="layer-drag-preview">
+      <GripVertical aria-hidden="true" />
+      <span>
+        <strong>{drag.label}</strong>
+        <small>
+          {drag.parentId ? 'Nested rig branch' : 'Scene root layer'}
+        </small>
+      </span>
+    </div>
+  );
 }
 
 function DraggableBlockPaletteCard({
@@ -3314,6 +3533,8 @@ export function MotusStudio() {
   );
   const [activeMotionDrag, setActiveMotionDrag] =
     useState<ActiveMotionDrag | null>(null);
+  const [activeLayerDrag, setActiveLayerDrag] =
+    useState<ActiveLayerDrag | null>(null);
   const [expandedMotionBlockId, setExpandedMotionBlockId] = useState<
     string | null
   >(null);
@@ -3366,6 +3587,11 @@ export function MotusStudio() {
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+  const layerSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 7 },
     }),
   );
 
@@ -3495,6 +3721,10 @@ export function MotusStudio() {
   const activeScene =
     activeChapter.scenes.find((scene) => scene.id === activeSceneId) ??
     activeChapter.scenes[0];
+  const flattenedLayerRows = useMemo(
+    () => flattenRigLayers(activeScene.elements),
+    [activeScene.elements],
+  );
   const chapterIndex = Math.max(
     project.chapters.findIndex((chapter) => chapter.id === activeChapter.id),
     0,
@@ -4210,36 +4440,39 @@ export function MotusStudio() {
   const setElementRigParent = (elementId: string, parentId: string | null) => {
     const element = activeScene.elements.find((item) => item.id === elementId);
     if (!element || element.parentId === parentId) return;
-    const currentDepth = getElementRigDepth(activeScene.elements, elementId);
-    const branchDepth = Math.max(
-      0,
-      ...getElementRigDescendantIds(activeScene.elements, elementId).map(
-        (descendantId) =>
-          getElementRigDepth(activeScene.elements, descendantId) - currentDepth,
-      ),
+    const preview = reparentElementRigBranchPreservingPose(
+      activeScene.elements,
+      elementId,
+      parentId,
     );
-    const nextDepth = parentId
-      ? getElementRigDepth(activeScene.elements, parentId) + 1
-      : 0;
-    if (
-      parentId &&
-      (wouldCreateElementRigCycle(activeScene.elements, elementId, parentId) ||
-        nextDepth + branchDepth > MAX_ELEMENT_RIG_DEPTH)
-    ) {
-      setNotice('That parent would create an invalid rig hierarchy');
+    if (preview.issue) {
+      setNotice(
+        preview.issue === 'depth-limit'
+          ? `Rigs can be nested up to ${MAX_ELEMENT_RIG_DEPTH} levels`
+          : preview.issue === 'cycle'
+            ? 'A rig branch cannot follow itself or one of its children'
+            : 'That rig destination is no longer available',
+      );
       return;
     }
+    if (!preview.changed) return;
     commitProject((draft) => {
-      const target = findElement(draft, activeScene.id, elementId);
-      if (target) target.parentId = parentId;
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
+      if (!scene) return;
+      const result = reparentElementRigBranchPreservingPose(
+        scene.elements,
+        elementId,
+        parentId,
+      );
+      if (!result.issue && result.changed) scene.elements = result.elements;
     });
     const parent = parentId
       ? activeScene.elements.find((item) => item.id === parentId)
       : null;
     setNotice(
       parent
-        ? `${element.name} now follows ${parent.name}`
-        : `${element.name} detached to scene root`,
+        ? `${element.name} now follows ${parent.name} · pose preserved`
+        : `${element.name} detached to scene root · pose preserved`,
     );
   };
 
@@ -4479,20 +4712,114 @@ export function MotusStudio() {
   };
 
   const moveLayer = (elementId: string, direction: -1 | 1) => {
+    const element = activeScene.elements.find((item) => item.id === elementId);
+    if (!element) return;
+    const siblings = activeScene.elements.filter(
+      (item) => item.parentId === element.parentId,
+    );
+    const siblingIndex = siblings.findIndex((item) => item.id === elementId);
+    const target = siblings[siblingIndex + direction];
+    if (!target) return;
     commitProject((draft) => {
-      const elements = findProjectScene(draft, activeScene.id)?.scene.elements;
-      if (!elements) return;
-      const index = elements.findIndex((element) => element.id === elementId);
-      if (index < 0) return;
-      const parentId = elements[index].parentId;
-      const siblingIndexes = elements.flatMap((element, candidateIndex) =>
-        element.parentId === parentId ? [candidateIndex] : [],
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
+      if (!scene) return;
+      const result = reorderElementRigSibling(
+        scene.elements,
+        elementId,
+        target.id,
       );
-      const siblingIndex = siblingIndexes.indexOf(index);
-      const target = siblingIndexes[siblingIndex + direction];
-      if (target === undefined) return;
-      [elements[index], elements[target]] = [elements[target], elements[index]];
+      if (result.outcome === 'moved') scene.elements = result.elements;
     });
+    setNotice(
+      `${element.name} moved ${direction > 0 ? 'forward' : 'back'} in its layer stack`,
+    );
+  };
+
+  const focusLayerRow = (elementId: string) => {
+    window.requestAnimationFrame(() => {
+      document.getElementById(`layer-select-${elementId}`)?.focus();
+    });
+  };
+
+  const startLayerDrag = (event: DragStartEvent) => {
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    const drag = readLayerDragData(event.active.data.current);
+    setActiveLayerDrag(drag);
+    if (!drag) return;
+    setSelectedElementId(drag.elementId);
+    setNotice(
+      `${drag.label} picked up · use row edges to reorder, center to nest, or Scene root to detach`,
+    );
+  };
+
+  const cancelLayerDrag = (_event?: DragCancelEvent) => {
+    const label = activeLayerDrag?.label ?? 'Layer';
+    setActiveLayerDrag(null);
+    setNotice(`${label} move cancelled`);
+  };
+
+  const finishLayerDrag = (event: DragEndEvent) => {
+    const drag = readLayerDragData(event.active.data.current);
+    const drop = readLayerDropData(event.over?.data.current);
+    const droppedAtRoot = event.over?.id === LAYER_ROOT_DROP_ID;
+    setActiveLayerDrag(null);
+    if (!drag) {
+      setNotice('Ready');
+      return;
+    }
+    if (droppedAtRoot) {
+      if (!drag.parentId) {
+        setNotice(`${drag.label} is already at the scene root`);
+      } else {
+        setElementRigParent(drag.elementId, null);
+      }
+      focusLayerRow(drag.elementId);
+      return;
+    }
+    if (!drop) {
+      setNotice(`${drag.label} returned to its previous position`);
+      focusLayerRow(drag.elementId);
+      return;
+    }
+    if (drop.intent === 'parent') {
+      setElementRigParent(drag.elementId, drop.targetElementId);
+      focusLayerRow(drag.elementId);
+      return;
+    }
+    if (
+      drag.elementId === drop.targetElementId ||
+      drag.parentId !== drop.targetParentId
+    ) {
+      setNotice('Use the center of a layer row to nest this rig branch');
+      focusLayerRow(drag.elementId);
+      return;
+    }
+
+    const placement = drop.intent;
+    let moved = false;
+    commitProject((draft) => {
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
+      if (!scene) return;
+      const result = reorderElementRigSibling(
+        scene.elements,
+        drag.elementId,
+        drop.targetElementId,
+        placement,
+      );
+      if (result.outcome !== 'moved') return;
+      scene.elements = result.elements;
+      moved = true;
+    });
+    const target = activeScene.elements.find(
+      (element) => element.id === drop.targetElementId,
+    );
+    setNotice(
+      moved
+        ? `${drag.label} moved ${placement} ${target?.name ?? 'the target layer'}`
+        : `${drag.label} stayed in position`,
+    );
+    focusLayerRow(drag.elementId);
   };
 
   const nudgeElement = (
@@ -7978,13 +8305,23 @@ export function MotusStudio() {
             </fieldset>
           </div>
 
-          <div
-            aria-label="Rig layer hierarchy"
-            className="layer-list"
-            role="tree"
+          <DndContext
+            collisionDetection={pointerWithin}
+            onDragCancel={cancelLayerDrag}
+            onDragEnd={finishLayerDrag}
+            onDragStart={startLayerDrag}
+            sensors={layerSensors}
           >
-            {flattenRigLayers(activeScene.elements).map(
-              ({ element, depth }) => {
+            {desktopPanelsEnabled ? (
+              <LayerRootDropTarget active={Boolean(activeLayerDrag)} />
+            ) : null}
+            <div
+              aria-label="Rig layer hierarchy"
+              className="layer-list"
+              data-drag-active={Boolean(activeLayerDrag) || undefined}
+              role="tree"
+            >
+              {flattenedLayerRows.map(({ element, depth }) => {
                 const Icon = elementIcon(element.type);
                 const siblingElements = activeScene.elements.filter(
                   (item) => item.parentId === element.parentId,
@@ -7992,131 +8329,175 @@ export function MotusStudio() {
                 const siblingIndex = siblingElements.findIndex(
                   (item) => item.id === element.id,
                 );
+                const nestPreview = activeLayerDrag
+                  ? reparentElementRigBranchPreservingPose(
+                      activeScene.elements,
+                      activeLayerDrag.elementId,
+                      element.id,
+                    )
+                  : null;
                 return (
-                  <div
-                    className="layer-row"
-                    data-rig-depth={depth}
-                    data-primary-selected={
-                      selectedElementId === element.id || undefined
-                    }
-                    data-selected={
-                      selectedElementIdSet.has(element.id) || undefined
-                    }
+                  <DraggableLayerRow
+                    activeDrag={activeLayerDrag}
+                    depth={depth}
+                    disabled={!desktopPanelsEnabled || previewRunning}
+                    element={element}
                     key={element.id}
-                    role="treeitem"
-                    aria-level={depth + 1}
-                    style={{ '--rig-depth': depth } as CSSProperties}
+                    nestAllowed={Boolean(
+                      nestPreview?.changed && !nestPreview.issue,
+                    )}
+                    primarySelected={selectedElementId === element.id}
+                    selected={selectedElementIdSet.has(element.id)}
                   >
-                    <button
-                      aria-label={
-                        selectedElementIdSet.has(element.id)
-                          ? `Remove ${element.name} from selection`
-                          : `Add ${element.name} to selection`
-                      }
-                      aria-pressed={selectedElementIdSet.has(element.id)}
-                      className="layer-multi-toggle"
-                      onClick={() => selectElement(element.id, true)}
-                      title={
-                        selectedElementIdSet.has(element.id)
-                          ? 'Remove from selection'
-                          : 'Add to selection'
-                      }
-                      type="button"
-                    >
-                      {selectedElementIdSet.has(element.id) ? (
-                        <Check aria-hidden="true" />
-                      ) : (
-                        <Plus aria-hidden="true" />
-                      )}
-                    </button>
-                    <button
-                      aria-current={
-                        selectedElementId === element.id ? 'true' : undefined
-                      }
-                      aria-label={
-                        selectedElementId === element.id
-                          ? `Edit ${element.name}, primary layer`
-                          : `Edit ${element.name} and make it primary`
-                      }
-                      className="layer-select"
-                      onClick={(event) =>
-                        selectElement(
-                          element.id,
-                          event.shiftKey || event.metaKey || event.ctrlKey,
-                        )
-                      }
-                      type="button"
-                    >
-                      <span className="layer-icon">
-                        <Icon />
-                      </span>
-                      <span className="layer-copy">
-                        <strong>{element.name}</strong>
-                        <small>
-                          {element.type}
-                          {element.parentId
-                            ? ` · follows ${activeScene.elements.find((candidate) => candidate.id === element.parentId)?.name ?? 'parent'}`
-                            : ''}
-                        </small>
-                      </span>
-                    </button>
-                    <div className="layer-actions">
-                      <button
-                        aria-label={`${element.name} visibility`}
-                        aria-pressed={element.visible}
-                        onClick={() =>
-                          updateElement(element.id, (item) => {
-                            item.visible = !item.visible;
-                          })
-                        }
-                        title={
-                          element.visible
-                            ? `Hide ${element.name}`
-                            : `Show ${element.name}`
-                        }
-                        type="button"
-                      >
-                        {element.visible ? <Eye /> : <EyeOff />}
-                      </button>
-                      <button
-                        aria-label={`${element.name} locked`}
-                        aria-pressed={element.locked}
-                        onClick={() =>
-                          updateElement(element.id, (item) => {
-                            item.locked = !item.locked;
-                          })
-                        }
-                        title={
-                          element.locked
-                            ? `Unlock ${element.name}`
-                            : `Lock ${element.name}`
-                        }
-                        type="button"
-                      >
-                        {element.locked ? <Lock /> : <Unlock />}
-                      </button>
-                      <button
-                        aria-label={`Move ${element.name} up`}
-                        disabled={siblingIndex === siblingElements.length - 1}
-                        onClick={() => moveLayer(element.id, 1)}
-                        type="button"
-                      >
-                        <ArrowUp />
-                      </button>
-                      <button
-                        aria-label={`Move ${element.name} down`}
-                        disabled={siblingIndex === 0}
-                        onClick={() => moveLayer(element.id, -1)}
-                        type="button"
-                      >
-                        <ArrowDown />
-                      </button>
-                    </div>
-                  </div>
+                    {(dragHandle) => (
+                      <>
+                        <button
+                          aria-label={
+                            selectedElementIdSet.has(element.id)
+                              ? `Remove ${element.name} from selection`
+                              : `Add ${element.name} to selection`
+                          }
+                          aria-pressed={selectedElementIdSet.has(element.id)}
+                          className="layer-multi-toggle"
+                          onClick={() => selectElement(element.id, true)}
+                          title={
+                            selectedElementIdSet.has(element.id)
+                              ? 'Remove from selection'
+                              : 'Add to selection'
+                          }
+                          type="button"
+                        >
+                          {selectedElementIdSet.has(element.id) ? (
+                            <Check aria-hidden="true" />
+                          ) : (
+                            <Plus aria-hidden="true" />
+                          )}
+                        </button>
+                        <button
+                          {...(desktopPanelsEnabled
+                            ? dragHandle.attributes
+                            : {})}
+                          {...(desktopPanelsEnabled
+                            ? (dragHandle.listeners ?? {})
+                            : {})}
+                          aria-current={
+                            selectedElementId === element.id
+                              ? 'true'
+                              : undefined
+                          }
+                          aria-label={
+                            desktopPanelsEnabled
+                              ? `${selectedElementId === element.id ? `Edit ${element.name}, primary layer` : `Edit ${element.name} and make it primary`}. Drag to reorder or nest this rig branch.`
+                              : selectedElementId === element.id
+                                ? `Edit ${element.name}, primary layer`
+                                : `Edit ${element.name} and make it primary`
+                          }
+                          className="layer-select"
+                          data-drag-enabled={
+                            desktopPanelsEnabled && !previewRunning
+                              ? true
+                              : undefined
+                          }
+                          id={`layer-select-${element.id}`}
+                          onClick={(event) =>
+                            selectElement(
+                              element.id,
+                              event.shiftKey || event.metaKey || event.ctrlKey,
+                            )
+                          }
+                          ref={dragHandle.setActivatorNodeRef}
+                          title={
+                            desktopPanelsEnabled
+                              ? 'Drag: row edge reorders · center nests'
+                              : undefined
+                          }
+                          type="button"
+                        >
+                          <span className="layer-icon">
+                            <Icon className="layer-type-icon" />
+                            {desktopPanelsEnabled ? (
+                              <GripVertical
+                                aria-hidden="true"
+                                className="layer-drag-grip"
+                              />
+                            ) : null}
+                          </span>
+                          <span className="layer-copy">
+                            <strong>{element.name}</strong>
+                            <small>
+                              {element.type}
+                              {element.parentId
+                                ? ` · follows ${activeScene.elements.find((candidate) => candidate.id === element.parentId)?.name ?? 'parent'}`
+                                : ''}
+                            </small>
+                          </span>
+                        </button>
+                        <div className="layer-actions">
+                          <button
+                            aria-label={`${element.name} visibility`}
+                            aria-pressed={element.visible}
+                            onClick={() =>
+                              updateElement(element.id, (item) => {
+                                item.visible = !item.visible;
+                              })
+                            }
+                            title={
+                              element.visible
+                                ? `Hide ${element.name}`
+                                : `Show ${element.name}`
+                            }
+                            type="button"
+                          >
+                            {element.visible ? <Eye /> : <EyeOff />}
+                          </button>
+                          <button
+                            aria-label={`${element.name} locked`}
+                            aria-pressed={element.locked}
+                            onClick={() =>
+                              updateElement(element.id, (item) => {
+                                item.locked = !item.locked;
+                              })
+                            }
+                            title={
+                              element.locked
+                                ? `Unlock ${element.name}`
+                                : `Lock ${element.name}`
+                            }
+                            type="button"
+                          >
+                            {element.locked ? <Lock /> : <Unlock />}
+                          </button>
+                          <button
+                            aria-label={`Move ${element.name} up`}
+                            disabled={
+                              siblingIndex === siblingElements.length - 1
+                            }
+                            onClick={() => moveLayer(element.id, 1)}
+                            type="button"
+                          >
+                            <ArrowUp />
+                          </button>
+                          <button
+                            aria-label={`Move ${element.name} down`}
+                            disabled={siblingIndex === 0}
+                            onClick={() => moveLayer(element.id, -1)}
+                            type="button"
+                          >
+                            <ArrowDown />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </DraggableLayerRow>
                 );
-              },
-            )}
-          </div>
+              })}
+            </div>
+            <DragOverlay>
+              {activeLayerDrag ? (
+                <LayerDragPreview drag={activeLayerDrag} />
+              ) : null}
+            </DragOverlay>
+          </DndContext>
 
           {activeScene.elements.length === 0 ? (
             <div className="empty-layers">
