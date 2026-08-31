@@ -67,6 +67,7 @@ import {
   getElementRigDepth,
   getElementRigDescendantIds,
   getElementRigIntegrityIssue,
+  getElementRigRenderedVisualBounds,
   getElementVisualBounds,
   getDefaultElementTypography,
   getFitCanvasWidth,
@@ -113,6 +114,7 @@ import {
   trimProjectHistory,
   transformElementByPointer,
   translateElementRigBranch,
+  translateElementRigSelectionByCanvasDelta,
   translateSelectedElements,
   type CompiledMotionKeyframe,
   type ProjectHistoryState,
@@ -4810,6 +4812,75 @@ void test('rig branch movement uses one bounded delta at canvas edges', () => {
   assert.deepEqual(
     movedRight.map(({ x }) => x),
     [40, 440],
+  );
+});
+
+void test('rig selection movement is bounded in rendered canvas space', () => {
+  const rotatedParent = createElement('group', 1, {
+    id: 'rotated-parent',
+    x: 400,
+    y: 400,
+    width: 200,
+    height: 200,
+    rotation: 90,
+  });
+  const rotatedChild = createElement('shape', 2, {
+    id: 'rotated-child',
+    parentId: rotatedParent.id,
+    x: 420,
+    y: 0,
+    width: 100,
+    height: 100,
+  });
+  const childDetail = createElement('shape', 3, {
+    id: 'child-detail',
+    parentId: rotatedChild.id,
+    x: 440,
+    y: 20,
+    width: 60,
+    height: 60,
+  });
+  const edgeRoot = createElement('shape', 4, {
+    id: 'edge-root',
+    x: 1_010,
+    y: 120,
+    width: 60,
+    height: 60,
+  });
+  const elements = [rotatedParent, rotatedChild, childDetail, edgeRoot];
+  const beforeChildBounds = getElementRigRenderedVisualBounds(
+    elements,
+    rotatedChild.id,
+  )!;
+
+  const moved = translateElementRigSelectionByCanvasDelta(
+    elements,
+    [rotatedChild.id, childDetail.id, edgeRoot.id],
+    20,
+    0,
+  );
+  const movedParent = moved.find((element) => element.id === rotatedParent.id)!;
+  const movedChild = moved.find((element) => element.id === rotatedChild.id)!;
+  const movedDetail = moved.find((element) => element.id === childDetail.id)!;
+  const movedRoot = moved.find((element) => element.id === edgeRoot.id)!;
+  const afterChildBounds = getElementRigRenderedVisualBounds(
+    moved,
+    rotatedChild.id,
+  )!;
+
+  assert.strictEqual(movedParent, rotatedParent);
+  assert.equal(rotatedChild.y, 0);
+  assert.ok(Math.abs(movedChild.x - 420) < 1e-9);
+  assert.ok(Math.abs(movedChild.y + 10) < 1e-9);
+  assert.ok(Math.abs(movedDetail.x - 440) < 1e-9);
+  assert.ok(Math.abs(movedDetail.y - 10) < 1e-9);
+  assert.equal(movedRoot.x, 1_020);
+  assert.ok(Math.abs(afterChildBounds.left - beforeChildBounds.left - 10) < 1e-9);
+  assert.ok(Math.abs(afterChildBounds.top - beforeChildBounds.top) < 1e-9);
+  assert.equal(
+    constrainElementToCanvas({ ...movedChild }).y,
+    movedChild.y,
+    'rigged authored coordinates survive normalization',
   );
 });
 

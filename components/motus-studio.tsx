@@ -249,6 +249,7 @@ import {
   trimProjectHistory,
   transformElementByPointer,
   translateElementRigBranch,
+  translateElementRigSelectionByCanvasDelta,
   translateSelectedElements,
   validateImageAsset,
   wouldCreateAnimationFinishCycle,
@@ -1949,6 +1950,25 @@ function getRenderedRigPoint(
     },
     point,
   );
+}
+
+function getRigSelectionRootIds(
+  elements: readonly MotusElement[],
+  selectedIds: Iterable<string>,
+) {
+  const selected = new Set(selectedIds);
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  return elements.flatMap((element) => {
+    if (!selected.has(element.id)) return [];
+    const visited = new Set<string>();
+    let parentId = element.parentId;
+    while (parentId && !visited.has(parentId)) {
+      if (selected.has(parentId)) return [];
+      visited.add(parentId);
+      parentId = byId.get(parentId)?.parentId ?? null;
+    }
+    return [element.id];
+  });
 }
 
 function elementIcon(type: ElementType) {
@@ -4169,7 +4189,7 @@ export function MotusStudio() {
         (draft) => {
           const scene = findProjectScene(draft, activeScene.id)?.scene;
           if (!scene) return;
-          scene.elements = translateSelectedElements(
+          scene.elements = translateElementRigSelectionByCanvasDelta(
             scene.elements,
             selectionIds,
             delta.x,
@@ -4187,16 +4207,16 @@ export function MotusStudio() {
       setNotice(`Unlock ${element.name} to move it`);
       return;
     }
-    updateElement(
-      elementId,
-      (item) => {
-        Object.assign(
-          item,
-          transformElementByPointer(item, 'move', delta.x, delta.y),
-        );
-      },
-      `element:${elementId}:keyboard-position`,
-    );
+    commitProject((draft) => {
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
+      if (!scene) return;
+      scene.elements = translateElementRigSelectionByCanvasDelta(
+        scene.elements,
+        [elementId],
+        delta.x,
+        delta.y,
+      );
+    }, `element:${elementId}:keyboard-position`);
     setNotice(`${element.name} moved${accelerated ? ' 10 px' : ' 1 px'}`);
   };
 
@@ -5960,6 +5980,18 @@ export function MotusStudio() {
           ),
         ]
       : [elementId];
+    const selectionHasRotatedAncestor = getRigSelectionRootIds(
+      activeScene.elements,
+      moveSelectionIds,
+    ).some(
+      (rootId) =>
+        Math.abs(
+          getElementRigAncestors(activeScene.elements, rootId).reduce(
+            (total, ancestor) => total + ancestor.rotation,
+            0,
+          ) % 360,
+        ) > 0.01,
+    );
     if (groupMove) {
       setPrimarySelectedElementId(elementId);
       setEditingTextElementId(null);
@@ -6051,7 +6083,7 @@ export function MotusStudio() {
       const rawDeltaX = (clientDeltaX / bounds.width) * CANVAS_WIDTH;
       const rawDeltaY = (clientDeltaY / bounds.height) * CANVAS_HEIGHT;
       const authoredDelta =
-        mode === 'rotate'
+        mode === 'rotate' || mode === 'move'
           ? { x: rawDeltaX, y: rawDeltaY }
           : rotateCanvasVector(rawDeltaX, rawDeltaY, -ancestorRotation);
       const deltaX = authoredDelta.x;
@@ -6059,7 +6091,12 @@ export function MotusStudio() {
       let transformDeltaX = deltaX;
       let transformDeltaY = deltaY;
       if (mode === 'move') {
-        if (pointer.altKey || Math.abs(ancestorRotation % 360) > 0.01) {
+        if (
+          pointer.altKey ||
+          (groupMove
+            ? selectionHasRotatedAncestor
+            : Math.abs(ancestorRotation % 360) > 0.01)
+        ) {
           aligned = false;
           setActiveAlignmentGuides([]);
         } else {
@@ -6097,31 +6134,20 @@ export function MotusStudio() {
       }
       setProject((current) => {
         const next = cloneProject(current);
-        if (groupMove) {
-          const scene = findProjectScene(next, activeScene.id)?.scene;
-          if (!scene) return current;
-          scene.elements = translateSelectedElements(
+        const scene = findProjectScene(next, activeScene.id)?.scene;
+        if (!scene) return current;
+        if (mode === 'move') {
+          scene.elements = translateElementRigSelectionByCanvasDelta(
             originSceneElements,
-            moveSelectionIds,
+            groupMove ? moveSelectionIds : [elementId],
             transformDeltaX,
             transformDeltaY,
           );
           next.updatedAt = new Date().toISOString();
           return next;
         }
-        const scene = findProjectScene(next, activeScene.id)?.scene;
         const target = scene?.elements.find((item) => item.id === elementId);
         if (!target) return current;
-        if (mode === 'move' && scene) {
-          scene.elements = translateElementRigBranch(
-            originSceneElements,
-            elementId,
-            transformDeltaX,
-            transformDeltaY,
-          );
-          next.updatedAt = new Date().toISOString();
-          return next;
-        }
         Object.assign(
           target,
           transformElementByPointer(

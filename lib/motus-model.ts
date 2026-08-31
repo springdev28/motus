@@ -3336,6 +3336,259 @@ export function getElementRigCascadeDeleteIds(
     .map((element) => element.id);
 }
 
+function getElementRigAncestors(
+  elements: readonly MotusElement[],
+  elementId: string,
+) {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const ancestors: MotusElement[] = [];
+  const visited = new Set<string>();
+  let current = byId.get(elementId);
+  while (current?.parentId && !visited.has(current.id)) {
+    visited.add(current.id);
+    const parent = byId.get(current.parentId);
+    if (!parent) break;
+    ancestors.push(parent);
+    current = parent;
+  }
+  return ancestors;
+}
+
+function rotateRigVector(x: number, y: number, degrees: number) {
+  const radians = (degrees * Math.PI) / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  return {
+    x: x * cosine - y * sine,
+    y: x * sine + y * cosine,
+  };
+}
+
+function rotateRigPointAroundElement(
+  point: { x: number; y: number },
+  element: MotusElement,
+) {
+  const pivot = {
+    x: element.x + (element.width * element.pivotX) / 100,
+    y: element.y + (element.height * element.pivotY) / 100,
+  };
+  const rotated = rotateRigVector(
+    point.x - pivot.x,
+    point.y - pivot.y,
+    element.rotation,
+  );
+  return { x: pivot.x + rotated.x, y: pivot.y + rotated.y };
+}
+
+/** Returns visible bounds after the element and every rig ancestor rotate it. */
+export function getElementRigRenderedVisualBounds(
+  elements: readonly MotusElement[],
+  elementId: string,
+): ElementVisualBounds | null {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  if (!element) return null;
+  const transforms = [element, ...getElementRigAncestors(elements, elementId)];
+  const corners = [
+    { x: element.x, y: element.y },
+    { x: element.x + element.width, y: element.y },
+    { x: element.x + element.width, y: element.y + element.height },
+    { x: element.x, y: element.y + element.height },
+  ].map((corner) =>
+    transforms.reduce(
+      (point, transform) => rotateRigPointAroundElement(point, transform),
+      corner,
+    ),
+  );
+  const left = Math.min(...corners.map((corner) => corner.x));
+  const top = Math.min(...corners.map((corner) => corner.y));
+  const right = Math.max(...corners.map((corner) => corner.x));
+  const bottom = Math.max(...corners.map((corner) => corner.y));
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
+  };
+}
+
+function getElementRigSelectionRootIds(
+  elements: readonly MotusElement[],
+  selectedIds: Iterable<string>,
+) {
+  const selected = new Set(selectedIds);
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  return elements.flatMap((element) => {
+    if (!selected.has(element.id)) return [];
+    const visited = new Set<string>();
+    let parentId = element.parentId;
+    while (parentId && !visited.has(parentId)) {
+      if (selected.has(parentId)) return [];
+      visited.add(parentId);
+      parentId = byId.get(parentId)?.parentId ?? null;
+    }
+    return [element.id];
+  });
+}
+
+function boundRigCanvasMovement(
+  visualBounds: readonly ElementVisualBounds[],
+  deltaX: number,
+  deltaY: number,
+  canvasWidth: number,
+  canvasHeight: number,
+) {
+  if (visualBounds.length === 0) return { deltaX: 0, deltaY: 0 };
+  const left = Math.min(...visualBounds.map((bounds) => bounds.left));
+  const top = Math.min(...visualBounds.map((bounds) => bounds.top));
+  const right = Math.max(...visualBounds.map((bounds) => bounds.right));
+  const bottom = Math.max(...visualBounds.map((bounds) => bounds.bottom));
+  const requestedX = finite(deltaX, 0);
+  const requestedY = finite(deltaY, 0);
+  const boundAxis = (
+    requested: number,
+    leadingEdge: number,
+    trailingEdge: number,
+    canvasSize: number,
+  ) => {
+    if (trailingEdge - leadingEdge > canvasSize) return 0;
+    if (requested > 0) {
+      return Math.min(requested, Math.max(0, canvasSize - trailingEdge));
+    }
+    if (requested < 0) {
+      return Math.max(requested, Math.min(0, -leadingEdge));
+    }
+    return 0;
+  };
+  return {
+    deltaX: boundAxis(requestedX, left, right, canvasWidth),
+    deltaY: boundAxis(requestedY, top, bottom, canvasHeight),
+  };
+}
+
+/**
+ * Moves every selected top-level rig branch by one shared screen-space vector.
+ * Each branch receives the inverse of its own ancestor rotation so mixed rigs
+ * remain visually aligned, while bounds are enforced where they are rendered.
+ */
+export function translateElementRigSelectionByCanvasDelta(
+  elements: readonly MotusElement[],
+  selectedIds: Iterable<string>,
+  canvasDeltaX: number,
+  canvasDeltaY: number,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): MotusElement[] {
+  const rootIds = getElementRigSelectionRootIds(elements, selectedIds);
+  if (rootIds.length === 0) return [...elements];
+  const movedIds = new Set(
+    rootIds.flatMap((elementId) => [
+      elementId,
+      ...getElementRigDescendantIds(elements, elementId),
+    ]),
+  );
+  const visualBounds = elements.flatMap((element) => {
+    if (!movedIds.has(element.id)) return [];
+    const bounds = getElementRigRenderedVisualBounds(elements, element.id);
+    return bounds ? [bounds] : [];
+  });
+  for (const rootId of rootIds) {
+    const root = elements.find((element) => element.id === rootId);
+    if (!root || root.parentId) continue;
+    visualBounds.push({
+      left: root.x,
+      top: root.y,
+      right: root.x + root.width,
+      bottom: root.y + root.height,
+      centerX: root.x + root.width / 2,
+      centerY: root.y + root.height / 2,
+    });
+  }
+  const safeCanvasWidth = Math.max(0, finite(canvasWidth, CANVAS_WIDTH));
+  const safeCanvasHeight = Math.max(0, finite(canvasHeight, CANVAS_HEIGHT));
+  const boundedCanvasDelta = boundRigCanvasMovement(
+    visualBounds,
+    canvasDeltaX,
+    canvasDeltaY,
+    safeCanvasWidth,
+    safeCanvasHeight,
+  );
+  const authoredDeltaByRoot = new Map(
+    rootIds.map((elementId) => {
+      const ancestorRotation = getElementRigAncestors(
+        elements,
+        elementId,
+      ).reduce((total, ancestor) => total + ancestor.rotation, 0);
+      return [
+        elementId,
+        rotateRigVector(
+          boundedCanvasDelta.deltaX,
+          boundedCanvasDelta.deltaY,
+          -ancestorRotation,
+        ),
+      ] as const;
+    }),
+  );
+  const rootByElementId = new Map<string, string>();
+  for (const rootId of rootIds) {
+    rootByElementId.set(rootId, rootId);
+    for (const descendantId of getElementRigDescendantIds(elements, rootId)) {
+      rootByElementId.set(descendantId, rootId);
+    }
+  }
+  return elements.map((element) => {
+    const rootId = rootByElementId.get(element.id);
+    const delta = rootId ? authoredDeltaByRoot.get(rootId) : undefined;
+    if (!delta) return element;
+    return {
+      ...element,
+      x: element.x + delta.x,
+      y: element.y + delta.y,
+    };
+  });
+}
+
+export function getBoundedElementRigBranchDelta(
+  elements: readonly MotusElement[],
+  elementId: string,
+  deltaX: number,
+  deltaY: number,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+) {
+  const branchIds = new Set([
+    elementId,
+    ...getElementRigDescendantIds(elements, elementId),
+  ]);
+  const branch = elements.filter((element) => branchIds.has(element.id));
+  if (branch.length === 0) return { deltaX: 0, deltaY: 0 };
+  const safeCanvasWidth = Math.max(0, finite(canvasWidth, CANVAS_WIDTH));
+  const safeCanvasHeight = Math.max(0, finite(canvasHeight, CANVAS_HEIGHT));
+  const minimumX = Math.min(...branch.map((element) => element.x));
+  const minimumY = Math.min(...branch.map((element) => element.y));
+  const maximumX = Math.max(
+    ...branch.map((element) => element.x + element.width),
+  );
+  const maximumY = Math.max(
+    ...branch.map((element) => element.y + element.height),
+  );
+  const minimumDeltaX = -minimumX;
+  const maximumDeltaX = safeCanvasWidth - maximumX;
+  const minimumDeltaY = -minimumY;
+  const maximumDeltaY = safeCanvasHeight - maximumY;
+  const boundAxis = (requested: number, minimum: number, maximum: number) => {
+    if (minimum > maximum) return 0;
+    if (requested > 0) return Math.min(requested, Math.max(0, maximum));
+    if (requested < 0) return Math.max(requested, Math.min(0, minimum));
+    return 0;
+  };
+  return {
+    deltaX: boundAxis(finite(deltaX, 0), minimumDeltaX, maximumDeltaX),
+    deltaY: boundAxis(finite(deltaY, 0), minimumDeltaY, maximumDeltaY),
+  };
+}
+
 export function translateElementRigBranch(
   elements: readonly MotusElement[],
   elementId: string,
@@ -3348,34 +3601,20 @@ export function translateElementRigBranch(
     elementId,
     ...getElementRigDescendantIds(elements, elementId),
   ]);
-  const branch = elements.filter((element) => branchIds.has(element.id));
-  if (branch.length === 0) return [...elements];
-  const safeCanvasWidth = Math.max(0, finite(canvasWidth, CANVAS_WIDTH));
-  const safeCanvasHeight = Math.max(0, finite(canvasHeight, CANVAS_HEIGHT));
-  const minimumX = Math.min(...branch.map((element) => element.x));
-  const minimumY = Math.min(...branch.map((element) => element.y));
-  const maximumX = Math.max(
-    ...branch.map((element) => element.x + element.width),
-  );
-  const maximumY = Math.max(
-    ...branch.map((element) => element.y + element.height),
-  );
-  const boundedDeltaX = clamp(
-    finite(deltaX, 0),
-    -minimumX,
-    safeCanvasWidth - maximumX,
-  );
-  const boundedDeltaY = clamp(
-    finite(deltaY, 0),
-    -minimumY,
-    safeCanvasHeight - maximumY,
+  const bounded = getBoundedElementRigBranchDelta(
+    elements,
+    elementId,
+    deltaX,
+    deltaY,
+    canvasWidth,
+    canvasHeight,
   );
   return elements.map((element) =>
     branchIds.has(element.id)
       ? {
           ...element,
-          x: element.x + boundedDeltaX,
-          y: element.y + boundedDeltaY,
+          x: element.x + bounded.deltaX,
+          y: element.y + bounded.deltaY,
         }
       : element,
   );
@@ -3974,17 +4213,32 @@ export function constrainElementToCanvas(
     MIN_ELEMENT_HEIGHT,
     safeCanvasHeight,
   );
+  const parentId =
+    typeof element.parentId === 'string' && element.parentId.trim()
+      ? element.parentId
+      : null;
+  const authoredMinimumX = -safeCanvasWidth * MAX_ELEMENT_RIG_DEPTH;
+  const authoredMaximumX =
+    safeCanvasWidth * (MAX_ELEMENT_RIG_DEPTH + 1) - width;
+  const authoredMinimumY = -safeCanvasHeight * MAX_ELEMENT_RIG_DEPTH;
+  const authoredMaximumY =
+    safeCanvasHeight * (MAX_ELEMENT_RIG_DEPTH + 1) - height;
 
   return {
     ...element,
-    parentId:
-      typeof element.parentId === 'string' && element.parentId.trim()
-        ? element.parentId
-        : null,
+    parentId,
     pivotX: normalizeRigPercent(element.pivotX, DEFAULT_ELEMENT_RIG_PIVOT),
     pivotY: normalizeRigPercent(element.pivotY, DEFAULT_ELEMENT_RIG_PIVOT),
-    x: clamp(finite(element.x, 0), 0, safeCanvasWidth - width),
-    y: clamp(finite(element.y, 0), 0, safeCanvasHeight - height),
+    x: clamp(
+      finite(element.x, 0),
+      parentId ? authoredMinimumX : 0,
+      parentId ? authoredMaximumX : safeCanvasWidth - width,
+    ),
+    y: clamp(
+      finite(element.y, 0),
+      parentId ? authoredMinimumY : 0,
+      parentId ? authoredMaximumY : safeCanvasHeight - height,
+    ),
     width,
     height,
     rotation: clamp(finite(element.rotation, 0), -180, 180),
