@@ -48,7 +48,12 @@ import type {
 const FOLLOWED_WORKS_STORAGE_KEY = 'motus:followed-works:v1';
 const READING_PROGRESS_STORAGE_KEY = 'motus:reading-progress:v1';
 
-type ReaderMode = 'scroll' | 'page';
+type ReaderMode = 'scroll' | 'page' | 'spread';
+
+const readerModeForFormat = (
+  format: MotusProject['format'] | undefined,
+): ReaderMode =>
+  format === 'spread' ? 'spread' : format === 'page' ? 'page' : 'scroll';
 
 type ReaderWorkView = {
   slug: string;
@@ -115,7 +120,12 @@ function createDeviceReaderWork(
     description: publication.source.description,
     tags: publication.source.tags,
     genre: metadata.genres[0] ?? 'Motion work',
-    formatLabel: publication.source.format === 'page' ? 'Page' : 'Vertical',
+    formatLabel:
+      publication.source.format === 'spread'
+        ? 'Two-page spread'
+        : publication.source.format === 'page'
+          ? 'Page'
+          : 'Vertical',
     statusLabel: metadata.workStatus
       ? STATUS_LABELS[metadata.workStatus]
       : `Revision ${publication.revision.revision}`,
@@ -202,7 +212,7 @@ export function MotusReader({ slug }: { slug: string }) {
   const requiresRatingGate =
     work?.contentRating === 'mature' || work?.contentRating === 'adults-only';
   const [mode, setMode] = useState<ReaderMode>(() =>
-    project?.format === 'page' ? 'page' : 'scroll',
+    readerModeForFormat(project?.format),
   );
   const [activeChapterId, setActiveChapterId] = useState(
     () => project?.chapters[0]?.id ?? '',
@@ -277,9 +287,14 @@ export function MotusReader({ slug }: { slug: string }) {
         ),
       );
       setFollowed(followedWorks.has(work.slug));
-      setMode(project.format === 'page' ? 'page' : 'scroll');
+      const projectReaderMode = readerModeForFormat(project.format);
+      setMode(projectReaderMode);
       setActiveChapterId(resumedChapter.id);
-      setPageIndex(resumedIndex);
+      setPageIndex(
+        projectReaderMode === 'spread'
+          ? resumedIndex - (resumedIndex % 2)
+          : resumedIndex,
+      );
       setResumeTarget(
         resumedIndex > 0 || resumedChapter.id !== project.chapters[0].id
           ? { chapterId: resumedChapter.id, sceneIndex: resumedIndex }
@@ -388,17 +403,25 @@ export function MotusReader({ slug }: { slug: string }) {
 
   const selectPreviousPage = () => {
     if (!activeChapter) return;
-    if (pageIndex > 0) selectPage(pageIndex - 1);
+    const pageStep = mode === 'spread' ? 2 : 1;
+    if (pageIndex > 0) selectPage(Math.max(0, pageIndex - pageStep));
     else if (chapterIndex > 0) {
       const previous = project!.chapters[chapterIndex - 1];
-      selectChapter(chapterIndex - 1, previous.scenes.length - 1);
+      const lastSceneIndex = previous.scenes.length - 1;
+      selectChapter(
+        chapterIndex - 1,
+        mode === 'spread'
+          ? Math.max(0, lastSceneIndex - (lastSceneIndex % 2))
+          : lastSceneIndex,
+      );
     }
   };
 
   const selectNextPage = () => {
     if (!activeChapter || !project) return;
-    if (pageIndex < activeChapter.scenes.length - 1) {
-      selectPage(pageIndex + 1);
+    const pageStep = mode === 'spread' ? 2 : 1;
+    if (pageIndex + pageStep < activeChapter.scenes.length) {
+      selectPage(pageIndex + pageStep);
     } else if (chapterIndex < project.chapters.length - 1) {
       selectChapter(chapterIndex + 1);
     }
@@ -473,7 +496,13 @@ export function MotusReader({ slug }: { slug: string }) {
     0,
   );
   const progressPercent =
-    ((scenesBeforeChapter + pageIndex + 1) / Math.max(totalScenes, 1)) * 100;
+    ((scenesBeforeChapter +
+      Math.min(
+        pageIndex + (mode === 'spread' ? 2 : 1),
+        activeChapter.scenes.length,
+      )) /
+      Math.max(totalScenes, 1)) *
+    100;
 
   return (
     <div className="published-reader-shell">
@@ -658,7 +687,7 @@ export function MotusReader({ slug }: { slug: string }) {
                   </Button>
                 </nav>
                 <fieldset>
-                  <legend className="sr-only">Preview layout</legend>
+                  <legend className="sr-only">Reading layout</legend>
                   <button
                     aria-pressed={mode === 'scroll'}
                     onClick={() => setMode('scroll')}
@@ -674,6 +703,17 @@ export function MotusReader({ slug }: { slug: string }) {
                   >
                     <FileImage aria-hidden="true" />
                     Page
+                  </button>
+                  <button
+                    aria-pressed={mode === 'spread'}
+                    onClick={() => {
+                      setMode('spread');
+                      setPageIndex((index) => index - (index % 2));
+                    }}
+                    type="button"
+                  >
+                    <BookOpen aria-hidden="true" />
+                    Spread
                   </button>
                 </fieldset>
                 <Button
@@ -709,16 +749,26 @@ export function MotusReader({ slug }: { slug: string }) {
                 ))}
               </div>
             ) : (
-              <div className="published-reader-paged">
-                <ReaderScene
-                  index={pageIndex}
-                  key={`${activeChapter.scenes[pageIndex].id}-${playSession}`}
-                  onEnter={(enteredIndex) =>
-                    recordProgress(activeChapter.id, enteredIndex)
-                  }
-                  scene={activeChapter.scenes[pageIndex]}
-                  sessionKey={playSession}
-                />
+              <div className="published-reader-paged" data-layout={mode}>
+                <div
+                  className="published-reader-page-leaf"
+                  key={`${activeChapter.id}-${mode}-${pageIndex}-${playSession}`}
+                >
+                  {(mode === 'spread'
+                    ? activeChapter.scenes.slice(pageIndex, pageIndex + 2)
+                    : [activeChapter.scenes[pageIndex]]
+                  ).map((scene, spreadOffset) => (
+                    <ReaderScene
+                      index={pageIndex + spreadOffset}
+                      key={`${scene.id}-${playSession}-${pageIndex}`}
+                      onEnter={(enteredIndex) =>
+                        recordProgress(activeChapter.id, enteredIndex)
+                      }
+                      scene={scene}
+                      sessionKey={playSession + spreadOffset}
+                    />
+                  ))}
+                </div>
                 <div className="published-reader-page-controls">
                   <Button
                     disabled={pageIndex === 0 && chapterIndex === 0}
@@ -728,13 +778,16 @@ export function MotusReader({ slug }: { slug: string }) {
                     <ChevronLeft />
                     Previous
                   </Button>
-                  <span>
-                    {project.format === 'page' ? 'Page' : 'Scene'}{' '}
-                    {pageIndex + 1} of {activeChapter.scenes.length}
+                  <span aria-atomic="true" aria-live="polite">
+                    {mode === 'spread' ? 'Spread' : 'Page'}{' '}
+                    {mode === 'spread'
+                      ? `${Math.floor(pageIndex / 2) + 1} of ${Math.ceil(activeChapter.scenes.length / 2)}`
+                      : `${pageIndex + 1} of ${activeChapter.scenes.length}`}
                   </span>
                   <Button
                     disabled={
-                      pageIndex === activeChapter.scenes.length - 1 &&
+                      pageIndex + (mode === 'spread' ? 2 : 1) >=
+                        activeChapter.scenes.length &&
                       chapterIndex === project.chapters.length - 1
                     }
                     onClick={selectNextPage}

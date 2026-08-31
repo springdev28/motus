@@ -88,6 +88,49 @@ function createPublishedProject(
   };
 }
 
+function revisionUsesCurrentRigSchema(revision: unknown) {
+  if (!revision || typeof revision !== 'object' || Array.isArray(revision)) {
+    return false;
+  }
+  const chapters = (revision as Record<string, unknown>).chapters;
+  if (!Array.isArray(chapters)) return false;
+  return chapters.every((chapter) => {
+    if (!chapter || typeof chapter !== 'object' || Array.isArray(chapter)) {
+      return false;
+    }
+    const scenes = (chapter as Record<string, unknown>).scenes;
+    return (
+      Array.isArray(scenes) &&
+      scenes.every((scene) => {
+        if (!scene || typeof scene !== 'object' || Array.isArray(scene)) {
+          return false;
+        }
+        const elements = (scene as Record<string, unknown>).elements;
+        return (
+          Array.isArray(elements) &&
+          elements.every((element) => {
+            if (
+              !element ||
+              typeof element !== 'object' ||
+              Array.isArray(element)
+            ) {
+              return false;
+            }
+            const layer = element as Record<string, unknown>;
+            return (
+              (layer.parentId === null || typeof layer.parentId === 'string') &&
+              typeof layer.pivotX === 'number' &&
+              Number.isFinite(layer.pivotX) &&
+              typeof layer.pivotY === 'number' &&
+              Number.isFinite(layer.pivotY)
+            );
+          })
+        );
+      })
+    );
+  });
+}
+
 function createDevicePublication(
   projectId: string,
   revision: MotusPublicationRevision,
@@ -135,12 +178,13 @@ function restoreDevicePublicationRecord(
     return null;
   }
   try {
+    const revision = record.revision as MotusPublicationRevision;
+    const candidate = createPublishedProject(record.projectId, revision);
     const project = restoreProject(
       JSON.stringify(
-        createPublishedProject(
-          record.projectId,
-          record.revision as MotusPublicationRevision,
-        ),
+        revisionUsesCurrentRigSchema(record.revision)
+          ? candidate
+          : { ...candidate, schemaVersion: 9 },
       ),
     );
     if (!project || project.publications.length !== 1) return null;

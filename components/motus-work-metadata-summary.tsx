@@ -75,7 +75,13 @@ export function MotusWorkMetadataSummary({
           <span>{statusLabels[metadata.workStatus]}</span>
         ) : null}
         {metadata.origin ? <span>{originLabels[metadata.origin]}</span> : null}
-        <span>{format === 'page' ? 'Page by page' : 'Vertical scroll'}</span>
+        <span>
+          {format === 'spread'
+            ? 'Two-page spread'
+            : format === 'page'
+              ? 'Page by page'
+              : 'Vertical scroll'}
+        </span>
         <span data-rating={contentRating}>{ratingLabels[contentRating]}</span>
       </div>
 

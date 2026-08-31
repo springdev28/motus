@@ -4,6 +4,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -54,6 +55,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  BookOpen,
   Check,
   Circle,
   Clock3,
@@ -156,6 +158,7 @@ import {
   MOTION_BLOCK_CATALOG,
   MOTION_EVENT_BLOCK_KINDS,
   MAX_ELEMENT_NAME_LENGTH,
+  MAX_ELEMENT_RIG_DEPTH,
   MAX_ELEMENT_TEXT_LENGTH,
   MAX_PROJECT_FILE_BYTES,
   MAX_PROJECT_CHAPTERS,
@@ -198,6 +201,9 @@ import {
   getCompiledMotionKeyframeEstimate,
   getExpandedMotionStepCount,
   getElementImageFraming,
+  getElementRigCascadeDeleteIds,
+  getElementRigDepth,
+  getElementRigDescendantIds,
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
@@ -215,10 +221,12 @@ import {
   hasExecutableMotionActions,
   hasPointerDragStarted,
   hasUnpublishedChanges,
+  isElementEffectivelyVisible,
   isMotionContainerBlockKind,
   isMotionEventBlockKind,
   isParallelMotionBlockKind,
   normalizeBounceJumpNumericField,
+  normalizeElementImageRigPart,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
   recordProjectHistory,
@@ -232,7 +240,6 @@ import {
   resolveEditorSelection,
   resolveProjectCoverSceneId,
   resolveReaderSource,
-  resolveSelectionAfterElementDeletion,
   restorePublicationToDraft,
   restoreProject,
   restoreProjectWithError,
@@ -241,9 +248,11 @@ import {
   snapSelectedElementMovement,
   trimProjectHistory,
   transformElementByPointer,
+  translateElementRigBranch,
   translateSelectedElements,
   validateImageAsset,
   wouldCreateAnimationFinishCycle,
+  wouldCreateElementRigCycle,
   writeDraftJournal,
   type BounceJump,
   type Easing,
@@ -292,6 +301,20 @@ type StudioPanelLayouts = Record<'design' | 'motion', StudioPanelLayout>;
 type BlockWorkspaceLayout = {
   library: number;
   script: number;
+};
+
+type RigRegionDraft = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+const DEFAULT_RIG_REGION_DRAFT: RigRegionDraft = {
+  x: 35,
+  y: 24,
+  width: 30,
+  height: 36,
 };
 
 type StudioPanelPreset = 'balanced' | 'focus-stage' | 'focus-secondary';
@@ -453,6 +476,12 @@ type PendingProjectImport = {
   project: MotusProject;
 };
 
+type CopiedElementSnapshot = {
+  sceneId: string;
+  contentElementIds: string[];
+  elements: MotusElement[];
+};
+
 const sceneBackgrounds = [
   {
     name: 'Amethyst fog',
@@ -477,7 +506,10 @@ const sceneBackgrounds = [
 ] as const;
 
 type CatalogTab = 'works' | 'assets' | 'templates' | 'motion';
-type ReaderMode = 'scroll' | 'page';
+type ReaderMode = 'scroll' | 'page' | 'spread';
+
+const readerModeForFormat = (format: MotusProject['format']): ReaderMode =>
+  format === 'spread' ? 'spread' : format === 'page' ? 'page' : 'scroll';
 type PreviewScope = 'selected' | 'scene';
 type MobileStudioPane = 'blocks' | 'stage' | 'layers';
 
@@ -1526,6 +1558,87 @@ const motionPresets: Array<{
       { kind: 'blur', durationMs: 520, value: 22 },
     ],
   },
+  {
+    id: 'character-body-sway',
+    name: 'Character · body sway',
+    description:
+      'Loop a gentle root sway; every Head, Hair, Arm, and nested child inherits it.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'sway', durationMs: 1800, x: 26, value: 4, repetitions: 4 },
+    ],
+  },
+  {
+    id: 'character-breathing',
+    name: 'Character · breathing idle',
+    description: 'Subtle editable scale pulses for a torso or whole rig.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'breathe', durationMs: 2200, value: 1.045, repetitions: 4 },
+    ],
+  },
+  {
+    id: 'character-head-tilt',
+    name: 'Character · head tilt',
+    description:
+      'Rock the selected Head around its pivot while its Hair and facial parts stay attached.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'loop-rotate', durationMs: 1600, value: 12, repetitions: 4 },
+    ],
+  },
+  {
+    id: 'character-hair-wind',
+    name: 'Character · hair in wind',
+    description:
+      'An editable wave for a Hair group or strand, composed under Head and Body motion.',
+    blocks: [
+      { kind: 'scene-enter' },
+      {
+        kind: 'wave',
+        durationMs: 1800,
+        x: 32,
+        y: 16,
+        repetitions: 4,
+      },
+    ],
+  },
+  {
+    id: 'character-blink',
+    name: 'Character · eyelid blink',
+    description:
+      'Blink a selected eyelid or eye layer; duration and repetitions stay fully editable.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'blink', durationMs: 950, repetitions: 3 },
+    ],
+  },
+  {
+    id: 'character-talking',
+    name: 'Character · talking bob',
+    description:
+      'A small local loop for a jaw, mouth, or speech pose beneath the head rig.',
+    blocks: [
+      { kind: 'scene-enter' },
+      {
+        kind: 'loop-move',
+        durationMs: 1100,
+        x: 0,
+        y: 10,
+        repetitions: 5,
+      },
+    ],
+  },
+  {
+    id: 'character-arm-swing',
+    name: 'Character · arm swing',
+    description:
+      'Swing an Arm around the shoulder pivot without disturbing the torso or other arm.',
+    blocks: [
+      { kind: 'scene-enter' },
+      { kind: 'pendulum', durationMs: 1500, value: 22, repetitions: 4 },
+    ],
+  },
 ];
 
 function uniqueId(prefix: string) {
@@ -1702,15 +1815,237 @@ function findElement(
   );
 }
 
+function flattenRigLayers(elements: readonly MotusElement[]) {
+  const ids = new Set(elements.map((element) => element.id));
+  const rows: Array<{ element: MotusElement; depth: number }> = [];
+  const append = (element: MotusElement, depth: number) => {
+    rows.push({ element, depth });
+    [...elements]
+      .reverse()
+      .filter((candidate) => candidate.parentId === element.id)
+      .forEach((child) => append(child, depth + 1));
+  };
+  [...elements]
+    .reverse()
+    .filter((element) => !element.parentId || !ids.has(element.parentId))
+    .forEach((element) => append(element, 0));
+  return rows;
+}
+
+function preserveRigBranchesAfterSelectionTransform(
+  before: readonly MotusElement[],
+  transformed: readonly MotusElement[],
+  selectedIds: readonly string[],
+): MotusElement[] {
+  const selected = new Set(selectedIds);
+  const beforeById = new Map(before.map((element) => [element.id, element]));
+  const transformedById = new Map(
+    transformed.map((element) => [element.id, element]),
+  );
+  const nearestSelectedAncestor = new Map<string, string>();
+  for (const element of before) {
+    if (selected.has(element.id)) continue;
+    let parentId = element.parentId;
+    const visited = new Set<string>();
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId);
+      if (selected.has(parentId)) {
+        nearestSelectedAncestor.set(element.id, parentId);
+        break;
+      }
+      parentId = beforeById.get(parentId)?.parentId ?? null;
+    }
+  }
+
+  const nextById = new Map(
+    transformed.map((element) => [element.id, { ...element }]),
+  );
+  for (const selectedId of selected) {
+    const previousParent = beforeById.get(selectedId);
+    const nextParent = transformedById.get(selectedId);
+    if (!previousParent || !nextParent) continue;
+    const followerIds = before
+      .filter(
+        (element) => nearestSelectedAncestor.get(element.id) === selectedId,
+      )
+      .map((element) => element.id);
+    const cohort = [selectedId, ...followerIds]
+      .map((id) => beforeById.get(id))
+      .filter((element): element is MotusElement => Boolean(element));
+    const minimumX = Math.min(...cohort.map((element) => element.x));
+    const minimumY = Math.min(...cohort.map((element) => element.y));
+    const maximumX = Math.max(
+      ...cohort.map((element) => element.x + element.width),
+    );
+    const maximumY = Math.max(
+      ...cohort.map((element) => element.y + element.height),
+    );
+    const requestedDeltaX = nextParent.x - previousParent.x;
+    const requestedDeltaY = nextParent.y - previousParent.y;
+    const boundedDeltaX = Math.min(
+      CANVAS_WIDTH - maximumX,
+      Math.max(-minimumX, requestedDeltaX),
+    );
+    const boundedDeltaY = Math.min(
+      CANVAS_HEIGHT - maximumY,
+      Math.max(-minimumY, requestedDeltaY),
+    );
+    for (const elementId of [selectedId, ...followerIds]) {
+      const previous = beforeById.get(elementId);
+      const next = nextById.get(elementId);
+      if (!previous || !next) continue;
+      next.x = previous.x + boundedDeltaX;
+      next.y = previous.y + boundedDeltaY;
+    }
+  }
+  return transformed.map((element) => nextById.get(element.id) ?? element);
+}
+
+function getElementRigAncestors(
+  elements: readonly MotusElement[],
+  elementId: string,
+) {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const ancestors: MotusElement[] = [];
+  const visited = new Set<string>();
+  let current = byId.get(elementId);
+  while (current?.parentId && !visited.has(current.id)) {
+    visited.add(current.id);
+    const parent = byId.get(current.parentId);
+    if (!parent) break;
+    ancestors.push(parent);
+    current = parent;
+  }
+  return ancestors;
+}
+
+function rotateCanvasVector(x: number, y: number, degrees: number) {
+  const radians = (degrees * Math.PI) / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  return {
+    x: x * cosine - y * sine,
+    y: x * sine + y * cosine,
+  };
+}
+
+function getRenderedRigPoint(
+  elements: readonly MotusElement[],
+  elementId: string,
+  point: { x: number; y: number },
+) {
+  return getElementRigAncestors(elements, elementId).reduce(
+    (renderedPoint, ancestor) => {
+      const pivot = {
+        x: ancestor.x + (ancestor.width * ancestor.pivotX) / 100,
+        y: ancestor.y + (ancestor.height * ancestor.pivotY) / 100,
+      };
+      const rotated = rotateCanvasVector(
+        renderedPoint.x - pivot.x,
+        renderedPoint.y - pivot.y,
+        ancestor.rotation,
+      );
+      return { x: pivot.x + rotated.x, y: pivot.y + rotated.y };
+    },
+    point,
+  );
+}
+
 function elementIcon(type: ElementType) {
+  if (type === 'group') return Layers3;
   if (type === 'text') return Type;
   if (type === 'speech') return MessageSquareText;
   if (type === 'image') return FileImage;
   return Circle;
 }
 
-function renderElementContent(element: MotusElement) {
-  if (element.type === 'image' && element.src) {
+function renderElementContent(
+  element: MotusElement,
+  sceneElements: readonly MotusElement[] = [],
+  maskNamespace = 'scene',
+) {
+  const rigSourceElement = element.imageRigPart
+    ? sceneElements.find(
+        (candidate) => candidate.id === element.imageRigPart?.sourceElementId,
+      )
+    : undefined;
+  const resolvedImageSource = element.src ?? rigSourceElement?.src;
+  if (element.type === 'image' && resolvedImageSource) {
+    if (element.imageRigPart) {
+      const crop = element.imageRigPart;
+      const framing = getElementImageFraming(rigSourceElement ?? element);
+      return (
+        <span className="image-rig-part-crop">
+          {/* oxlint-disable-next-line next/no-img-element */}
+          <img
+            alt=""
+            draggable={false}
+            src={resolvedImageSource}
+            style={{
+              height: `${10_000 / crop.cropHeight}%`,
+              left: `${(-crop.cropX / crop.cropWidth) * 100}%`,
+              maxWidth: 'none',
+              objectFit: framing.fit,
+              objectPosition: `${framing.focalX}% ${framing.focalY}%`,
+              top: `${(-crop.cropY / crop.cropHeight) * 100}%`,
+              width: `${10_000 / crop.cropWidth}%`,
+            }}
+          />
+        </span>
+      );
+    }
+    const cutouts = sceneElements
+      .filter(
+        (candidate) =>
+          isElementEffectivelyVisible(sceneElements, candidate.id) &&
+          candidate.imageRigPart?.sourceElementId === element.id,
+      )
+      .map((candidate) => candidate.imageRigPart!);
+    if (cutouts.length) {
+      const maskId = `rig-mask-${maskNamespace}-${element.id.replace(/[^a-z0-9_-]/gi, '-')}`;
+      const framing = getElementImageFraming(element);
+      return (
+        <svg
+          aria-hidden="true"
+          className="image-rig-source"
+          preserveAspectRatio="none"
+          viewBox="0 0 100 100"
+        >
+          <defs>
+            <mask id={maskId} maskUnits="userSpaceOnUse">
+              <rect fill="white" height="100" width="100" />
+              {cutouts.map((crop, index) => (
+                <rect
+                  fill="black"
+                  height={crop.cropHeight}
+                  key={`${crop.sourceElementId}-${index}`}
+                  width={crop.cropWidth}
+                  x={crop.cropX}
+                  y={crop.cropY}
+                />
+              ))}
+            </mask>
+          </defs>
+          <g mask={`url(#${maskId})`}>
+            <rect fill="#fff" height="100" width="100" />
+            <foreignObject height="100" width="100">
+              {/* oxlint-disable-next-line next/no-img-element */}
+              <img
+                alt=""
+                draggable={false}
+                src={resolvedImageSource}
+                style={{
+                  height: '100%',
+                  objectFit: framing.fit,
+                  objectPosition: `${framing.focalX}% ${framing.focalY}%`,
+                  width: '100%',
+                }}
+              />
+            </foreignObject>
+          </g>
+        </svg>
+      );
+    }
     const framing = getElementImageFraming(element);
     // Data URLs from the local project file are not compatible with optimized image loaders.
     return (
@@ -1718,7 +2053,7 @@ function renderElementContent(element: MotusElement) {
       <img
         alt=""
         draggable={false}
-        src={element.src}
+        src={resolvedImageSource}
         style={{
           objectFit: framing.fit,
           objectPosition: `${framing.focalX}% ${framing.focalY}%`,
@@ -1729,6 +2064,7 @@ function renderElementContent(element: MotusElement) {
   if (element.type === 'text' || element.type === 'speech') {
     return <span className="element-text-content">{element.text}</span>;
   }
+  if (element.type === 'group') return null;
   return <span className="orb-highlight" />;
 }
 
@@ -1821,10 +2157,16 @@ function BouncePathPreview({ jumps }: { jumps: BounceJump[] }) {
   );
 }
 
+type ElementAnimationHandle = {
+  cancel: () => void;
+  finished: Promise<unknown>;
+};
+
 function animateElementProgram(
   element: MotusElement,
   node: HTMLDivElement,
-): Animation | null {
+  effectNode: HTMLDivElement = node,
+): ElementAnimationHandle | null {
   if (
     !node.animate ||
     !element.visible ||
@@ -1834,7 +2176,23 @@ function animateElementProgram(
   }
   const compiled = compileElementMotion(element);
   if (!compiled.steps.some((step) => step.kind !== 'wait')) return null;
-  return node.animate(
+  const artboardWidth = node
+    .closest('.artboard')
+    ?.getBoundingClientRect().width;
+  const canvasScale = artboardWidth ? artboardWidth / CANVAS_WIDTH : 1;
+  const timing = {
+    duration: Math.max(compiled.sequenceDurationMs, 1),
+    fill: 'both' as const,
+  };
+  const transformAnimation = node.animate(
+    compiled.keyframes.map((frame) => ({
+      offset: frame.offset,
+      easing: frame.easing,
+      transform: `translate(${frame.translateX * canvasScale}px, ${frame.translateY * canvasScale}px) rotate(${frame.rotation}deg) scale(${frame.scale * frame.scaleX}, ${frame.scale * frame.scaleY})`,
+    })),
+    timing,
+  );
+  const effectAnimation = effectNode.animate(
     compiled.keyframes.map((frame) => ({
       offset: frame.offset,
       easing: frame.easing,
@@ -1850,13 +2208,19 @@ function animateElementProgram(
       ].join(' '),
       opacity: frame.opacity,
       clipPath: `inset(${frame.clipTop}% ${frame.clipRight}% ${frame.clipBottom}% ${frame.clipLeft}%)`,
-      transform: `translate(${frame.translateX}px, ${frame.translateY}px) rotate(${frame.rotation}deg) scale(${frame.scale * frame.scaleX}, ${frame.scale * frame.scaleY})`,
     })),
-    {
-      duration: Math.max(compiled.sequenceDurationMs, 1),
-      fill: 'both',
-    },
+    timing,
   );
+  return {
+    cancel: () => {
+      transformAnimation.cancel();
+      effectAnimation.cancel();
+    },
+    finished: Promise.all([
+      transformAnimation.finished,
+      effectAnimation.finished,
+    ]).then(() => undefined),
+  };
 }
 
 type SceneViewProps = {
@@ -1916,9 +2280,12 @@ function SceneView({
   onElementRef,
   onPointerAction,
 }: SceneViewProps) {
+  const maskNamespace = useId().replace(/[^a-z0-9_-]/gi, '-');
   const elementNodes = useRef(new Map<string, HTMLDivElement>());
-  const runningAnimations = useRef<Animation[]>([]);
-  const readerAnimations = useRef(new Map<string, Animation>());
+  const effectNodes = useRef(new Map<string, HTMLDivElement>());
+  const surfaceNodes = useRef(new Map<string, HTMLDivElement>());
+  const runningAnimations = useRef<ElementAnimationHandle[]>([]);
+  const readerAnimations = useRef(new Map<string, ElementAnimationHandle>());
   const triggerReaderElementRef = useRef<ReaderTriggerElement>(() => undefined);
   const onPlaybackCompleteRef = useRef(onPlaybackComplete);
   const renderedElements = useMemo(
@@ -1941,7 +2308,7 @@ function SceneView({
 
     let disposed = false;
     let completed = false;
-    const animations: Animation[] = [];
+    const animations: ElementAnimationHandle[] = [];
     const completePlayback = () => {
       if (disposed || completed) return;
       completed = true;
@@ -1964,7 +2331,11 @@ function SceneView({
       if (playingElementId && element.id !== playingElementId) continue;
       const node = elementNodes.current.get(element.id);
       if (!node) continue;
-      const animation = animateElementProgram(element, node);
+      const animation = animateElementProgram(
+        element,
+        node,
+        effectNodes.current.get(element.id),
+      );
       if (!animation) continue;
       animations.push(animation);
     }
@@ -1996,7 +2367,11 @@ function SceneView({
         current.cancel();
         readerAnimations.current.delete(elementId);
       }
-      const animation = animateElementProgram(element, node);
+      const animation = animateElementProgram(
+        element,
+        node,
+        effectNodes.current.get(element.id),
+      );
       if (!animation) return;
       const nextVisited = new Set(visited);
       nextVisited.add(elementId);
@@ -2074,7 +2449,7 @@ function SceneView({
       { rootMargin: '0px 0px -8% 0px', threshold: 0.25 },
     );
     appearElements.forEach((element) => {
-      const node = elementNodes.current.get(element.id);
+      const node = surfaceNodes.current.get(element.id);
       if (node) observer.observe(node);
     });
     return () => observer.disconnect();
@@ -2109,294 +2484,390 @@ function SceneView({
           }
         />
       ))}
-      {renderedElements.map((element) => {
-        if (!element.visible) return null;
-        const selected =
-          selectedIds?.has(element.id) ?? selectedId === element.id;
-        const primarySelected = selectedId === element.id;
-        const textEditable =
-          element.type === 'text' || element.type === 'speech';
-        const editingText =
-          interactive && textEditable && editingTextId === element.id;
-        const compiledMotion = compileElementMotion(element);
-        const readerTap =
-          readerTriggers && compiledMotion.event === 'element-tap';
-        const readerHover =
-          readerTriggers && compiledMotion.event === 'element-hover';
-        const readerInteractive = readerTap || readerHover;
-        const typography = normalizeElementTypography(
-          element.type,
-          element.typography,
+      {(() => {
+        const renderedElementIds = new Set(
+          renderedElements.map((element) => element.id),
         );
-        const elementStyle = {
-          left: `${(element.x / CANVAS_WIDTH) * 100}%`,
-          top: `${(element.y / CANVAS_HEIGHT) * 100}%`,
-          width: `${(element.width / CANVAS_WIDTH) * 100}%`,
-          height: `${(element.height / CANVAS_HEIGHT) * 100}%`,
-          transform: `rotate(${element.rotation}deg)`,
-          opacity: element.opacity,
-          '--element-fill': element.fill,
-          '--motion-from-x': `${compiledMotion.from.translateX}px`,
-          '--motion-from-y': `${compiledMotion.from.translateY}px`,
-          '--motion-from-opacity': compiledMotion.from.opacity,
-          '--motion-from-scale': compiledMotion.from.scale,
-          '--motion-from-rotation': `${compiledMotion.from.rotation}deg`,
-          '--motion-to-opacity': compiledMotion.to.opacity,
-          '--motion-to-rotation': `${compiledMotion.to.rotation}deg`,
-          '--motion-duration': `${compiledMotion.durationMs}ms`,
-          '--motion-delay': `${compiledMotion.delayMs}ms`,
-          '--motion-easing': compiledMotion.easing,
-          ...(typography
-            ? {
-                '--element-font-family':
-                  ELEMENT_FONT_STACKS[typography.fontPreset],
-                '--element-font-size-min': `${typography.fontSize * 0.5}px`,
-                '--element-font-size-fluid': `${typography.fontSize * 0.09}vw`,
-                '--element-font-size-max': `${typography.fontSize}px`,
-                '--element-thumbnail-font-size': `${
-                  typography.fontSize *
-                  (element.type === 'text' ? 4 / 34 : 3 / 16)
-                }px`,
-                '--element-font-weight': typography.fontWeight,
-                '--element-letter-spacing': `${typography.letterSpacing}em`,
-                '--element-line-height': typography.lineHeight,
-                '--element-text-align': typography.textAlign,
-              }
-            : {}),
-        } as CSSProperties;
+        const renderRigElement = (
+          element: MotusElement,
+          depth = 0,
+        ): ReactNode => {
+          if (!element.visible) return null;
+          const selected =
+            selectedIds?.has(element.id) ?? selectedId === element.id;
+          const primarySelected = selectedId === element.id;
+          const textEditable =
+            element.type === 'text' || element.type === 'speech';
+          const editingText =
+            interactive && textEditable && editingTextId === element.id;
+          const compiledMotion = compileElementMotion(element);
+          const readerTap =
+            readerTriggers && compiledMotion.event === 'element-tap';
+          const readerHover =
+            readerTriggers && compiledMotion.event === 'element-hover';
+          const readerInteractive = readerTap || readerHover;
+          const typography = normalizeElementTypography(
+            element.type,
+            element.typography,
+          );
+          const layerOrder = renderedElements.indexOf(element) + 1;
+          const rigStyle = {
+            opacity: element.type === 'group' ? element.opacity : undefined,
+            transform: `rotate(${element.rotation}deg)`,
+            transformOrigin: `${((element.x + (element.width * element.pivotX) / 100) / CANVAS_WIDTH) * 100}% ${((element.y + (element.height * element.pivotY) / 100) / CANVAS_HEIGHT) * 100}%`,
+            zIndex: layerOrder,
+          } as CSSProperties;
+          const elementStyle = {
+            left: `${(element.x / CANVAS_WIDTH) * 100}%`,
+            top: `${(element.y / CANVAS_HEIGHT) * 100}%`,
+            width: `${(element.width / CANVAS_WIDTH) * 100}%`,
+            height: `${(element.height / CANVAS_HEIGHT) * 100}%`,
+            opacity: element.type === 'group' ? 1 : element.opacity,
+            '--element-fill': element.fill,
+            '--motion-from-x': `${compiledMotion.from.translateX}px`,
+            '--motion-from-y': `${compiledMotion.from.translateY}px`,
+            '--motion-from-opacity': compiledMotion.from.opacity,
+            '--motion-from-scale': compiledMotion.from.scale,
+            '--motion-from-rotation': `${compiledMotion.from.rotation}deg`,
+            '--motion-to-opacity': compiledMotion.to.opacity,
+            '--motion-to-rotation': `${compiledMotion.to.rotation}deg`,
+            '--motion-duration': `${compiledMotion.durationMs}ms`,
+            '--motion-delay': `${compiledMotion.delayMs}ms`,
+            '--motion-easing': compiledMotion.easing,
+            '--layer-order': layerOrder,
+            ...(typography
+              ? {
+                  '--element-font-family':
+                    ELEMENT_FONT_STACKS[typography.fontPreset],
+                  '--element-font-size-min': `${typography.fontSize * 0.5}px`,
+                  '--element-font-size-fluid': `${typography.fontSize * 0.09}vw`,
+                  '--element-font-size-max': `${typography.fontSize}px`,
+                  '--element-thumbnail-font-size': `${
+                    typography.fontSize *
+                    (element.type === 'text' ? 4 / 34 : 3 / 16)
+                  }px`,
+                  '--element-font-weight': typography.fontWeight,
+                  '--element-letter-spacing': `${typography.letterSpacing}em`,
+                  '--element-line-height': typography.lineHeight,
+                  '--element-text-align': typography.textAlign,
+                }
+              : {}),
+          } as CSSProperties;
 
-        return (
-          // The role and handlers are conditional because reader scenes are display-only.
-          // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
-          <div
-            aria-describedby={interactive ? 'canvas-instructions' : undefined}
-            aria-keyshortcuts={
-              interactive
-                ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Enter Space Shift+Enter Shift+Space Meta+A Control+A Meta+C Control+C Meta+X Control+X Meta+V Control+V'
-                : readerTap
-                  ? 'Enter Space'
-                  : undefined
-            }
-            aria-label={`${
-              interactive && selected
-                ? primarySelected
-                  ? 'Primary selected layer. '
-                  : 'Selected layer. '
-                : ''
-            }${describeElementForAccessibility(element)}${
-              interactive && textEditable && primarySelected
-                ? ' Press Enter to edit text.'
-                : readerTap
-                  ? ' Activate to play this animation.'
-                  : readerHover
-                    ? ' Focus or hover to play this animation.'
+          return (
+            <div
+              className="rig-node"
+              data-rig-depth={depth}
+              data-rig-parent={element.parentId ?? undefined}
+              key={readerTriggers ? element.id : `${element.id}-${playingKey}`}
+              ref={(node) => {
+                if (node) {
+                  elementNodes.current.set(element.id, node);
+                  if (element.type === 'group') {
+                    effectNodes.current.set(element.id, node);
+                  }
+                } else {
+                  elementNodes.current.delete(element.id);
+                  if (element.type === 'group') {
+                    effectNodes.current.delete(element.id);
+                  }
+                }
+              }}
+              style={rigStyle}
+            >
+              {/* The role and handlers are conditional because reader scenes are display-only. */}
+              {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions */}
+              <div
+                aria-describedby={
+                  interactive ? 'canvas-instructions' : undefined
+                }
+                aria-keyshortcuts={
+                  interactive
+                    ? 'ArrowLeft ArrowRight ArrowUp ArrowDown Enter Space Shift+Enter Shift+Space Meta+A Control+A Meta+C Control+C Meta+X Control+X Meta+V Control+V'
+                    : readerTap
+                      ? 'Enter Space'
+                      : undefined
+                }
+                aria-label={`${
+                  interactive && selected
+                    ? primarySelected
+                      ? 'Primary selected layer. '
+                      : 'Selected layer. '
                     : ''
-            }`}
-            aria-current={interactive && primarySelected ? 'true' : undefined}
-            className={`canvas-element element-${element.type}`}
-            data-element-id={element.id}
-            data-edge-bottom={
-              element.y + element.height >= CANVAS_HEIGHT - 48 || undefined
-            }
-            data-edge-left={element.x <= 48 || undefined}
-            data-edge-right={
-              element.x + element.width >= CANVAS_WIDTH - 48 || undefined
-            }
-            data-edge-top={element.y <= 140 || undefined}
-            data-editing={editingText || undefined}
-            data-interactive={interactive || undefined}
-            data-locked={element.locked || undefined}
-            data-motion-trigger={
-              readerTriggers ? compiledMotion.event : undefined
-            }
-            data-primary-selected={primarySelected || undefined}
-            data-selected={selected || undefined}
-            key={readerTriggers ? element.id : `${element.id}-${playingKey}`}
-            onClick={
-              interactive && !editingText
-                ? (event) => {
-                    event.stopPropagation();
-                    onSelect?.(
-                      element.id,
-                      event.shiftKey || event.metaKey || event.ctrlKey,
-                    );
-                  }
-                : readerTap
-                  ? () => triggerReaderElement(element.id)
-                  : undefined
-            }
-            onDoubleClick={
-              interactive && textEditable && !element.locked
-                ? (event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onBeginTextEdit?.(element.id);
-                  }
-                : undefined
-            }
-            onKeyDown={
-              interactive && !editingText
-                ? (event) => {
-                    const nudge = getKeyboardNudgeDelta(
-                      event.key,
-                      event.shiftKey,
-                    );
-                    if (nudge) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      if (!selected) onSelect?.(element.id);
-                      onKeyboardNudge?.(element.id, event.key, event.shiftKey);
-                      return;
-                    }
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      if (
-                        event.key === 'Enter' &&
-                        !event.shiftKey &&
-                        !event.metaKey &&
-                        !event.ctrlKey &&
-                        primarySelected &&
-                        textEditable &&
-                        !element.locked
-                      ) {
-                        onBeginTextEdit?.(element.id);
-                        return;
+                }${describeElementForAccessibility(element)}${
+                  interactive && textEditable && primarySelected
+                    ? ' Press Enter to edit text.'
+                    : readerTap
+                      ? ' Activate to play this animation.'
+                      : readerHover
+                        ? ' Focus or hover to play this animation.'
+                        : ''
+                }`}
+                aria-current={
+                  interactive && primarySelected ? 'true' : undefined
+                }
+                className={`canvas-element element-${element.type}`}
+                data-element-id={element.id}
+                data-edge-bottom={
+                  element.y + element.height >= CANVAS_HEIGHT - 48 || undefined
+                }
+                data-edge-left={element.x <= 48 || undefined}
+                data-edge-right={
+                  element.x + element.width >= CANVAS_WIDTH - 48 || undefined
+                }
+                data-edge-top={element.y <= 140 || undefined}
+                data-editing={editingText || undefined}
+                data-interactive={interactive || undefined}
+                data-image-rig-source={
+                  element.type === 'image' &&
+                  !element.imageRigPart &&
+                  renderedElements.some(
+                    (candidate) =>
+                      candidate.imageRigPart?.sourceElementId === element.id &&
+                      isElementEffectivelyVisible(
+                        renderedElements,
+                        candidate.id,
+                      ),
+                  )
+                    ? true
+                    : undefined
+                }
+                data-locked={element.locked || undefined}
+                data-motion-trigger={
+                  readerTriggers ? compiledMotion.event : undefined
+                }
+                data-primary-selected={primarySelected || undefined}
+                data-selected={selected || undefined}
+                onClick={
+                  interactive && !editingText
+                    ? (event) => {
+                        event.stopPropagation();
+                        onSelect?.(
+                          element.id,
+                          event.shiftKey || event.metaKey || event.ctrlKey,
+                        );
                       }
-                      onSelect?.(
-                        element.id,
-                        event.shiftKey || event.metaKey || event.ctrlKey,
-                      );
+                    : readerTap
+                      ? () => triggerReaderElement(element.id)
+                      : undefined
+                }
+                onDoubleClick={
+                  interactive && textEditable && !element.locked
+                    ? (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onBeginTextEdit?.(element.id);
+                      }
+                    : undefined
+                }
+                onKeyDown={
+                  interactive && !editingText
+                    ? (event) => {
+                        const nudge = getKeyboardNudgeDelta(
+                          event.key,
+                          event.shiftKey,
+                        );
+                        if (nudge) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (!selected) onSelect?.(element.id);
+                          onKeyboardNudge?.(
+                            element.id,
+                            event.key,
+                            event.shiftKey,
+                          );
+                          return;
+                        }
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (
+                            event.key === 'Enter' &&
+                            !event.shiftKey &&
+                            !event.metaKey &&
+                            !event.ctrlKey &&
+                            primarySelected &&
+                            textEditable &&
+                            !element.locked
+                          ) {
+                            onBeginTextEdit?.(element.id);
+                            return;
+                          }
+                          onSelect?.(
+                            element.id,
+                            event.shiftKey || event.metaKey || event.ctrlKey,
+                          );
+                        }
+                      }
+                    : readerTap
+                      ? (event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ')
+                            return;
+                          event.preventDefault();
+                          triggerReaderElement(element.id);
+                        }
+                      : undefined
+                }
+                onKeyUp={
+                  interactive
+                    ? (event) => {
+                        if (getKeyboardNudgeDelta(event.key, event.shiftKey)) {
+                          onKeyboardNudgeEnd?.();
+                        }
+                      }
+                    : undefined
+                }
+                onBlur={interactive ? onKeyboardNudgeEnd : undefined}
+                onFocus={
+                  readerHover
+                    ? () => triggerReaderElement(element.id)
+                    : undefined
+                }
+                onPointerEnter={
+                  readerHover
+                    ? () => triggerReaderElement(element.id)
+                    : undefined
+                }
+                onPointerDown={
+                  interactive && !editingText
+                    ? (event) => {
+                        if (!element.locked) {
+                          onPointerAction?.(event, element.id, 'move');
+                        }
+                      }
+                    : undefined
+                }
+                role={
+                  interactive
+                    ? editingText
+                      ? 'group'
+                      : 'button'
+                    : readerInteractive
+                      ? 'button'
+                      : 'img'
+                }
+                ref={(node) => {
+                  if (node) {
+                    surfaceNodes.current.set(element.id, node);
+                    if (element.type !== 'group') {
+                      effectNodes.current.set(element.id, node);
+                    }
+                  } else {
+                    surfaceNodes.current.delete(element.id);
+                    if (element.type !== 'group') {
+                      effectNodes.current.delete(element.id);
                     }
                   }
-                : readerTap
-                  ? (event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return;
-                      event.preventDefault();
-                      triggerReaderElement(element.id);
-                    }
-                  : undefined
-            }
-            onKeyUp={
-              interactive
-                ? (event) => {
-                    if (getKeyboardNudgeDelta(event.key, event.shiftKey)) {
-                      onKeyboardNudgeEnd?.();
-                    }
-                  }
-                : undefined
-            }
-            onBlur={interactive ? onKeyboardNudgeEnd : undefined}
-            onFocus={
-              readerHover ? () => triggerReaderElement(element.id) : undefined
-            }
-            onPointerEnter={
-              readerHover ? () => triggerReaderElement(element.id) : undefined
-            }
-            onPointerDown={
-              interactive && !editingText
-                ? (event) => {
-                    if (!element.locked) {
-                      onPointerAction?.(event, element.id, 'move');
-                    }
-                  }
-                : undefined
-            }
-            role={
-              interactive
-                ? editingText
-                  ? 'group'
-                  : 'button'
-                : readerInteractive
-                  ? 'button'
-                  : 'img'
-            }
-            ref={(node) => {
-              if (node) elementNodes.current.set(element.id, node);
-              else elementNodes.current.delete(element.id);
-              if (interactive) onElementRef?.(element.id, node);
-            }}
-            style={elementStyle}
-            tabIndex={
-              (interactive && !editingText) || readerInteractive ? 0 : undefined
-            }
-            title={
-              readerTap
-                ? 'Tap to play this layer animation'
-                : readerHover
-                  ? 'Hover or focus to play this layer animation'
-                  : undefined
-            }
-          >
-            {editingText ? (
-              <CanvasTextEditor
-                element={element}
-                onChange={onTextChange}
-                onFinish={onEndTextEdit}
-              />
-            ) : (
-              renderElementContent(element)
-            )}
-            {primarySelected &&
-            interactive &&
-            textEditable &&
-            !element.locked &&
-            !editingText ? (
-              // The selected layer itself is the keyboard control; this chip is a direct pointer affordance.
-              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
-              <span
-                aria-hidden="true"
-                className="canvas-edit-text-control"
-                onClick={(event) => event.stopPropagation()}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onBeginTextEdit?.(element.id);
+                  if (interactive) onElementRef?.(element.id, node);
                 }}
-                title={`Edit ${element.name} text`}
+                style={elementStyle}
+                tabIndex={
+                  (interactive && !editingText) || readerInteractive
+                    ? 0
+                    : undefined
+                }
+                title={
+                  readerTap
+                    ? 'Tap to play this layer animation'
+                    : readerHover
+                      ? 'Hover or focus to play this layer animation'
+                      : undefined
+                }
               >
-                <Pencil />
-                Edit text
-              </span>
-            ) : null}
-            {primarySelected &&
-            interactive &&
-            !element.locked &&
-            !editingText ? (
-              <>
-                {ELEMENT_RESIZE_HANDLES.map((handle) => (
-                  // Pointer transforms are visual; keyboard users retain exact inspector controls.
+                {primarySelected && interactive ? (
+                  <span
+                    aria-hidden="true"
+                    className="rig-pivot-marker"
+                    style={{
+                      left: `${element.pivotX}%`,
+                      top: `${element.pivotY}%`,
+                    }}
+                  />
+                ) : null}
+                {editingText ? (
+                  <CanvasTextEditor
+                    element={element}
+                    onChange={onTextChange}
+                    onFinish={onEndTextEdit}
+                  />
+                ) : (
+                  renderElementContent(element, renderedElements, maskNamespace)
+                )}
+                {primarySelected &&
+                interactive &&
+                textEditable &&
+                !element.locked &&
+                !editingText ? (
+                  // The selected layer itself is the keyboard control; this chip is a direct pointer affordance.
                   // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
                   <span
                     aria-hidden="true"
-                    className={`resize-handle resize-handle-${handle}`}
-                    key={handle}
+                    className="canvas-edit-text-control"
                     onClick={(event) => event.stopPropagation()}
                     onPointerDown={(event) => {
+                      event.preventDefault();
                       event.stopPropagation();
-                      onPointerAction?.(event, element.id, `resize-${handle}`);
+                      onBeginTextEdit?.(element.id);
                     }}
-                    title={`Drag ${handle.toUpperCase()} handle to resize ${element.name}`}
-                  />
-                ))}
-                {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions */}
-                <span
-                  aria-hidden="true"
-                  className="rotate-handle"
-                  onClick={(event) => event.stopPropagation()}
-                  onPointerDown={(event) => {
-                    event.stopPropagation();
-                    onPointerAction?.(event, element.id, 'rotate');
-                  }}
-                  title={`Drag to rotate ${element.name}; hold Shift to snap`}
-                >
-                  <RotateCcw />
-                </span>
-              </>
-            ) : null}
-          </div>
-        );
-      })}
+                    title={`Edit ${element.name} text`}
+                  >
+                    <Pencil />
+                    Edit text
+                  </span>
+                ) : null}
+                {primarySelected &&
+                interactive &&
+                !element.locked &&
+                !editingText ? (
+                  <>
+                    {ELEMENT_RESIZE_HANDLES.map((handle) => (
+                      // Pointer transforms are visual; keyboard users retain exact inspector controls.
+                      // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+                      <span
+                        aria-hidden="true"
+                        className={`resize-handle resize-handle-${handle}`}
+                        key={handle}
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          onPointerAction?.(
+                            event,
+                            element.id,
+                            `resize-${handle}`,
+                          );
+                        }}
+                        title={`Drag ${handle.toUpperCase()} handle to resize ${element.name}`}
+                      />
+                    ))}
+                    {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions */}
+                    <span
+                      aria-hidden="true"
+                      className="rotate-handle"
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        onPointerAction?.(event, element.id, 'rotate');
+                      }}
+                      title={`Drag to rotate ${element.name}; hold Shift to snap`}
+                    >
+                      <RotateCcw />
+                    </span>
+                  </>
+                ) : null}
+              </div>
+              {renderedElements
+                .filter((candidate) => candidate.parentId === element.id)
+                .map((child) => renderRigElement(child, depth + 1))}
+            </div>
+          );
+        };
+        return renderedElements
+          .filter(
+            (element) =>
+              !element.parentId || !renderedElementIds.has(element.parentId),
+          )
+          .map((element) => renderRigElement(element));
+      })()}
     </section>
   );
 }
@@ -2537,6 +3008,9 @@ export function MotusStudio() {
   const [numericDrafts, setNumericDrafts] = useState<Record<string, string>>(
     {},
   );
+  const [rigRegionDraft, setRigRegionDraft] = useState<RigRegionDraft>(
+    DEFAULT_RIG_REGION_DRAFT,
+  );
   const [activeMotionDrag, setActiveMotionDrag] =
     useState<ActiveMotionDrag | null>(null);
   const [expandedMotionBlockId, setExpandedMotionBlockId] = useState<
@@ -2581,7 +3055,7 @@ export function MotusStudio() {
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const deletionUndoTimer = useRef<number | null>(null);
   const activePointerCleanup = useRef<(() => void) | null>(null);
-  const copiedElements = useRef<MotusElement[]>([]);
+  const copiedElements = useRef<CopiedElementSnapshot | null>(null);
   const motionSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 7 },
@@ -2708,6 +3182,21 @@ export function MotusStudio() {
       activeScene.elements.find((element) => element.id === selectedElementId),
     [activeScene.elements, selectedElementId],
   );
+  const selectedRigPath = useMemo(() => {
+    if (!selectedElement) return [];
+    const byId = new Map(
+      activeScene.elements.map((element) => [element.id, element]),
+    );
+    const path: MotusElement[] = [];
+    const visited = new Set<string>();
+    let current: MotusElement | undefined = selectedElement;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      path.unshift(current);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+    return path;
+  }, [activeScene.elements, selectedElement]);
   const selectedElementIdSet = useMemo(
     () => new Set(selectedElementIds),
     [selectedElementIds],
@@ -3130,10 +3619,26 @@ export function MotusStudio() {
     transactionKey: string | null = null,
   ) => {
     commitProject((draft) => {
-      const element = findElement(draft, activeScene.id, elementId);
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
+      const element = scene?.elements.find((item) => item.id === elementId);
       if (element) {
+        const previousX = element.x;
+        const previousY = element.y;
         mutate(element);
-        Object.assign(element, constrainElementToCanvas(element));
+        const requestedX = Number.isFinite(element.x) ? element.x : previousX;
+        const requestedY = Number.isFinite(element.y) ? element.y : previousY;
+        const normalized = constrainElementToCanvas({
+          ...element,
+          x: previousX,
+          y: previousY,
+        });
+        Object.assign(element, normalized, { x: previousX, y: previousY });
+        scene!.elements = translateElementRigBranch(
+          scene!.elements,
+          elementId,
+          requestedX - previousX,
+          requestedY - previousY,
+        );
       }
     }, transactionKey);
   };
@@ -3364,6 +3869,185 @@ export function MotusStudio() {
     return true;
   };
 
+  const setElementRigParent = (elementId: string, parentId: string | null) => {
+    const element = activeScene.elements.find((item) => item.id === elementId);
+    if (!element || element.parentId === parentId) return;
+    const currentDepth = getElementRigDepth(activeScene.elements, elementId);
+    const branchDepth = Math.max(
+      0,
+      ...getElementRigDescendantIds(activeScene.elements, elementId).map(
+        (descendantId) =>
+          getElementRigDepth(activeScene.elements, descendantId) - currentDepth,
+      ),
+    );
+    const nextDepth = parentId
+      ? getElementRigDepth(activeScene.elements, parentId) + 1
+      : 0;
+    if (
+      parentId &&
+      (wouldCreateElementRigCycle(activeScene.elements, elementId, parentId) ||
+        nextDepth + branchDepth > MAX_ELEMENT_RIG_DEPTH)
+    ) {
+      setNotice('That parent would create an invalid rig hierarchy');
+      return;
+    }
+    commitProject((draft) => {
+      const target = findElement(draft, activeScene.id, elementId);
+      if (target) target.parentId = parentId;
+    });
+    const parent = parentId
+      ? activeScene.elements.find((item) => item.id === parentId)
+      : null;
+    setNotice(
+      parent
+        ? `${element.name} now follows ${parent.name}`
+        : `${element.name} detached to scene root`,
+    );
+  };
+
+  const groupSelectionAsRig = () => {
+    const candidates =
+      selectedElements.length > 1
+        ? selectedElements
+        : selectedElement
+          ? [selectedElement]
+          : [];
+    if (!candidates.length || !canAddElementToScene(activeScene)) return;
+    const selectedIds = new Set(candidates.map((element) => element.id));
+    const topLevel = candidates.filter((element) => {
+      let parentId = element.parentId;
+      while (parentId) {
+        if (selectedIds.has(parentId)) return false;
+        parentId =
+          activeScene.elements.find((candidate) => candidate.id === parentId)
+            ?.parentId ?? null;
+      }
+      return true;
+    });
+    const groupedIds = new Set(
+      topLevel.flatMap((element) => [
+        element.id,
+        ...getElementRigDescendantIds(activeScene.elements, element.id),
+      ]),
+    );
+    const groupedElements = activeScene.elements.filter((element) =>
+      groupedIds.has(element.id),
+    );
+    const left = Math.min(...groupedElements.map((element) => element.x));
+    const top = Math.min(...groupedElements.map((element) => element.y));
+    const right = Math.max(
+      ...groupedElements.map((element) => element.x + element.width),
+    );
+    const bottom = Math.max(
+      ...groupedElements.map((element) => element.y + element.height),
+    );
+    const sharedParent = topLevel.every(
+      (element) => element.parentId === topLevel[0].parentId,
+    )
+      ? topLevel[0].parentId
+      : null;
+    const groupDepth = sharedParent
+      ? getElementRigDepth(activeScene.elements, sharedParent) + 1
+      : 0;
+    const deepestBranch = Math.max(
+      ...topLevel.map((element) => {
+        const elementDepth = getElementRigDepth(
+          activeScene.elements,
+          element.id,
+        );
+        return Math.max(
+          0,
+          ...getElementRigDescendantIds(activeScene.elements, element.id).map(
+            (descendantId) =>
+              getElementRigDepth(activeScene.elements, descendantId) -
+              elementDepth,
+          ),
+        );
+      }),
+    );
+    if (groupDepth + 1 + deepestBranch > MAX_ELEMENT_RIG_DEPTH) {
+      setNotice(`Rigs can be nested up to ${MAX_ELEMENT_RIG_DEPTH} levels`);
+      return;
+    }
+    const group = createElement('group', activeScene.elements.length + 1, {
+      id: uniqueId('rig-group'),
+      name: `Rig group ${activeScene.elements.filter((item) => item.type === 'group').length + 1}`,
+      parentId: sharedParent,
+      x: left,
+      y: top,
+      width: Math.max(MIN_ELEMENT_WIDTH, right - left),
+      height: Math.max(MIN_ELEMENT_HEIGHT, bottom - top),
+      fill: '#7d5cff',
+    });
+    commitProject((draft) => {
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
+      if (!scene) return;
+      scene.elements.push(group);
+      scene.elements.forEach((element) => {
+        if (
+          selectedIds.has(element.id) &&
+          topLevel.some((item) => item.id === element.id)
+        ) {
+          element.parentId = group.id;
+        }
+      });
+    });
+    setSelectedElementId(group.id);
+    setNotice(
+      `${topLevel.length} ${topLevel.length === 1 ? 'layer' : 'layers'} nested under ${group.name}`,
+    );
+    focusEditorTarget(activeScene.id, group.id);
+  };
+
+  const extractImageRigPart = () => {
+    if (
+      !selectedElement ||
+      selectedElement.type !== 'image' ||
+      !selectedElement.src ||
+      selectedElement.imageRigPart ||
+      !canAddElementToScene(activeScene)
+    ) {
+      return;
+    }
+    const cropX = Math.min(rigRegionDraft.x, 99);
+    const cropY = Math.min(rigRegionDraft.y, 99);
+    const cropWidth = Math.min(rigRegionDraft.width, 100 - cropX);
+    const cropHeight = Math.min(rigRegionDraft.height, 100 - cropY);
+    const part = createElement('image', activeScene.elements.length + 1, {
+      id: uniqueId('rig-part'),
+      name: `${selectedElement.name} part`,
+      parentId: selectedElement.id,
+      pivotX: 50,
+      pivotY: 50,
+      x: selectedElement.x + (selectedElement.width * cropX) / 100,
+      y: selectedElement.y + (selectedElement.height * cropY) / 100,
+      width: Math.max(
+        MIN_ELEMENT_WIDTH,
+        (selectedElement.width * cropWidth) / 100,
+      ),
+      height: Math.max(
+        MIN_ELEMENT_HEIGHT,
+        (selectedElement.height * cropHeight) / 100,
+      ),
+      src: undefined,
+      imageRigPart: {
+        sourceElementId: selectedElement.id,
+        cropX,
+        cropY,
+        cropWidth,
+        cropHeight,
+      },
+    });
+    commitProject((draft) => {
+      findProjectScene(draft, activeScene.id)?.scene.elements.push(part);
+    });
+    setSelectedElementId(part.id);
+    setNotice(
+      `${part.name} cut out and attached · set its pivot, parent, and blocks`,
+    );
+    focusEditorTarget(activeScene.id, part.id);
+  };
+
   const deleteElement = (
     elementId: string,
     action: 'delete' | 'cut' = 'delete',
@@ -3374,28 +4058,33 @@ export function MotusStudio() {
       setNotice('Layer is no longer available');
       return;
     }
-    const nextSelectedElementId = resolveSelectionAfterElementDeletion(
-      activeScene.elements,
+    const branchIds = getElementRigCascadeDeleteIds(activeScene.elements, [
       elementId,
-    );
+    ]);
+    const branchIdSet = new Set(branchIds);
+    const nextSelectedElementId =
+      activeScene.elements
+        .filter((element) => !branchIdSet.has(element.id))
+        .at(-1)?.id ?? '';
     commitProject((draft) => {
       const scene = findProjectScene(draft, activeScene.id)?.scene;
       if (!scene) return;
       scene.elements = scene.elements.filter(
-        (element) => element.id !== elementId,
+        (element) => !branchIdSet.has(element.id),
       );
     });
     setSelectedElementId(nextSelectedElementId);
     setNotice(
       action === 'cut'
-        ? `${deletedElement.name} cut · paste to move it`
-        : 'Layer deleted',
+        ? `${deletedElement.name}${branchIds.length > 1 ? ` and ${branchIds.length - 1} nested parts` : ''} cut · paste to move it`
+        : `${deletedElement.name}${branchIds.length > 1 ? ` and ${branchIds.length - 1} nested parts` : ''} deleted`,
     );
     showDeletionUndo({
       message: `${deletedElement.name} ${action === 'cut' ? 'cut' : 'deleted'}`,
       chapterId: activeChapter.id,
       sceneId: activeScene.id,
       elementId,
+      elementIds: branchIds,
     });
     focusEditorTarget(activeScene.id, nextSelectedElementId);
   };
@@ -3405,7 +4094,10 @@ export function MotusStudio() {
       if (selectedElementId) deleteElement(selectedElementId, action);
       return;
     }
-    const deletedIds = selectedElements.map((element) => element.id);
+    const deletedIds = getElementRigCascadeDeleteIds(
+      activeScene.elements,
+      selectedElements.map((element) => element.id),
+    );
     const deletedIdSet = new Set(deletedIds);
     const remainingElements = activeScene.elements.filter(
       (element) => !deletedIdSet.has(element.id),
@@ -3440,8 +4132,14 @@ export function MotusStudio() {
       const elements = findProjectScene(draft, activeScene.id)?.scene.elements;
       if (!elements) return;
       const index = elements.findIndex((element) => element.id === elementId);
-      const target = index + direction;
-      if (index < 0 || target < 0 || target >= elements.length) return;
+      if (index < 0) return;
+      const parentId = elements[index].parentId;
+      const siblingIndexes = elements.flatMap((element, candidateIndex) =>
+        element.parentId === parentId ? [candidateIndex] : [],
+      );
+      const siblingIndex = siblingIndexes.indexOf(index);
+      const target = siblingIndexes[siblingIndex + direction];
+      if (target === undefined) return;
       [elements[index], elements[target]] = [elements[target], elements[index]];
     });
   };
@@ -3459,7 +4157,14 @@ export function MotusStudio() {
       selectedElementIdSet.has(elementId) &&
       unlockedSelectedElementIds.length > 0
     ) {
-      const selectionIds = [...unlockedSelectedElementIds];
+      const selectionIds = [
+        ...new Set(
+          unlockedSelectedElementIds.flatMap((id) => [
+            id,
+            ...getElementRigDescendantIds(activeScene.elements, id),
+          ]),
+        ),
+      ];
       commitProject(
         (draft) => {
           const scene = findProjectScene(draft, activeScene.id)?.scene;
@@ -3500,10 +4205,14 @@ export function MotusStudio() {
       setNotice('Select at least two unlocked layers to align them');
       return;
     }
-    const nextElements = alignSelectedElements(
+    const nextElements = preserveRigBranchesAfterSelectionTransform(
       activeScene.elements,
+      alignSelectedElements(
+        activeScene.elements,
+        unlockedSelectedElementIds,
+        alignment,
+      ),
       unlockedSelectedElementIds,
-      alignment,
     );
     if (
       nextElements.every(
@@ -3517,10 +4226,14 @@ export function MotusStudio() {
     commitProject((draft) => {
       const scene = findProjectScene(draft, activeScene.id)?.scene;
       if (!scene) return;
-      scene.elements = alignSelectedElements(
+      scene.elements = preserveRigBranchesAfterSelectionTransform(
         scene.elements,
+        alignSelectedElements(
+          scene.elements,
+          unlockedSelectedElementIds,
+          alignment,
+        ),
         unlockedSelectedElementIds,
-        alignment,
       );
     });
     setNotice(
@@ -3533,10 +4246,14 @@ export function MotusStudio() {
       setNotice('Select at least three unlocked layers to distribute them');
       return;
     }
-    const nextElements = distributeSelectedElements(
+    const nextElements = preserveRigBranchesAfterSelectionTransform(
       activeScene.elements,
+      distributeSelectedElements(
+        activeScene.elements,
+        unlockedSelectedElementIds,
+        axis,
+      ),
       unlockedSelectedElementIds,
-      axis,
     );
     if (
       nextElements.every(
@@ -3552,10 +4269,14 @@ export function MotusStudio() {
     commitProject((draft) => {
       const scene = findProjectScene(draft, activeScene.id)?.scene;
       if (!scene) return;
-      scene.elements = distributeSelectedElements(
+      scene.elements = preserveRigBranchesAfterSelectionTransform(
         scene.elements,
+        distributeSelectedElements(
+          scene.elements,
+          unlockedSelectedElementIds,
+          axis,
+        ),
         unlockedSelectedElementIds,
-        axis,
       );
     });
     setNotice(
@@ -4605,12 +5326,27 @@ export function MotusStudio() {
 
   const duplicateElement = (elementId: string) => {
     const source = findElement(project, activeScene.id, elementId);
-    if (source) addElementCopy(source, 'Layer duplicated');
+    if (!source) return;
+    const branchIds = new Set([
+      elementId,
+      ...getElementRigDescendantIds(activeScene.elements, elementId),
+    ]);
+    const branch = activeScene.elements.filter((element) =>
+      branchIds.has(element.id),
+    );
+    if (branch.length > 1) {
+      addElementCopies(branch, `${source.name} rig duplicated`);
+    } else {
+      addElementCopy(source, 'Layer duplicated');
+    }
   };
 
   const addElementCopies = (
     sources: readonly MotusElement[],
     successMessage: string,
+    selectedSourceIds: ReadonlySet<string> = new Set(
+      sources.map((source) => source.id),
+    ),
   ) => {
     if (sources.length === 0) return false;
     if (activeScene.elements.length + sources.length > MAX_SCENE_ELEMENTS) {
@@ -4634,6 +5370,14 @@ export function MotusStudio() {
           copiedElementIds.get(eventBlock.sourceElementId) ??
           eventBlock.sourceElementId;
       }
+      copy.parentId = source.parentId
+        ? (copiedElementIds.get(source.parentId) ?? source.parentId)
+        : null;
+      if (copy.imageRigPart) {
+        copy.imageRigPart.sourceElementId =
+          copiedElementIds.get(copy.imageRigPart.sourceElementId) ??
+          copy.imageRigPart.sourceElementId;
+      }
       return {
         ...copy,
         locked: false,
@@ -4652,19 +5396,31 @@ export function MotusStudio() {
     ) {
       return false;
     }
-    setSelectedElementIds(copyIds);
-    setPrimarySelectedElementId(copyIds.at(-1)!);
+    const selectedCopyIds = copyIds.filter((_, index) =>
+      selectedSourceIds.has(sources[index].id),
+    );
+    setSelectedElementIds(selectedCopyIds);
+    setPrimarySelectedElementId(selectedCopyIds.at(-1) ?? copyIds.at(-1)!);
     setEditingTextElementId(null);
     setNotice(successMessage);
-    focusEditorTarget(activeScene.id, copyIds.at(-1)!);
+    focusEditorTarget(
+      activeScene.id,
+      selectedCopyIds.at(-1) ?? copyIds.at(-1)!,
+    );
     return true;
   };
 
   const duplicateSelection = () => {
     if (selectedElements.length > 1) {
+      const copyIds = new Set(
+        selectedElements.flatMap((element) => [
+          element.id,
+          ...getElementRigDescendantIds(activeScene.elements, element.id),
+        ]),
+      );
       addElementCopies(
-        selectedElements,
-        `${selectedElements.length} layers duplicated`,
+        activeScene.elements.filter((element) => copyIds.has(element.id)),
+        `${copyIds.size} layers duplicated`,
       );
       return;
     }
@@ -4725,6 +5481,18 @@ export function MotusStudio() {
       return {
         ...element,
         id: duplicatedElementIds.get(element.id) ?? uniqueId(element.type),
+        parentId: element.parentId
+          ? (duplicatedElementIds.get(element.parentId) ?? null)
+          : null,
+        imageRigPart: element.imageRigPart
+          ? {
+              ...element.imageRigPart,
+              sourceElementId:
+                duplicatedElementIds.get(
+                  element.imageRigPart.sourceElementId,
+                ) ?? element.imageRigPart.sourceElementId,
+            }
+          : undefined,
       };
     });
     if (
@@ -4955,7 +5723,7 @@ export function MotusStudio() {
     setReaderRevision(revision ? structuredClone(revision) : null);
     setReaderMatureConfirmed(false);
     const source = resolveReaderSource(project, revision);
-    setReaderMode(source.format === 'page' ? 'page' : 'scroll');
+    setReaderMode(readerModeForFormat(source.format));
     setReaderChapterId(source.chapters[0].id);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
@@ -4972,7 +5740,7 @@ export function MotusStudio() {
     setReaderCatalogFormat(work.format);
     setReaderRevision(null);
     setReaderMatureConfirmed(false);
-    setReaderMode(catalogProject.format === 'page' ? 'page' : 'scroll');
+    setReaderMode(readerModeForFormat(catalogProject.format));
     setReaderChapterId(catalogProject.chapters[0].id);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
@@ -5017,7 +5785,7 @@ export function MotusStudio() {
         setReaderCatalogFormat(null);
         setReaderRevision(null);
         setReaderMatureConfirmed(false);
-        setReaderMode(project.format === 'page' ? 'page' : 'scroll');
+        setReaderMode(readerModeForFormat(project.format));
         setReaderChapterId(project.chapters[0].id);
         setReaderPageIndex(0);
         setReaderPreviewKey((key) => key + 1);
@@ -5036,7 +5804,7 @@ export function MotusStudio() {
         setReaderCatalogFormat(work.format);
         setReaderRevision(null);
         setReaderMatureConfirmed(false);
-        setReaderMode(catalogProject.format === 'page' ? 'page' : 'scroll');
+        setReaderMode(readerModeForFormat(catalogProject.format));
         setReaderChapterId(catalogProject.chapters[0].id);
         setReaderPageIndex(0);
         setReaderPreviewKey((key) => key + 1);
@@ -5111,7 +5879,7 @@ export function MotusStudio() {
     setReaderCatalogFormat(null);
     setReaderRevision(revision);
     setReaderMatureConfirmed(false);
-    setReaderMode(revision.format === 'page' ? 'page' : 'scroll');
+    setReaderMode(readerModeForFormat(revision.format));
     setReaderChapterId(revision.chapters[0].id);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
@@ -5183,7 +5951,14 @@ export function MotusStudio() {
       selectedElementIdSet.has(elementId) &&
       selectedElements.length > 1;
     const moveSelectionIds = groupMove
-      ? [...unlockedSelectedElementIds]
+      ? [
+          ...new Set(
+            unlockedSelectedElementIds.flatMap((id) => [
+              id,
+              ...getElementRigDescendantIds(activeScene.elements, id),
+            ]),
+          ),
+        ]
       : [elementId];
     if (groupMove) {
       setPrimarySelectedElementId(elementId);
@@ -5224,14 +5999,24 @@ export function MotusStudio() {
       height: element.height,
       rotation: element.rotation,
     };
-    const centerX = origin.x + origin.width / 2;
-    const centerY = origin.y + origin.height / 2;
+    const renderedPivot = getRenderedRigPoint(
+      activeScene.elements,
+      element.id,
+      {
+        x: origin.x + (origin.width * element.pivotX) / 100,
+        y: origin.y + (origin.height * element.pivotY) / 100,
+      },
+    );
+    const ancestorRotation = getElementRigAncestors(
+      activeScene.elements,
+      element.id,
+    ).reduce((total, ancestor) => total + ancestor.rotation, 0);
     const startCanvasX = ((startX - bounds.left) / bounds.width) * CANVAS_WIDTH;
     const startCanvasY =
       ((startY - bounds.top) / bounds.height) * CANVAS_HEIGHT;
     const startRotationAngle = Math.atan2(
-      startCanvasY - centerY,
-      startCanvasX - centerX,
+      startCanvasY - renderedPivot.y,
+      startCanvasX - renderedPivot.x,
     );
     let moved = false;
     let aligned = false;
@@ -5263,12 +6048,18 @@ export function MotusStudio() {
         setIsDirty(true);
         moved = true;
       }
-      const deltaX = (clientDeltaX / bounds.width) * CANVAS_WIDTH;
-      const deltaY = (clientDeltaY / bounds.height) * CANVAS_HEIGHT;
+      const rawDeltaX = (clientDeltaX / bounds.width) * CANVAS_WIDTH;
+      const rawDeltaY = (clientDeltaY / bounds.height) * CANVAS_HEIGHT;
+      const authoredDelta =
+        mode === 'rotate'
+          ? { x: rawDeltaX, y: rawDeltaY }
+          : rotateCanvasVector(rawDeltaX, rawDeltaY, -ancestorRotation);
+      const deltaX = authoredDelta.x;
+      const deltaY = authoredDelta.y;
       let transformDeltaX = deltaX;
       let transformDeltaY = deltaY;
       if (mode === 'move') {
-        if (pointer.altKey) {
+        if (pointer.altKey || Math.abs(ancestorRotation % 360) > 0.01) {
           aligned = false;
           setActiveAlignmentGuides([]);
         } else {
@@ -5291,8 +6082,8 @@ export function MotusStudio() {
         const pointerCanvasY =
           ((pointer.clientY - bounds.top) / bounds.height) * CANVAS_HEIGHT;
         const pointerAngle = Math.atan2(
-          pointerCanvasY - centerY,
-          pointerCanvasX - centerX,
+          pointerCanvasY - renderedPivot.y,
+          pointerCanvasX - renderedPivot.x,
         );
         const rawAngleDelta =
           ((pointerAngle - startRotationAngle) * 180) / Math.PI;
@@ -5318,8 +6109,19 @@ export function MotusStudio() {
           next.updatedAt = new Date().toISOString();
           return next;
         }
-        const target = findElement(next, activeScene.id, elementId);
+        const scene = findProjectScene(next, activeScene.id)?.scene;
+        const target = scene?.elements.find((item) => item.id === elementId);
         if (!target) return current;
+        if (mode === 'move' && scene) {
+          scene.elements = translateElementRigBranch(
+            originSceneElements,
+            elementId,
+            transformDeltaX,
+            transformDeltaY,
+          );
+          next.updatedAt = new Date().toISOString();
+          return next;
+        }
         Object.assign(
           target,
           transformElementByPointer(
@@ -5487,15 +6289,34 @@ export function MotusStudio() {
         return null;
       }
 
-      const sources =
+      const selectedSources =
         selectedElements.length > 1 ? selectedElements : [selectedElement];
-      copiedElements.current = structuredClone(sources);
+      const contentElementIds = getElementRigCascadeDeleteIds(
+        activeScene.elements,
+        selectedSources.map((source) => source.id),
+      );
+      const snapshotIds = new Set(contentElementIds);
+      for (const element of activeScene.elements) {
+        if (!snapshotIds.has(element.id) || !element.imageRigPart) continue;
+        snapshotIds.add(element.imageRigPart.sourceElementId);
+      }
+      const snapshotElements = activeScene.elements.filter((source) =>
+        snapshotIds.has(source.id),
+      );
+      const contentElements = activeScene.elements.filter((source) =>
+        contentElementIds.includes(source.id),
+      );
+      copiedElements.current = {
+        sceneId: activeScene.id,
+        contentElementIds,
+        elements: structuredClone(snapshotElements),
+      };
       event.clipboardData.setData(
         MOTUS_LAYER_CLIPBOARD_TYPE,
-        JSON.stringify(sources.map((source) => source.id)),
+        JSON.stringify(snapshotElements.map((source) => source.id)),
       );
       event.preventDefault();
-      return sources;
+      return contentElements;
     };
 
     const onCopy = (event: ClipboardEvent) => {
@@ -5548,16 +6369,53 @@ export function MotusStudio() {
       }
       if (files.length > 0) return;
 
-      const sources = copiedElements.current;
+      const snapshot = copiedElements.current;
       const marker = clipboard.getData(MOTUS_LAYER_CLIPBOARD_TYPE);
       if (
-        sources.length === 0 ||
-        marker !== JSON.stringify(sources.map((source) => source.id))
+        !snapshot ||
+        marker !== JSON.stringify(snapshot.elements.map((source) => source.id))
       )
         return;
       event.preventDefault();
+      const contentIds = new Set(snapshot.contentElementIds);
+      const sameScene = snapshot.sceneId === activeScene.id;
+      const activeIds = new Set(
+        activeScene.elements.map((element) => element.id),
+      );
+      const pasteIds = new Set(snapshot.contentElementIds);
+      for (const element of snapshot.elements) {
+        if (!contentIds.has(element.id) || !element.imageRigPart) continue;
+        if (
+          !sameScene ||
+          !activeIds.has(element.imageRigPart.sourceElementId)
+        ) {
+          pasteIds.add(element.imageRigPart.sourceElementId);
+        }
+      }
+      const sources = snapshot.elements
+        .filter((source) => pasteIds.has(source.id))
+        .map((source) => ({
+          ...source,
+          parentId:
+            source.parentId &&
+            (contentIds.has(source.parentId) ||
+              (sameScene && activeIds.has(source.parentId)))
+              ? source.parentId
+              : null,
+          visible: contentIds.has(source.id) ? source.visible : false,
+        }));
+      const selectedSourceIds = new Set(
+        sources
+          .filter((source) => contentIds.has(source.id))
+          .map((source) => source.id),
+      );
+      const pastedLayerCount = selectedSourceIds.size;
       if (sources.length > 1) {
-        addElementCopies(sources, `${sources.length} layers pasted`);
+        addElementCopies(
+          sources,
+          `${pastedLayerCount} ${pastedLayerCount === 1 ? 'layer' : 'layers'} pasted`,
+          selectedSourceIds,
+        );
       } else {
         addElementCopy(sources[0], 'Layer pasted');
       }
@@ -5731,7 +6589,7 @@ export function MotusStudio() {
   };
   const replayReader = () => {
     setReaderChapterId(readerSource.chapters[0].id);
-    if (readerMode === 'page') setReaderPageIndex(0);
+    if (readerMode !== 'scroll') setReaderPageIndex(0);
     readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
     setReaderPreviewKey((key) => key + 1);
     setNotice('Reader replayed from the first scene');
@@ -5745,19 +6603,29 @@ export function MotusStudio() {
   };
 
   const moveReaderPage = (direction: -1 | 1) => {
+    const pageStep = readerMode === 'spread' ? 2 : 1;
     if (direction < 0 && resolvedReaderPageIndex > 0) {
-      setReaderPageIndex(resolvedReaderPageIndex - 1);
+      setReaderPageIndex(Math.max(0, resolvedReaderPageIndex - pageStep));
     } else if (
       direction > 0 &&
-      resolvedReaderPageIndex < readerScenes.length - 1
+      resolvedReaderPageIndex + pageStep < readerScenes.length
     ) {
-      setReaderPageIndex(resolvedReaderPageIndex + 1);
+      setReaderPageIndex(
+        Math.min(readerScenes.length - 1, resolvedReaderPageIndex + pageStep),
+      );
     } else {
       const targetChapterIndex = readerChapterIndex + direction;
       const targetChapter = readerSource.chapters[targetChapterIndex];
       if (!targetChapter) return;
       setReaderChapterId(targetChapter.id);
-      setReaderPageIndex(direction < 0 ? targetChapter.scenes.length - 1 : 0);
+      const lastSceneIndex = targetChapter.scenes.length - 1;
+      setReaderPageIndex(
+        direction < 0
+          ? readerMode === 'spread'
+            ? Math.max(0, lastSceneIndex - (lastSceneIndex % 2))
+            : lastSceneIndex
+          : 0,
+      );
     }
     readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
   };
@@ -6521,128 +7389,144 @@ export function MotusStudio() {
             </fieldset>
           </div>
 
-          <div className="layer-list">
-            {[...activeScene.elements].reverse().map((element) => {
-              const Icon = elementIcon(element.type);
-              const originalIndex = activeScene.elements.findIndex(
-                (item) => item.id === element.id,
-              );
-              return (
-                <div
-                  className="layer-row"
-                  data-primary-selected={
-                    selectedElementId === element.id || undefined
-                  }
-                  data-selected={
-                    selectedElementIdSet.has(element.id) || undefined
-                  }
-                  key={element.id}
-                >
-                  <button
-                    aria-label={
-                      selectedElementIdSet.has(element.id)
-                        ? `Remove ${element.name} from selection`
-                        : `Add ${element.name} to selection`
+          <div
+            aria-label="Rig layer hierarchy"
+            className="layer-list"
+            role="tree"
+          >
+            {flattenRigLayers(activeScene.elements).map(
+              ({ element, depth }) => {
+                const Icon = elementIcon(element.type);
+                const siblingElements = activeScene.elements.filter(
+                  (item) => item.parentId === element.parentId,
+                );
+                const siblingIndex = siblingElements.findIndex(
+                  (item) => item.id === element.id,
+                );
+                return (
+                  <div
+                    className="layer-row"
+                    data-rig-depth={depth}
+                    data-primary-selected={
+                      selectedElementId === element.id || undefined
                     }
-                    aria-pressed={selectedElementIdSet.has(element.id)}
-                    className="layer-multi-toggle"
-                    onClick={() => selectElement(element.id, true)}
-                    title={
-                      selectedElementIdSet.has(element.id)
-                        ? 'Remove from selection'
-                        : 'Add to selection'
+                    data-selected={
+                      selectedElementIdSet.has(element.id) || undefined
                     }
-                    type="button"
+                    key={element.id}
+                    role="treeitem"
+                    aria-level={depth + 1}
+                    style={{ '--rig-depth': depth } as CSSProperties}
                   >
-                    {selectedElementIdSet.has(element.id) ? (
-                      <Check aria-hidden="true" />
-                    ) : (
-                      <Plus aria-hidden="true" />
-                    )}
-                  </button>
-                  <button
-                    aria-current={
-                      selectedElementId === element.id ? 'true' : undefined
-                    }
-                    aria-label={
-                      selectedElementId === element.id
-                        ? `Edit ${element.name}, primary layer`
-                        : `Edit ${element.name} and make it primary`
-                    }
-                    className="layer-select"
-                    onClick={(event) =>
-                      selectElement(
-                        element.id,
-                        event.shiftKey || event.metaKey || event.ctrlKey,
-                      )
-                    }
-                    type="button"
-                  >
-                    <span className="layer-icon">
-                      <Icon />
-                    </span>
-                    <span className="layer-copy">
-                      <strong>{element.name}</strong>
-                      <small>{element.type}</small>
-                    </span>
-                  </button>
-                  <div className="layer-actions">
                     <button
-                      aria-label={`${element.name} visibility`}
-                      aria-pressed={element.visible}
-                      onClick={() =>
-                        updateElement(element.id, (item) => {
-                          item.visible = !item.visible;
-                        })
+                      aria-label={
+                        selectedElementIdSet.has(element.id)
+                          ? `Remove ${element.name} from selection`
+                          : `Add ${element.name} to selection`
                       }
+                      aria-pressed={selectedElementIdSet.has(element.id)}
+                      className="layer-multi-toggle"
+                      onClick={() => selectElement(element.id, true)}
                       title={
-                        element.visible
-                          ? `Hide ${element.name}`
-                          : `Show ${element.name}`
+                        selectedElementIdSet.has(element.id)
+                          ? 'Remove from selection'
+                          : 'Add to selection'
                       }
                       type="button"
                     >
-                      {element.visible ? <Eye /> : <EyeOff />}
+                      {selectedElementIdSet.has(element.id) ? (
+                        <Check aria-hidden="true" />
+                      ) : (
+                        <Plus aria-hidden="true" />
+                      )}
                     </button>
                     <button
-                      aria-label={`${element.name} locked`}
-                      aria-pressed={element.locked}
-                      onClick={() =>
-                        updateElement(element.id, (item) => {
-                          item.locked = !item.locked;
-                        })
+                      aria-current={
+                        selectedElementId === element.id ? 'true' : undefined
                       }
-                      title={
-                        element.locked
-                          ? `Unlock ${element.name}`
-                          : `Lock ${element.name}`
+                      aria-label={
+                        selectedElementId === element.id
+                          ? `Edit ${element.name}, primary layer`
+                          : `Edit ${element.name} and make it primary`
+                      }
+                      className="layer-select"
+                      onClick={(event) =>
+                        selectElement(
+                          element.id,
+                          event.shiftKey || event.metaKey || event.ctrlKey,
+                        )
                       }
                       type="button"
                     >
-                      {element.locked ? <Lock /> : <Unlock />}
+                      <span className="layer-icon">
+                        <Icon />
+                      </span>
+                      <span className="layer-copy">
+                        <strong>{element.name}</strong>
+                        <small>
+                          {element.type}
+                          {element.parentId
+                            ? ` · follows ${activeScene.elements.find((candidate) => candidate.id === element.parentId)?.name ?? 'parent'}`
+                            : ''}
+                        </small>
+                      </span>
                     </button>
-                    <button
-                      aria-label={`Move ${element.name} up`}
-                      disabled={
-                        originalIndex === activeScene.elements.length - 1
-                      }
-                      onClick={() => moveLayer(element.id, 1)}
-                      type="button"
-                    >
-                      <ArrowUp />
-                    </button>
-                    <button
-                      aria-label={`Move ${element.name} down`}
-                      disabled={originalIndex === 0}
-                      onClick={() => moveLayer(element.id, -1)}
-                      type="button"
-                    >
-                      <ArrowDown />
-                    </button>
+                    <div className="layer-actions">
+                      <button
+                        aria-label={`${element.name} visibility`}
+                        aria-pressed={element.visible}
+                        onClick={() =>
+                          updateElement(element.id, (item) => {
+                            item.visible = !item.visible;
+                          })
+                        }
+                        title={
+                          element.visible
+                            ? `Hide ${element.name}`
+                            : `Show ${element.name}`
+                        }
+                        type="button"
+                      >
+                        {element.visible ? <Eye /> : <EyeOff />}
+                      </button>
+                      <button
+                        aria-label={`${element.name} locked`}
+                        aria-pressed={element.locked}
+                        onClick={() =>
+                          updateElement(element.id, (item) => {
+                            item.locked = !item.locked;
+                          })
+                        }
+                        title={
+                          element.locked
+                            ? `Unlock ${element.name}`
+                            : `Lock ${element.name}`
+                        }
+                        type="button"
+                      >
+                        {element.locked ? <Lock /> : <Unlock />}
+                      </button>
+                      <button
+                        aria-label={`Move ${element.name} up`}
+                        disabled={siblingIndex === siblingElements.length - 1}
+                        onClick={() => moveLayer(element.id, 1)}
+                        type="button"
+                      >
+                        <ArrowUp />
+                      </button>
+                      <button
+                        aria-label={`Move ${element.name} down`}
+                        disabled={siblingIndex === 0}
+                        onClick={() => moveLayer(element.id, -1)}
+                        type="button"
+                      >
+                        <ArrowDown />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              },
+            )}
           </div>
 
           {activeScene.elements.length === 0 ? (
@@ -7301,6 +8185,285 @@ export function MotusStudio() {
 
                 {inspectorTab === 'design' ? (
                   <div className="property-stack">
+                    <section
+                      aria-labelledby="rig-panel-title"
+                      className="rig-panel"
+                    >
+                      <div className="rig-panel-heading">
+                        <div>
+                          <Layers3 aria-hidden="true" />
+                          <div>
+                            <strong id="rig-panel-title">Character rig</strong>
+                            <span>
+                              Level{' '}
+                              {getElementRigDepth(
+                                activeScene.elements,
+                                selectedElement.id,
+                              ) + 1}{' '}
+                              ·{' '}
+                              {
+                                activeScene.elements.filter(
+                                  (candidate) =>
+                                    candidate.parentId === selectedElement.id,
+                                ).length
+                              }{' '}
+                              direct parts
+                            </span>
+                          </div>
+                        </div>
+                        <Button
+                          onClick={groupSelectionAsRig}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          <Plus aria-hidden="true" />
+                          {selectedElements.length > 1
+                            ? 'Nest selection'
+                            : 'Wrap in group'}
+                        </Button>
+                      </div>
+                      <label htmlFor="selected-layer-parent">
+                        <span>Transform parent</span>
+                        <NativeSelect
+                          id="selected-layer-parent"
+                          onChange={(event) =>
+                            setElementRigParent(
+                              selectedElement.id,
+                              event.target.value || null,
+                            )
+                          }
+                          value={selectedElement.parentId ?? ''}
+                        >
+                          <NativeSelectOption value="">
+                            Scene root · independent
+                          </NativeSelectOption>
+                          {activeScene.elements
+                            .filter(
+                              (candidate) =>
+                                candidate.id !== selectedElement.id &&
+                                !wouldCreateElementRigCycle(
+                                  activeScene.elements,
+                                  selectedElement.id,
+                                  candidate.id,
+                                ),
+                            )
+                            .map((candidate) => (
+                              <NativeSelectOption
+                                key={candidate.id}
+                                value={candidate.id}
+                              >
+                                {'—'.repeat(
+                                  Math.min(
+                                    getElementRigDepth(
+                                      activeScene.elements,
+                                      candidate.id,
+                                    ),
+                                    4,
+                                  ),
+                                )}{' '}
+                                {candidate.name}
+                              </NativeSelectOption>
+                            ))}
+                        </NativeSelect>
+                      </label>
+                      <div className="rig-pivot-controls">
+                        {(['pivotX', 'pivotY'] as const).map((property) => (
+                          <label key={property}>
+                            <span>
+                              Pivot {property === 'pivotX' ? 'X' : 'Y'}
+                            </span>
+                            <output>
+                              {Math.round(selectedElement[property])}%
+                            </output>
+                            <input
+                              {...continuousHistoryProps}
+                              max="100"
+                              min="0"
+                              onChange={(event) =>
+                                updateElement(
+                                  selectedElement.id,
+                                  (item) => {
+                                    item[property] = Number(event.target.value);
+                                  },
+                                  `element:${selectedElement.id}:${property}`,
+                                )
+                              }
+                              step="1"
+                              type="range"
+                              value={selectedElement[property]}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <small>
+                        Parent transforms compose in order. A Body sway moves
+                        Head and Hair; their own blocks keep playing in their
+                        inherited coordinate space.
+                      </small>
+                    </section>
+                    {selectedElement.type === 'image' &&
+                    selectedElement.src &&
+                    !selectedElement.imageRigPart ? (
+                      <section
+                        aria-labelledby="rig-cut-panel-title"
+                        className="rig-cut-panel"
+                      >
+                        <div className="rig-cut-heading">
+                          <div>
+                            <FileImage aria-hidden="true" />
+                            <strong id="rig-cut-panel-title">
+                              Cut an articulated part
+                            </strong>
+                          </div>
+                          <span>NON-DESTRUCTIVE MASK</span>
+                        </div>
+                        <div
+                          aria-label="Image region preview"
+                          className="rig-region-preview"
+                          style={{
+                            aspectRatio: `${selectedElement.width} / ${selectedElement.height}`,
+                            backgroundImage: `url(${selectedElement.src})`,
+                            backgroundPosition: `${selectedImageFraming?.focalX ?? 50}% ${selectedImageFraming?.focalY ?? 50}%`,
+                            backgroundSize:
+                              selectedImageFraming?.fit ?? 'cover',
+                          }}
+                        >
+                          <span
+                            style={{
+                              height: `${rigRegionDraft.height}%`,
+                              left: `${rigRegionDraft.x}%`,
+                              top: `${rigRegionDraft.y}%`,
+                              width: `${rigRegionDraft.width}%`,
+                            }}
+                          />
+                        </div>
+                        <div className="rig-region-fields">
+                          {(
+                            [
+                              ['x', 'X'],
+                              ['y', 'Y'],
+                              ['width', 'Width'],
+                              ['height', 'Height'],
+                            ] as const
+                          ).map(([field, label]) => (
+                            <label key={field}>
+                              <span>{label} %</span>
+                              <Input
+                                max={
+                                  field === 'x'
+                                    ? 100 - rigRegionDraft.width
+                                    : field === 'y'
+                                      ? 100 - rigRegionDraft.height
+                                      : field === 'width'
+                                        ? 100 - rigRegionDraft.x
+                                        : 100 - rigRegionDraft.y
+                                }
+                                min={
+                                  field === 'width' || field === 'height'
+                                    ? 1
+                                    : 0
+                                }
+                                onChange={(event) => {
+                                  const value = Number(event.target.value);
+                                  setRigRegionDraft((current) => ({
+                                    ...current,
+                                    [field]: Number.isFinite(value)
+                                      ? value
+                                      : current[field],
+                                  }));
+                                }}
+                                step="1"
+                                type="number"
+                                value={rigRegionDraft[field]}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                        <Button onClick={extractImageRigPart} type="button">
+                          <Plus aria-hidden="true" />
+                          Cut region into child part
+                        </Button>
+                        <small>
+                          Motus removes this region from the base image and
+                          creates a movable child without copying the asset.
+                        </small>
+                      </section>
+                    ) : null}
+                    {selectedElement.imageRigPart ? (
+                      <section className="rig-part-source-card">
+                        <span>EXTRACTED PART</span>
+                        <strong>
+                          Source ·{' '}
+                          {activeScene.elements.find(
+                            (candidate) =>
+                              candidate.id ===
+                              selectedElement.imageRigPart?.sourceElementId,
+                          )?.name ?? 'Missing source'}
+                        </strong>
+                        <small>
+                          Crop {Math.round(selectedElement.imageRigPart.cropX)},{' '}
+                          {Math.round(selectedElement.imageRigPart.cropY)} ·{' '}
+                          {Math.round(selectedElement.imageRigPart.cropWidth)}×
+                          {Math.round(selectedElement.imageRigPart.cropHeight)}%
+                        </small>
+                        <div className="rig-region-fields">
+                          {(
+                            [
+                              ['cropX', 'Crop X'],
+                              ['cropY', 'Crop Y'],
+                              ['cropWidth', 'Crop width'],
+                              ['cropHeight', 'Crop height'],
+                            ] as const
+                          ).map(([field, label]) => (
+                            <label key={field}>
+                              <span>{label} %</span>
+                              <Input
+                                max={
+                                  field === 'cropX'
+                                    ? 100 -
+                                      selectedElement.imageRigPart!.cropWidth
+                                    : field === 'cropY'
+                                      ? 100 -
+                                        selectedElement.imageRigPart!.cropHeight
+                                      : field === 'cropWidth'
+                                        ? 100 -
+                                          selectedElement.imageRigPart!.cropX
+                                        : 100 -
+                                          selectedElement.imageRigPart!.cropY
+                                }
+                                min={
+                                  field === 'cropWidth' ||
+                                  field === 'cropHeight'
+                                    ? '1'
+                                    : '0'
+                                }
+                                onChange={(event) =>
+                                  updateElement(
+                                    selectedElement.id,
+                                    (item) => {
+                                      if (!item.imageRigPart) return;
+                                      const normalized =
+                                        normalizeElementImageRigPart({
+                                          ...item.imageRigPart,
+                                          [field]: Number(event.target.value),
+                                        });
+                                      if (normalized) {
+                                        item.imageRigPart = normalized;
+                                      }
+                                    },
+                                    `element:${selectedElement.id}:${field}`,
+                                  )
+                                }
+                                step="1"
+                                type="number"
+                                value={selectedElement.imageRigPart![field]}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
                     <label htmlFor="selected-layer-name">
                       <span>Layer name</span>
                       <Input
@@ -7776,7 +8939,11 @@ export function MotusStudio() {
                       <section className="block-workspace-intro">
                         <div>
                           <span>BLOCKS</span>
-                          <strong>{selectedElement.name}</strong>
+                          <strong>
+                            {selectedRigPath
+                              .map((element) => element.name)
+                              .join(' › ')}
+                          </strong>
                         </div>
                         <small>
                           {selectedMotionBlockCount} blocks ·{' '}
@@ -8065,7 +9232,11 @@ export function MotusStudio() {
                             ms
                           </strong>
                         </div>
-                        <small>{selectedElement.name}</small>
+                        <small>
+                          {selectedRigPath
+                            .map((element) => element.name)
+                            .join(' › ')}
+                        </small>
                       </div>
 
                       <MotionProgramDropzone
@@ -9578,7 +10749,9 @@ export function MotusStudio() {
                 <span>
                   {readerMode === 'scroll'
                     ? `${readerChapter.title} · motion plays as each scene enters view.`
-                    : `${readerChapter.title} · scene ${resolvedReaderPageIndex + 1} of ${readerScenes.length}.`}
+                    : readerMode === 'spread'
+                      ? `${readerChapter.title} · spread ${Math.floor(resolvedReaderPageIndex / 2) + 1} of ${Math.ceil(readerScenes.length / 2)}.`
+                      : `${readerChapter.title} · scene ${resolvedReaderPageIndex + 1} of ${readerScenes.length}.`}
                 </span>
                 <div className="reader-toolbar-actions">
                   <label className="reader-chapter-picker">
@@ -9624,6 +10797,17 @@ export function MotusStudio() {
                       <FileImage aria-hidden="true" />
                       Page
                     </button>
+                    <button
+                      aria-pressed={readerMode === 'spread'}
+                      onClick={() => {
+                        setReaderMode('spread');
+                        setReaderPageIndex((index) => index - (index % 2));
+                      }}
+                      type="button"
+                    >
+                      <BookOpen aria-hidden="true" />
+                      Spread
+                    </button>
                   </fieldset>
                   <Button onClick={replayReader} size="sm" variant="secondary">
                     <Play fill="currentColor" />
@@ -9646,15 +10830,31 @@ export function MotusStudio() {
                     />
                   ))
                 ) : (
-                  <div className="reader-page-mode">
-                    <ReaderScene
-                      index={resolvedReaderPageIndex}
-                      key={`${readerScenes[resolvedReaderPageIndex].id}-${readerPreviewKey}-${resolvedReaderPageIndex}`}
-                      scene={readerScenes[resolvedReaderPageIndex]}
-                      sessionKey={
-                        readerPreviewKey + resolvedReaderPageIndex + 1
-                      }
-                    />
+                  <div className="reader-page-mode" data-layout={readerMode}>
+                    <div
+                      className="reader-page-leaf"
+                      key={`${readerChapter.id}-${readerMode}-${resolvedReaderPageIndex}-${readerPreviewKey}`}
+                    >
+                      {(readerMode === 'spread'
+                        ? readerScenes.slice(
+                            resolvedReaderPageIndex,
+                            resolvedReaderPageIndex + 2,
+                          )
+                        : [readerScenes[resolvedReaderPageIndex]]
+                      ).map((scene, spreadOffset) => (
+                        <ReaderScene
+                          index={resolvedReaderPageIndex + spreadOffset}
+                          key={`${scene.id}-${readerPreviewKey}-${resolvedReaderPageIndex}`}
+                          scene={scene}
+                          sessionKey={
+                            readerPreviewKey +
+                            resolvedReaderPageIndex +
+                            spreadOffset +
+                            1
+                          }
+                        />
+                      ))}
+                    </div>
                     <nav
                       aria-label="Scene navigation"
                       className="reader-page-navigation"
@@ -9670,15 +10870,20 @@ export function MotusStudio() {
                         <ArrowLeft />
                         Previous
                       </Button>
-                      <span>
+                      <span aria-atomic="true" aria-live="polite">
                         Chapter {readerChapterIndex + 1} ·{' '}
-                        {resolvedReaderPageIndex + 1} / {readerScenes.length}
+                        {readerMode === 'spread'
+                          ? `${resolvedReaderPageIndex + 1}–${Math.min(resolvedReaderPageIndex + 2, readerScenes.length)}`
+                          : resolvedReaderPageIndex + 1}{' '}
+                        / {readerScenes.length}
                       </span>
                       <Button
                         disabled={
                           readerChapterIndex ===
                             readerSource.chapters.length - 1 &&
-                          resolvedReaderPageIndex === readerScenes.length - 1
+                          resolvedReaderPageIndex +
+                            (readerMode === 'spread' ? 2 : 1) >=
+                            readerScenes.length
                         }
                         onClick={() => moveReaderPage(1)}
                         variant="secondary"

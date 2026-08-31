@@ -166,6 +166,43 @@ void test('registry updates replace one project route without duplicating it', (
   assert.equal(registered[0].source.title, 'Registry revision two');
 });
 
+void test('device registry migrates schema 9 publication layers to the current rig schema', () => {
+  const storage = new MemoryStorage();
+  const { project, revision } = publishProject();
+  const legacyRevision = structuredClone(revision) as unknown as Record<
+    string,
+    unknown
+  >;
+  for (const chapter of legacyRevision.chapters as Array<
+    Record<string, unknown>
+  >) {
+    for (const scene of chapter.scenes as Array<Record<string, unknown>>) {
+      for (const element of scene.elements as Array<Record<string, unknown>>) {
+        delete element.parentId;
+        delete element.pivotX;
+        delete element.pivotY;
+      }
+    }
+  }
+  storage.setItem(
+    DEVICE_PUBLICATION_REGISTRY_STORAGE_KEY,
+    JSON.stringify({
+      schemaVersion: 1,
+      publications: [{ projectId: project.id, revision: legacyRevision }],
+    }),
+  );
+
+  const publications = listDevicePublications(storage);
+  assert.equal(publications.length, 1);
+  assert.equal(publications[0].project.schemaVersion, 10);
+  for (const element of publications[0].project.chapters[0].scenes[0]
+    .elements) {
+    assert.equal(element.parentId, null);
+    assert.equal(element.pivotX, 50);
+    assert.equal(element.pivotY, 50);
+  }
+});
+
 void test('failed registry writes preserve the previously verified publication', () => {
   const storage = new MemoryStorage();
   const first = publishProject();

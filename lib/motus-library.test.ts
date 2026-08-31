@@ -54,9 +54,9 @@ void test('library preserves every specified format as catalog metadata', () => 
     native: true,
   });
   assert.deepEqual(getCatalogPreviewLayout('Spread'), {
-    projectFormat: 'page',
-    label: 'Page',
-    native: false,
+    projectFormat: 'spread',
+    label: 'Spread',
+    native: true,
   });
   for (const format of ['Motion comic', 'Hybrid'] as const) {
     assert.deepEqual(getCatalogPreviewLayout(format), {

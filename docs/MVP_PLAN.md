@@ -1,8 +1,14 @@
 # Motus MVP Delivery Plan
 
-Status: Draft v0.1  
+Status: Historical MVP baseline; implementation has moved beyond this scope
 Planning basis: Motus Product Concept & Platform Specification  
 Primary audience: Product, design, and engineering
+
+Implementation note (2026-08-31): Motus now supports vertical, single-page,
+and two-page spread readers; a large categorized animation-block catalog;
+nested element rigs with editable pivots and inherited transforms; and
+non-destructive rectangular image-part extraction. The scope below is retained
+as the original MVP decision record, not as a current capability inventory.
 
 ## 1. MVP outcome
 

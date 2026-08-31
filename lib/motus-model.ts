@@ -1,13 +1,17 @@
-export const PROJECT_SCHEMA_VERSION = 9 as const;
+export const PROJECT_SCHEMA_VERSION = 10 as const;
 export const MOTION_SCHEMA_VERSION = 2 as const;
-export const MOTUS_PROJECT_FORMATS = ['vertical-scroll', 'page'] as const;
+export const MOTUS_PROJECT_FORMATS = [
+  'vertical-scroll',
+  'page',
+  'spread',
+] as const;
 export type MotusProjectFormat = (typeof MOTUS_PROJECT_FORMATS)[number];
 export const CANVAS_WIDTH = 1_080;
 export const CANVAS_HEIGHT = 1_440;
 export const MIN_ELEMENT_WIDTH = 60;
 export const MIN_ELEMENT_HEIGHT = 50;
 
-export type ElementType = 'shape' | 'text' | 'speech' | 'image';
+export type ElementType = 'group' | 'shape' | 'text' | 'speech' | 'image';
 export type TextElementType = Extract<ElementType, 'text' | 'speech'>;
 export const ELEMENT_IMAGE_FITS = ['cover', 'contain'] as const;
 export type ElementImageFit = (typeof ELEMENT_IMAGE_FITS)[number];
@@ -24,6 +28,18 @@ export const DEFAULT_ELEMENT_IMAGE_FRAMING = {
   focalX: DEFAULT_ELEMENT_IMAGE_FOCAL_POSITION,
   focalY: DEFAULT_ELEMENT_IMAGE_FOCAL_POSITION,
 } as const satisfies ElementImageFraming;
+export const MIN_ELEMENT_RIG_PIVOT = 0;
+export const MAX_ELEMENT_RIG_PIVOT = 100;
+export const DEFAULT_ELEMENT_RIG_PIVOT = 50;
+export const MAX_ELEMENT_RIG_DEPTH = 12;
+
+export type ElementImageRigPart = {
+  sourceElementId: string;
+  cropX: number;
+  cropY: number;
+  cropWidth: number;
+  cropHeight: number;
+};
 export const ELEMENT_FONT_PRESETS = [
   'editorial',
   'modern',
@@ -2667,6 +2683,11 @@ export type MotusElement = {
   id: string;
   name: string;
   type: ElementType;
+  /** Optional transform parent. Positions remain authored in scene coordinates. */
+  parentId: string | null;
+  /** Transform origin within this layer, expressed as a percentage. */
+  pivotX: number;
+  pivotY: number;
   x: number;
   y: number;
   width: number;
@@ -2680,6 +2701,8 @@ export type MotusElement = {
   imageFit?: ElementImageFit;
   imageFocalX?: number;
   imageFocalY?: number;
+  /** A masked region cut from another image layer for articulated rigging. */
+  imageRigPart?: ElementImageRigPart;
   visible: boolean;
   locked: boolean;
   motion: ElementMotion;
@@ -2710,18 +2733,47 @@ export function getSceneThumbnailElements(
   scene: Pick<MotusScene, 'elements'>,
   limit = MAX_SCENE_THUMBNAIL_ELEMENTS,
 ): MotusElement[] {
-  const visibleElements = scene.elements.filter((element) => element.visible);
+  const visibleElements = scene.elements.filter((element) =>
+    isElementEffectivelyVisible(scene.elements, element.id),
+  );
   const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
   if (safeLimit === 0 || visibleElements.length === 0) return [];
-  if (visibleElements.length <= safeLimit) return [...visibleElements];
-  if (safeLimit === 1) return [visibleElements.at(-1)!];
+  const sampledElements =
+    visibleElements.length <= safeLimit
+      ? visibleElements
+      : safeLimit === 1
+        ? [visibleElements.at(-1)!]
+        : Array.from({ length: safeLimit }, (_, index) => {
+            const sourceIndex = Math.round(
+              (index * (visibleElements.length - 1)) / (safeLimit - 1),
+            );
+            return visibleElements[sourceIndex];
+          });
 
-  return Array.from({ length: safeLimit }, (_, index) => {
-    const sourceIndex = Math.round(
-      (index * (visibleElements.length - 1)) / (safeLimit - 1),
-    );
-    return visibleElements[sourceIndex];
-  });
+  // A sampled child is only meaningful with its transform ancestors and any
+  // image source it references. The scene-wide hard layer cap still bounds
+  // this dependency closure when it exceeds the visual sampling limit.
+  const byId = new Map(scene.elements.map((element) => [element.id, element]));
+  const included = new Set(sampledElements.map((element) => element.id));
+  const queue = [...included];
+  const visited = new Set<string>();
+  while (queue.length) {
+    const elementId = queue.shift()!;
+    if (visited.has(elementId)) continue;
+    visited.add(elementId);
+    const element = byId.get(elementId);
+    if (!element) continue;
+    const dependencies = [
+      element.parentId,
+      element.imageRigPart?.sourceElementId ?? null,
+    ];
+    for (const dependencyId of dependencies) {
+      if (!dependencyId || included.has(dependencyId)) continue;
+      included.add(dependencyId);
+      queue.push(dependencyId);
+    }
+  }
+  return scene.elements.filter((element) => included.has(element.id));
 }
 
 export type MotusWorkMetadata = {
@@ -2953,7 +3005,12 @@ export function getPublicationReadiness(
   const scenes = getProjectScenes(project);
   const visibleLayerCount = scenes.reduce(
     (count, scene) =>
-      count + scene.elements.filter((element) => element.visible).length,
+      count +
+      scene.elements.filter(
+        (element) =>
+          element.type !== 'group' &&
+          isElementEffectivelyVisible(scene.elements, element.id),
+      ).length,
     0,
   );
 
@@ -2987,6 +3044,9 @@ export function getPublicationReadiness(
     issues.push('Give every chapter at least one scene');
   }
   if (visibleLayerCount === 0) issues.push('Add at least one visible layer');
+  if (scenes.some((scene) => getElementRigIntegrityIssue(scene.elements))) {
+    issues.push('Repair broken character rig links before publishing');
+  }
   if (!scenes.some((scene) => scene.id === project.coverSceneId)) {
     issues.push('Choose a cover scene');
   }
@@ -3093,6 +3153,232 @@ export function getElementImageFraming(
   element: Pick<MotusElement, 'imageFit' | 'imageFocalX' | 'imageFocalY'>,
 ): ElementImageFraming {
   return normalizeElementImageFraming(element);
+}
+
+const normalizeRigPercent = (value: unknown, fallback: number) =>
+  clamp(finite(value, fallback), MIN_ELEMENT_RIG_PIVOT, MAX_ELEMENT_RIG_PIVOT);
+
+const normalizeRigCropOrigin = (value: unknown, fallback: number) =>
+  clamp(finite(value, fallback), 0, MAX_ELEMENT_RIG_PIVOT - 1);
+
+export function normalizeElementImageRigPart(
+  value: unknown,
+): ElementImageRigPart | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.sourceElementId !== 'string' ||
+    !candidate.sourceElementId.trim()
+  ) {
+    return undefined;
+  }
+  const cropX = normalizeRigCropOrigin(candidate.cropX, 0);
+  const cropY = normalizeRigCropOrigin(candidate.cropY, 0);
+  const cropWidth = clamp(finite(candidate.cropWidth, 100), 1, 100 - cropX);
+  const cropHeight = clamp(finite(candidate.cropHeight, 100), 1, 100 - cropY);
+  return {
+    sourceElementId: candidate.sourceElementId,
+    cropX,
+    cropY,
+    cropWidth,
+    cropHeight,
+  };
+}
+
+export function getElementRigChildren(
+  elements: readonly MotusElement[],
+  parentId: string | null,
+): MotusElement[] {
+  return elements.filter((element) => element.parentId === parentId);
+}
+
+export function getElementRigDescendantIds(
+  elements: readonly MotusElement[],
+  elementId: string,
+): string[] {
+  const descendants: string[] = [];
+  const visited = new Set<string>([elementId]);
+  const queue = [elementId];
+  while (queue.length) {
+    const parentId = queue.shift()!;
+    for (const element of elements) {
+      if (element.parentId !== parentId || visited.has(element.id)) continue;
+      visited.add(element.id);
+      descendants.push(element.id);
+      queue.push(element.id);
+    }
+  }
+  return descendants;
+}
+
+export function getElementRigDepth(
+  elements: readonly MotusElement[],
+  elementId: string,
+): number {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const visited = new Set<string>();
+  let depth = 0;
+  let current = byId.get(elementId);
+  while (current?.parentId) {
+    if (visited.has(current.id)) return MAX_ELEMENT_RIG_DEPTH + 1;
+    visited.add(current.id);
+    depth += 1;
+    current = byId.get(current.parentId);
+  }
+  return depth;
+}
+
+export function wouldCreateElementRigCycle(
+  elements: readonly MotusElement[],
+  elementId: string,
+  parentId: string | null,
+): boolean {
+  if (!parentId) return false;
+  if (parentId === elementId) return true;
+  return getElementRigDescendantIds(elements, elementId).includes(parentId);
+}
+
+export function getElementRigRootIds(
+  elements: readonly MotusElement[],
+): string[] {
+  const ids = new Set(elements.map((element) => element.id));
+  return elements
+    .filter((element) => !element.parentId || !ids.has(element.parentId))
+    .map((element) => element.id);
+}
+
+export function isElementEffectivelyVisible(
+  elements: readonly MotusElement[],
+  elementId: string,
+): boolean {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const visited = new Set<string>();
+  let current = byId.get(elementId);
+  while (current) {
+    if (!current.visible || visited.has(current.id)) return false;
+    visited.add(current.id);
+    if (!current.parentId) return true;
+    current = byId.get(current.parentId);
+  }
+  return false;
+}
+
+export function getElementRigIntegrityIssue(
+  elements: readonly MotusElement[],
+): string | null {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  for (const element of elements) {
+    if (
+      element.parentId &&
+      (!byId.has(element.parentId) || element.parentId === element.id)
+    ) {
+      return 'orphaned transform parent';
+    }
+    if (element.imageRigPart) {
+      const source = byId.get(element.imageRigPart.sourceElementId);
+      if (
+        !source ||
+        source.id === element.id ||
+        source.type !== 'image' ||
+        !source.src ||
+        source.imageRigPart
+      ) {
+        return 'orphaned image part source';
+      }
+    }
+    const visited = new Set<string>();
+    let current: MotusElement | undefined = element;
+    let depth = 0;
+    while (current?.parentId) {
+      if (visited.has(current.id)) return 'cyclic transform hierarchy';
+      visited.add(current.id);
+      depth += 1;
+      if (depth > MAX_ELEMENT_RIG_DEPTH) return 'transform hierarchy too deep';
+      current = byId.get(current.parentId);
+    }
+  }
+  return null;
+}
+
+/**
+ * Includes transform descendants and extracted parts that depend on any
+ * removed image source, even when those parts were reparented elsewhere.
+ */
+export function getElementRigCascadeDeleteIds(
+  elements: readonly MotusElement[],
+  elementIds: Iterable<string>,
+): string[] {
+  const removed = new Set<string>();
+  const addBranch = (elementId: string) => {
+    removed.add(elementId);
+    getElementRigDescendantIds(elements, elementId).forEach((id) =>
+      removed.add(id),
+    );
+  };
+  for (const elementId of elementIds) addBranch(elementId);
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const element of elements) {
+      const sourceId = element.imageRigPart?.sourceElementId;
+      if (!sourceId || !removed.has(sourceId) || removed.has(element.id)) {
+        continue;
+      }
+      addBranch(element.id);
+      changed = true;
+    }
+  }
+  return elements
+    .filter((element) => removed.has(element.id))
+    .map((element) => element.id);
+}
+
+export function translateElementRigBranch(
+  elements: readonly MotusElement[],
+  elementId: string,
+  deltaX: number,
+  deltaY: number,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): MotusElement[] {
+  const branchIds = new Set([
+    elementId,
+    ...getElementRigDescendantIds(elements, elementId),
+  ]);
+  const branch = elements.filter((element) => branchIds.has(element.id));
+  if (branch.length === 0) return [...elements];
+  const safeCanvasWidth = Math.max(0, finite(canvasWidth, CANVAS_WIDTH));
+  const safeCanvasHeight = Math.max(0, finite(canvasHeight, CANVAS_HEIGHT));
+  const minimumX = Math.min(...branch.map((element) => element.x));
+  const minimumY = Math.min(...branch.map((element) => element.y));
+  const maximumX = Math.max(
+    ...branch.map((element) => element.x + element.width),
+  );
+  const maximumY = Math.max(
+    ...branch.map((element) => element.y + element.height),
+  );
+  const boundedDeltaX = clamp(
+    finite(deltaX, 0),
+    -minimumX,
+    safeCanvasWidth - maximumX,
+  );
+  const boundedDeltaY = clamp(
+    finite(deltaY, 0),
+    -minimumY,
+    safeCanvasHeight - maximumY,
+  );
+  return elements.map((element) =>
+    branchIds.has(element.id)
+      ? {
+          ...element,
+          x: element.x + boundedDeltaX,
+          y: element.y + boundedDeltaY,
+        }
+      : element,
+  );
 }
 
 const DEFAULT_ELEMENT_TYPOGRAPHY: Record<TextElementType, ElementTypography> = {
@@ -3691,12 +3977,21 @@ export function constrainElementToCanvas(
 
   return {
     ...element,
+    parentId:
+      typeof element.parentId === 'string' && element.parentId.trim()
+        ? element.parentId
+        : null,
+    pivotX: normalizeRigPercent(element.pivotX, DEFAULT_ELEMENT_RIG_PIVOT),
+    pivotY: normalizeRigPercent(element.pivotY, DEFAULT_ELEMENT_RIG_PIVOT),
     x: clamp(finite(element.x, 0), 0, safeCanvasWidth - width),
     y: clamp(finite(element.y, 0), 0, safeCanvasHeight - height),
     width,
     height,
     rotation: clamp(finite(element.rotation, 0), -180, 180),
     opacity: clamp(finite(element.opacity, 1), 0, 1),
+    ...(element.type === 'image'
+      ? { imageRigPart: normalizeElementImageRigPart(element.imageRigPart) }
+      : {}),
   };
 }
 
@@ -3749,35 +4044,39 @@ export function transformElementByPointer(
     MIN_ELEMENT_HEIGHT,
     CANVAS_HEIGHT,
   );
+  const pivotFractionX =
+    normalizeRigPercent(element.pivotX, DEFAULT_ELEMENT_RIG_PIVOT) / 100;
+  const pivotFractionY =
+    normalizeRigPercent(element.pivotY, DEFAULT_ELEMENT_RIG_PIVOT) / 100;
+  const anchorFractionX = resizeWest ? 1 : resizeEast ? 0 : 0.5;
+  const anchorFractionY = resizeNorth ? 1 : resizeSouth ? 0 : 0.5;
+  const originalPivotX = element.x + element.width * pivotFractionX;
+  const originalPivotY = element.y + element.height * pivotFractionY;
+  const originalAnchorOffsetX =
+    (anchorFractionX - pivotFractionX) * element.width;
+  const originalAnchorOffsetY =
+    (anchorFractionY - pivotFractionY) * element.height;
+  const anchorX =
+    originalPivotX +
+    originalAnchorOffsetX * cosine -
+    originalAnchorOffsetY * sine;
+  const anchorY =
+    originalPivotY +
+    originalAnchorOffsetX * sine +
+    originalAnchorOffsetY * cosine;
   const resizeToDimensions = (
     widthCandidate: number,
     heightCandidate: number,
   ) => {
     const width = Math.round(widthCandidate);
     const height = Math.round(heightCandidate);
-    const localCenterShiftX = resizeWest
-      ? -(width - element.width) / 2
-      : resizeEast
-        ? (width - element.width) / 2
-        : 0;
-    const localCenterShiftY = resizeNorth
-      ? -(height - element.height) / 2
-      : resizeSouth
-        ? (height - element.height) / 2
-        : 0;
-    const centerX =
-      element.x +
-      element.width / 2 +
-      localCenterShiftX * cosine -
-      localCenterShiftY * sine;
-    const centerY =
-      element.y +
-      element.height / 2 +
-      localCenterShiftX * sine +
-      localCenterShiftY * cosine;
+    const anchorOffsetX = (anchorFractionX - pivotFractionX) * width;
+    const anchorOffsetY = (anchorFractionY - pivotFractionY) * height;
+    const rotatedAnchorOffsetX = anchorOffsetX * cosine - anchorOffsetY * sine;
+    const rotatedAnchorOffsetY = anchorOffsetX * sine + anchorOffsetY * cosine;
     return {
-      x: Math.round(centerX - width / 2),
-      y: Math.round(centerY - height / 2),
+      x: Math.round(anchorX - width * pivotFractionX - rotatedAnchorOffsetX),
+      y: Math.round(anchorY - height * pivotFractionY - rotatedAnchorOffsetY),
       width,
       height,
     };
@@ -3939,25 +4238,38 @@ export function getElementVisualBounds(
   const y = finite(element.y, 0);
   const width = Math.max(0, finite(element.width, 0));
   const height = Math.max(0, finite(element.height, 0));
-  const centerX = x + width / 2;
-  const centerY = y + height / 2;
   const radians = (finite(element.rotation, 0) * Math.PI) / 180;
-  const visualHalfWidth =
-    (Math.abs(Math.cos(radians)) * width +
-      Math.abs(Math.sin(radians)) * height) /
-    2;
-  const visualHalfHeight =
-    (Math.abs(Math.sin(radians)) * width +
-      Math.abs(Math.cos(radians)) * height) /
-    2;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  const pivotX =
+    x +
+    (width * normalizeRigPercent(element.pivotX, DEFAULT_ELEMENT_RIG_PIVOT)) /
+      100;
+  const pivotY =
+    y +
+    (height * normalizeRigPercent(element.pivotY, DEFAULT_ELEMENT_RIG_PIVOT)) /
+      100;
+  const corners = [
+    [x, y],
+    [x + width, y],
+    [x + width, y + height],
+    [x, y + height],
+  ].map(([cornerX, cornerY]) => ({
+    x: pivotX + (cornerX - pivotX) * cosine - (cornerY - pivotY) * sine,
+    y: pivotY + (cornerX - pivotX) * sine + (cornerY - pivotY) * cosine,
+  }));
+  const left = Math.min(...corners.map((corner) => corner.x));
+  const top = Math.min(...corners.map((corner) => corner.y));
+  const right = Math.max(...corners.map((corner) => corner.x));
+  const bottom = Math.max(...corners.map((corner) => corner.y));
 
   return {
-    left: centerX - visualHalfWidth,
-    top: centerY - visualHalfHeight,
-    right: centerX + visualHalfWidth,
-    bottom: centerY + visualHalfHeight,
-    centerX,
-    centerY,
+    left,
+    top,
+    right,
+    bottom,
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
   };
 }
 
@@ -5821,6 +6133,7 @@ export function createElement(
   overrides: Partial<MotusElement> = {},
 ): MotusElement {
   const labels: Record<ElementType, string> = {
+    group: 'Rig group',
     shape: 'Shape',
     text: 'Text',
     speech: 'Speech bubble',
@@ -5833,6 +6146,9 @@ export function createElement(
     id: `${type}-${Date.now()}-${index}`,
     name: `${labels[type]} ${index}`,
     type,
+    parentId: null,
+    pivotX: DEFAULT_ELEMENT_RIG_PIVOT,
+    pivotY: DEFAULT_ELEMENT_RIG_PIVOT,
     x: 350,
     y: 560,
     width: type === 'text' ? 440 : 260,
@@ -5848,7 +6164,7 @@ export function createElement(
           : undefined,
     visible: true,
     locked: false,
-    motion: motion(80, 0, 900, 0.15),
+    motion: type === 'group' ? motion(0, 0, 900, 1) : motion(80, 0, 900, 0.15),
     ...overrides,
     typography,
     ...(type === 'image'
@@ -5863,6 +6179,7 @@ export function createElement(
     delete element.imageFit;
     delete element.imageFocalX;
     delete element.imageFocalY;
+    delete element.imageRigPart;
   }
   return element;
 }
@@ -6458,6 +6775,7 @@ const isRecord = (value: unknown): value is UnknownRecord =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const isElementType = (value: unknown): value is ElementType =>
+  value === 'group' ||
   value === 'shape' ||
   value === 'text' ||
   value === 'speech' ||
@@ -6625,6 +6943,7 @@ function validateScenes(
   context: string,
   projectSceneIds = new Set<string>(),
   validateImageFraming = false,
+  validateRigging = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one scene`;
@@ -6657,6 +6976,7 @@ function validateScenes(
     }
 
     const elementIds = new Set<string>();
+    const sceneElements: UnknownRecord[] = [];
     for (const elementValue of sceneValue.elements) {
       if (
         !isRecord(elementValue) ||
@@ -6670,6 +6990,7 @@ function validateScenes(
       if (elementIds.has(elementValue.id))
         return `${context} has duplicate layer IDs`;
       elementIds.add(elementValue.id);
+      sceneElements.push(elementValue);
       if (
         elementValue.name !== undefined &&
         typeof elementValue.name !== 'string'
@@ -6707,6 +7028,98 @@ function validateScenes(
       ) {
         return `${context} contains invalid image framing`;
       }
+      if (
+        validateRigging &&
+        ((elementValue.parentId !== null &&
+          typeof elementValue.parentId !== 'string') ||
+          typeof elementValue.pivotX !== 'number' ||
+          !Number.isFinite(elementValue.pivotX) ||
+          elementValue.pivotX < MIN_ELEMENT_RIG_PIVOT ||
+          elementValue.pivotX > MAX_ELEMENT_RIG_PIVOT ||
+          typeof elementValue.pivotY !== 'number' ||
+          !Number.isFinite(elementValue.pivotY) ||
+          elementValue.pivotY < MIN_ELEMENT_RIG_PIVOT ||
+          elementValue.pivotY > MAX_ELEMENT_RIG_PIVOT)
+      ) {
+        return `${context} contains invalid rig pivots`;
+      }
+      if (validateRigging && elementValue.imageRigPart !== undefined) {
+        if (
+          elementValue.type !== 'image' ||
+          !isRecord(elementValue.imageRigPart) ||
+          typeof elementValue.imageRigPart.sourceElementId !== 'string' ||
+          !elementValue.imageRigPart.sourceElementId ||
+          ![
+            elementValue.imageRigPart.cropX,
+            elementValue.imageRigPart.cropY,
+            elementValue.imageRigPart.cropWidth,
+            elementValue.imageRigPart.cropHeight,
+          ].every(
+            (number) => typeof number === 'number' && Number.isFinite(number),
+          ) ||
+          (elementValue.imageRigPart.cropX as number) < 0 ||
+          (elementValue.imageRigPart.cropY as number) < 0 ||
+          (elementValue.imageRigPart.cropWidth as number) <= 0 ||
+          (elementValue.imageRigPart.cropHeight as number) <= 0 ||
+          (elementValue.imageRigPart.cropX as number) +
+            (elementValue.imageRigPart.cropWidth as number) >
+            100 ||
+          (elementValue.imageRigPart.cropY as number) +
+            (elementValue.imageRigPart.cropHeight as number) >
+            100
+        ) {
+          return `${context} contains an invalid image rig part`;
+        }
+      }
+    }
+    if (validateRigging) {
+      const normalizedElements = sceneElements as Array<
+        Pick<MotusElement, 'id' | 'parentId'> & UnknownRecord
+      >;
+      for (const elementValue of normalizedElements) {
+        if (
+          elementValue.parentId &&
+          (!elementIds.has(elementValue.parentId) ||
+            elementValue.parentId === elementValue.id)
+        ) {
+          return `${context} contains an orphaned or self-parented rig layer`;
+        }
+        if (elementValue.imageRigPart) {
+          const sourceId = (elementValue.imageRigPart as UnknownRecord)
+            .sourceElementId as string;
+          const source = sceneElements.find(
+            (candidate) => candidate.id === sourceId,
+          );
+          if (
+            !source ||
+            source.type !== 'image' ||
+            !isSafeImageSource(source.src) ||
+            source.imageRigPart !== undefined ||
+            sourceId === elementValue.id
+          ) {
+            return `${context} contains an orphaned image rig part`;
+          }
+        }
+      }
+      for (const elementValue of normalizedElements) {
+        const visited = new Set<string>();
+        let current: (typeof normalizedElements)[number] | undefined =
+          elementValue;
+        let depth = 0;
+        while (current?.parentId) {
+          if (visited.has(current.id)) {
+            return `${context} contains a cyclic rig hierarchy`;
+          }
+          visited.add(current.id);
+          depth += 1;
+          if (depth > MAX_ELEMENT_RIG_DEPTH) {
+            return `${context} contains a rig deeper than ${MAX_ELEMENT_RIG_DEPTH} levels`;
+          }
+          current = normalizedElements.find(
+            (candidate) => candidate.id === current?.parentId,
+          );
+        }
+      }
     }
   }
   return null;
@@ -6716,6 +7129,7 @@ function validateChapters(
   value: unknown,
   context: string,
   validateImageFraming = false,
+  validateRigging = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one chapter`;
@@ -6747,6 +7161,7 @@ function validateChapters(
       `${context} chapter ${index + 1}`,
       projectSceneIds,
       validateImageFraming,
+      validateRigging,
     );
     if (sceneError) return sceneError;
     sceneCount += (chapterValue.scenes as unknown[]).length;
@@ -6767,7 +7182,10 @@ function normalizeEditableName(
   return normalized ? normalized.slice(0, maxLength) : fallback;
 }
 
-function normalizeScenes(value: unknown[]): MotusScene[] {
+function normalizeScenes(
+  value: unknown[],
+  normalizeRigging = true,
+): MotusScene[] {
   return value.map((sceneValue) => {
     const item = sceneValue as UnknownRecord;
     return {
@@ -6796,6 +7214,22 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
             MAX_ELEMENT_NAME_LENGTH,
           ),
           type,
+          parentId:
+            normalizeRigging && typeof elementValue.parentId === 'string'
+              ? elementValue.parentId
+              : null,
+          pivotX: normalizeRigging
+            ? normalizeRigPercent(
+                elementValue.pivotX,
+                DEFAULT_ELEMENT_RIG_PIVOT,
+              )
+            : DEFAULT_ELEMENT_RIG_PIVOT,
+          pivotY: normalizeRigging
+            ? normalizeRigPercent(
+                elementValue.pivotY,
+                DEFAULT_ELEMENT_RIG_PIVOT,
+              )
+            : DEFAULT_ELEMENT_RIG_PIVOT,
           x: finite(elementValue.x, 0),
           y: finite(elementValue.y, 0),
           width: finite(elementValue.width, defaults.width),
@@ -6819,6 +7253,9 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
                 imageFit: imageFraming.fit,
                 imageFocalX: imageFraming.focalX,
                 imageFocalY: imageFraming.focalY,
+                imageRigPart: normalizeRigging
+                  ? normalizeElementImageRigPart(elementValue.imageRigPart)
+                  : undefined,
               }
             : {}),
           visible: elementValue.visible !== false,
@@ -6834,7 +7271,10 @@ function normalizeScenes(value: unknown[]): MotusScene[] {
   });
 }
 
-function normalizeChapters(value: unknown[]): MotusChapter[] {
+function normalizeChapters(
+  value: unknown[],
+  normalizeRigging = true,
+): MotusChapter[] {
   return value.map((chapterValue) => {
     const chapter = chapterValue as UnknownRecord;
     return {
@@ -6844,7 +7284,7 @@ function normalizeChapters(value: unknown[]): MotusChapter[] {
         'Untitled chapter',
         MAX_PROJECT_TITLE_LENGTH,
       ),
-      scenes: normalizeScenes(chapter.scenes as unknown[]),
+      scenes: normalizeScenes(chapter.scenes as unknown[], normalizeRigging),
     };
   });
 }
@@ -6864,7 +7304,7 @@ function normalizeVisibility(value: unknown): PublicationVisibility {
 }
 
 function isProjectFormat(value: unknown): value is MotusProjectFormat {
-  return value === 'vertical-scroll' || value === 'page';
+  return value === 'vertical-scroll' || value === 'page' || value === 'spread';
 }
 
 const WORK_METADATA_LIST_FIELDS = [
@@ -6998,6 +7438,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 6 &&
     candidate.schemaVersion !== 7 &&
     candidate.schemaVersion !== 8 &&
+    candidate.schemaVersion !== 9 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {
@@ -7016,6 +7457,7 @@ export function restoreProjectWithError(
   const usesChapterHierarchy = schemaVersion >= 7;
   const usesWorkMetadata = schemaVersion >= 8;
   const usesImageFraming = schemaVersion >= 9;
+  const usesRigging = schemaVersion >= 10;
   if (usesChapterHierarchy && !isProjectFormat(candidate.format)) {
     return { project: null, error: 'Project uses an unsupported format' };
   }
@@ -7038,12 +7480,18 @@ export function restoreProjectWithError(
       : fallbackId;
   const legacyChapterId = `${projectId.slice(0, MAX_ELEMENT_ID_LENGTH - 10)}-chapter-1`;
   const hierarchyError = usesChapterHierarchy
-    ? validateChapters(candidate.chapters, 'Project', usesImageFraming)
+    ? validateChapters(
+        candidate.chapters,
+        'Project',
+        usesImageFraming,
+        usesRigging,
+      )
     : validateScenes(
         candidate.scenes,
         'Project',
         new Set<string>(),
         usesImageFraming,
+        usesRigging,
       );
   if (hierarchyError) return { project: null, error: hierarchyError };
 
@@ -7094,12 +7542,14 @@ export function restoreProjectWithError(
           publicationValue.chapters,
           `Publication revision ${revision}`,
           usesImageFraming,
+          usesRigging,
         )
       : validateScenes(
           publicationValue.scenes,
           `Publication revision ${revision}`,
           new Set<string>(),
           usesImageFraming,
+          usesRigging,
         );
     if (revisionError) return { project: null, error: revisionError };
   }
@@ -7108,7 +7558,7 @@ export function restoreProjectWithError(
     (publicationValue) => {
       const revision = publicationValue as UnknownRecord;
       const chapters = usesChapterHierarchy
-        ? normalizeChapters(revision.chapters as unknown[])
+        ? normalizeChapters(revision.chapters as unknown[], usesRigging)
         : [
             {
               id: legacyChapterId,
@@ -7117,7 +7567,10 @@ export function restoreProjectWithError(
                 'Chapter 1',
                 MAX_PROJECT_TITLE_LENGTH,
               ),
-              scenes: normalizeScenes(revision.scenes as unknown[]),
+              scenes: normalizeScenes(
+                revision.scenes as unknown[],
+                usesRigging,
+              ),
             },
           ];
       const format: MotusProjectFormat = usesChapterHierarchy
@@ -7172,7 +7625,7 @@ export function restoreProjectWithError(
       ? candidate.updatedAt
       : new Date(0).toISOString();
   const chapters = usesChapterHierarchy
-    ? normalizeChapters(candidate.chapters as unknown[])
+    ? normalizeChapters(candidate.chapters as unknown[], usesRigging)
     : [
         {
           id: legacyChapterId,
@@ -7181,7 +7634,7 @@ export function restoreProjectWithError(
             'Chapter 1',
             MAX_PROJECT_TITLE_LENGTH,
           ),
-          scenes: normalizeScenes(candidate.scenes as unknown[]),
+          scenes: normalizeScenes(candidate.scenes as unknown[], usesRigging),
         },
       ];
   const format: MotusProjectFormat = usesChapterHierarchy

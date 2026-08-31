@@ -95,7 +95,7 @@ export type LibraryContentWarningId =
 
 export type CatalogPreviewLayout = {
   projectFormat: MotusProject['format'];
-  label: 'Page' | 'Vertical';
+  label: 'Page' | 'Spread' | 'Vertical';
   native: boolean;
 };
 
@@ -106,7 +106,7 @@ export function getCatalogPreviewLayout(
     return { projectFormat: 'page', label: 'Page', native: true };
   }
   if (format === 'Spread') {
-    return { projectFormat: 'page', label: 'Page', native: false };
+    return { projectFormat: 'spread', label: 'Spread', native: true };
   }
   return {
     projectFormat: 'vertical-scroll',
