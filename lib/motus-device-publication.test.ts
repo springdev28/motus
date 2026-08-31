@@ -19,6 +19,7 @@ import {
   saveDevicePublication,
 } from './motus-device-publication.ts';
 import {
+  PROJECT_SCHEMA_VERSION,
   createDefaultProject,
   createPublicationRevision,
   type MotusProject,
@@ -194,7 +195,7 @@ void test('device registry migrates schema 9 publication layers to the current r
 
   const publications = listDevicePublications(storage);
   assert.equal(publications.length, 1);
-  assert.equal(publications[0].project.schemaVersion, 10);
+  assert.equal(publications[0].project.schemaVersion, PROJECT_SCHEMA_VERSION);
   for (const element of publications[0].project.chapters[0].scenes[0]
     .elements) {
     assert.equal(element.parentId, null);

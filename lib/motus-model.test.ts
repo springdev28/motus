@@ -15,6 +15,7 @@ import {
   MAX_ELEMENT_FONT_SIZE,
   MAX_ELEMENT_ID_LENGTH,
   MAX_ELEMENT_LETTER_SPACING,
+  MAX_ELEMENT_IMAGE_RIG_MASK_POINTS,
   MAX_ELEMENT_NAME_LENGTH,
   MAX_ELEMENT_RIG_DEPTH,
   MAX_MOTION_BLOCKS,
@@ -4875,7 +4876,9 @@ void test('rig selection movement is bounded in rendered canvas space', () => {
   assert.ok(Math.abs(movedDetail.x - 440) < 1e-9);
   assert.ok(Math.abs(movedDetail.y - 10) < 1e-9);
   assert.equal(movedRoot.x, 1_020);
-  assert.ok(Math.abs(afterChildBounds.left - beforeChildBounds.left - 10) < 1e-9);
+  assert.ok(
+    Math.abs(afterChildBounds.left - beforeChildBounds.left - 10) < 1e-9,
+  );
   assert.ok(Math.abs(afterChildBounds.top - beforeChildBounds.top) < 1e-9);
   assert.equal(
     constrainElementToCanvas({ ...movedChild }).y,
@@ -4884,7 +4887,7 @@ void test('rig selection movement is bounded in rendered canvas space', () => {
   );
 });
 
-void test('rig crop normalization always keeps a finite positive region', () => {
+void test('rig normalization clamps polygon points and drops degenerate masks', () => {
   assert.deepEqual(
     normalizeElementImageRigPart({
       sourceElementId: 'character',
@@ -4892,13 +4895,44 @@ void test('rig crop normalization always keeps a finite positive region', () => 
       cropY: 100,
       cropWidth: 100,
       cropHeight: 100,
+      maskPoints: [
+        { x: -10, y: 10 },
+        { x: 50, y: -5 },
+        { x: 110, y: 90 },
+      ],
     }),
     {
       sourceElementId: 'character',
-      cropX: 99,
-      cropY: 99,
-      cropWidth: 1,
-      cropHeight: 1,
+      cropX: 0,
+      cropY: 0,
+      cropWidth: 100,
+      cropHeight: 90,
+      maskPoints: [
+        { x: 0, y: 10 },
+        { x: 50, y: 0 },
+        { x: 100, y: 90 },
+      ],
+    },
+  );
+  assert.deepEqual(
+    normalizeElementImageRigPart({
+      sourceElementId: 'character',
+      cropX: 0,
+      cropY: 0,
+      cropWidth: 30,
+      cropHeight: 30,
+      maskPoints: [
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+        { x: 20, y: 20 },
+      ],
+    }),
+    {
+      sourceElementId: 'character',
+      cropX: 0,
+      cropY: 0,
+      cropWidth: 30,
+      cropHeight: 30,
     },
   );
 });
@@ -5008,6 +5042,111 @@ void test('schema 9 migration discards forward rig fields instead of smuggling c
   }
 });
 
+void test('schema 10 migration preserves rectangular rigs and discards polygon fields', () => {
+  const legacy = createBlankProject('schema-10-rig');
+  const scene = legacy.chapters[0].scenes[0];
+  const source = createElement('image', 1, {
+    id: 'schema-10-source',
+    src: 'data:image/png;base64,iVBORw0KGgo=',
+  });
+  const part = createElement('image', 2, {
+    id: 'schema-10-part',
+    imageRigPart: {
+      sourceElementId: source.id,
+      cropX: 10,
+      cropY: 20,
+      cropWidth: 30,
+      cropHeight: 40,
+      maskPoints: [
+        { x: 10, y: 20 },
+        { x: 40, y: 20 },
+        { x: 20, y: 60 },
+      ],
+    },
+  });
+  scene.elements = [source, part];
+  (legacy as unknown as Record<string, unknown>).schemaVersion = 10;
+
+  const restored = restoreProject(JSON.stringify(legacy));
+  assert.ok(restored);
+  assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
+  assert.deepEqual(restored.chapters[0].scenes[0].elements[1].imageRigPart, {
+    sourceElementId: source.id,
+    cropX: 10,
+    cropY: 20,
+    cropWidth: 30,
+    cropHeight: 40,
+  });
+});
+
+void test('schema 11 restore rejects malformed or degenerate polygon masks', () => {
+  const project = createBlankProject('invalid-polygon-rig');
+  const scene = project.chapters[0].scenes[0];
+  const source = createElement('image', 1, {
+    id: 'polygon-source',
+    src: 'data:image/png;base64,iVBORw0KGgo=',
+  });
+  const part = createElement('image', 2, {
+    id: 'polygon-part',
+    imageRigPart: {
+      sourceElementId: source.id,
+      cropX: 0,
+      cropY: 0,
+      cropWidth: 50,
+      cropHeight: 50,
+    },
+  });
+  scene.elements = [source, part];
+  const invalidMasks: unknown[] = [
+    [
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+    ],
+    [
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+      { x: 20, y: 20 },
+    ],
+    [
+      { x: -1, y: 0 },
+      { x: 10, y: 0 },
+      { x: 0, y: 10 },
+    ],
+    [
+      { x: 0, y: 0 },
+      { x: 60, y: 0 },
+      { x: 0, y: 10 },
+    ],
+    [
+      { x: Number.POSITIVE_INFINITY, y: 0 },
+      { x: 10, y: 0 },
+      { x: 0, y: 10 },
+    ],
+    Array.from(
+      { length: MAX_ELEMENT_IMAGE_RIG_MASK_POINTS + 1 },
+      (_, index) => ({ x: index % 100, y: (index * 7) % 100 }),
+    ),
+  ];
+
+  for (const maskPoints of invalidMasks) {
+    const candidate = structuredClone(project) as unknown as {
+      chapters: Array<{
+        scenes: Array<{
+          elements: Array<{
+            imageRigPart?: Record<string, unknown>;
+          }>;
+        }>;
+      }>;
+    };
+    candidate.chapters[0].scenes[0].elements[1].imageRigPart!.maskPoints =
+      maskPoints;
+    assert.equal(
+      restoreProjectWithError(JSON.stringify(candidate)).error,
+      'Project chapter 1 contains an invalid image rig part',
+    );
+  }
+});
+
 void test('masked image rig parts and spread format survive publication round trips', () => {
   const project = createBlankProject('rig-round-trip');
   project.format = 'spread';
@@ -5034,6 +5173,12 @@ void test('masked image rig parts and spread format survive publication round tr
       cropY: 28,
       cropWidth: 20,
       cropHeight: 42,
+      maskPoints: [
+        { x: 62, y: 28 },
+        { x: 82, y: 35 },
+        { x: 78, y: 70 },
+        { x: 64, y: 68 },
+      ],
     },
   });
   scene.elements = [source, arm];

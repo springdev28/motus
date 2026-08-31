@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "mediapipe-magic-touch-int8",
+  "label": "MagicTouch Interactive Segmenter",
+  "format": "mediapipe-task-chunks",
+  "bytes": 30525312,
+  "sha256": "38431bc66b883404e8397f74c3579404315b9b52b04a46c6346fe906a7309b03",
+  "chunks": [
+    {
+      "path": "model.part-00",
+      "bytes": 16000000,
+      "sha256": "58cc17783c7ba0fadb18d240ad426e460bbbb9822dc5f42bb964b7f14d87ec12"
+    },
+    {
+      "path": "model.part-01",
+      "bytes": 14525312,
+      "sha256": "ee157f0ba0a679cd9f5784baeab850619a1f06ef8fb8ef78c39fcd41ca639410"
+    }
+  ],
+  "source": "https://storage.googleapis.com/mediapipe-models/interactive_segmenter_v2/magic_touch/int8/latest/interactive_segmentation.task",
+  "modelCard": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MagicTouch.pdf",
+  "license": "Apache-2.0"
+}

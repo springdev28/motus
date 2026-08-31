@@ -4518,6 +4518,9 @@
 .element-image[data-image-rig-source] {
   background: transparent;
 }
+.element-image[data-image-rig-part] {
+  background: transparent;
+}
 .element-image img {
   width: 100%;
   height: 100%;
@@ -5203,6 +5206,218 @@
   padding: 11px;
   background:
     linear-gradient(145deg, rgb(255 255 255 / 90%), transparent 68%), #f3ecff;
+}
+.smart-cut-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.smart-cut-tools {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) 30px 30px;
+  gap: 4px;
+}
+.smart-cut-tools button {
+  display: inline-flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid #c7bcdf;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 82%);
+  color: #675e74;
+  font-size: 8px;
+  font-weight: 800;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+.smart-cut-tools button:hover:not(:disabled) {
+  border-color: #8c72eb;
+  color: #4d34ab;
+  transform: translateY(-1px);
+}
+.smart-cut-tools button[data-active] {
+  border-color: var(--brand-violet);
+  background: var(--brand-violet);
+  color: #fff;
+  box-shadow: 0 4px 10px rgb(86 56 211 / 22%);
+}
+.smart-cut-tools button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+.smart-cut-tools svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+.smart-cut-stage {
+  position: relative;
+  width: 100%;
+  min-height: 128px;
+  overflow: hidden;
+  border: 1px solid #bcb1dc;
+  border-radius: 9px;
+  background-color: #16111f;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
+}
+.smart-cut-stage::after {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: inherit;
+  content: '';
+  pointer-events: none;
+}
+.smart-cut-stage > button {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: crosshair;
+  touch-action: none;
+}
+.smart-cut-stage > button:focus-visible {
+  outline: 3px solid #e5ff73;
+  outline-offset: -4px;
+}
+.smart-cut-stage svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.smart-cut-result {
+  fill: rgb(229 255 115 / 36%);
+  stroke: #e5ff73;
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+}
+.smart-cut-stroke {
+  pointer-events: none;
+}
+.smart-cut-stroke-include {
+  fill: #77f7b8;
+  stroke: #092d1c;
+  stroke-width: 2px;
+}
+.smart-cut-stroke-exclude {
+  fill: #ff728d;
+  stroke: #3a0b17;
+  stroke-width: 2px;
+}
+.smart-cut-stroke-lasso {
+  fill: rgb(125 92 255 / 14%);
+  stroke: #c9b9ff;
+  stroke-width: 3px;
+  stroke-dasharray: 8 5;
+  vector-effect: non-scaling-stroke;
+}
+.smart-cut-keyboard-cursor {
+  fill: #fff;
+  stroke: #24155f;
+  stroke-width: 5px;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 1px 3px rgb(0 0 0 / 70%));
+}
+.smart-cut-status {
+  display: flex;
+  min-height: 24px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 7px;
+  border: 1px solid #d5cde8;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 64%);
+  color: #6a6076;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 700;
+}
+.smart-cut-status[data-state='complete'] {
+  border-color: #a6d6b4;
+  background: #edfff2;
+  color: #24613a;
+}
+.smart-cut-status[data-state='error'] {
+  border-color: #edb4c0;
+  background: #fff0f3;
+  color: #8c2740;
+}
+.smart-cut-status span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.smart-cut-status svg {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+}
+.smart-cut-status progress {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 99px;
+  accent-color: var(--brand-violet);
+}
+.smart-cut-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 6px;
+}
+.smart-cut-actions button {
+  min-width: 0;
+  padding-inline: 7px;
+  font-size: 8px;
+}
+.smart-cut-actions svg {
+  width: 12px;
+  height: 12px;
+}
+.smart-cut-manual {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: #5e43c1;
+  font-size: 8px;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rig-cut-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  color: #857a90;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.rig-cut-divider::before,
+.rig-cut-divider::after {
+  height: 1px;
+  flex: 1;
+  background: #d8d0e6;
+  content: '';
 }
 .rig-region-preview {
   position: relative;

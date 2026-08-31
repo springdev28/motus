@@ -99,6 +99,10 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { MotusLogo } from '@/components/motus-logo';
+import {
+  MotusSmartCut,
+  type SmartCutResult,
+} from '@/components/motus-smart-cut';
 import { MotusWorkDetailsDialog } from '@/components/motus-work-details-dialog';
 import { MotusWorkMetadataSummary } from '@/components/motus-work-metadata-summary';
 import {
@@ -1971,6 +1975,40 @@ function getRigSelectionRootIds(
   });
 }
 
+function getImageRigPartClipPath(
+  crop: NonNullable<MotusElement['imageRigPart']>,
+) {
+  if (!crop.maskPoints?.length) return undefined;
+  const points = crop.maskPoints.map((point) => {
+    const x = ((point.x - crop.cropX) / crop.cropWidth) * 100;
+    const y = ((point.y - crop.cropY) / crop.cropHeight) * 100;
+    return `${x.toFixed(3)}% ${y.toFixed(3)}%`;
+  });
+  return `polygon(${points.join(', ')})`;
+}
+
+function resizeImageRigPartCrop(
+  crop: NonNullable<MotusElement['imageRigPart']>,
+  field: 'cropX' | 'cropY' | 'cropWidth' | 'cropHeight',
+  value: number,
+) {
+  const requestedCrop = normalizeElementImageRigPart({
+    ...crop,
+    [field]: value,
+    maskPoints: undefined,
+  });
+  if (!requestedCrop || !crop.maskPoints?.length) return requestedCrop;
+  const maskPoints = crop.maskPoints.map((point) => ({
+    x:
+      requestedCrop.cropX +
+      ((point.x - crop.cropX) / crop.cropWidth) * requestedCrop.cropWidth,
+    y:
+      requestedCrop.cropY +
+      ((point.y - crop.cropY) / crop.cropHeight) * requestedCrop.cropHeight,
+  }));
+  return normalizeElementImageRigPart({ ...requestedCrop, maskPoints });
+}
+
 function elementIcon(type: ElementType) {
   if (type === 'group') return Layers3;
   if (type === 'text') return Type;
@@ -1995,7 +2033,10 @@ function renderElementContent(
       const crop = element.imageRigPart;
       const framing = getElementImageFraming(rigSourceElement ?? element);
       return (
-        <span className="image-rig-part-crop">
+        <span
+          className="image-rig-part-crop"
+          style={{ clipPath: getImageRigPartClipPath(crop) }}
+        >
           {/* oxlint-disable-next-line next/no-img-element */}
           <img
             alt=""
@@ -2034,16 +2075,26 @@ function renderElementContent(
           <defs>
             <mask id={maskId} maskUnits="userSpaceOnUse">
               <rect fill="white" height="100" width="100" />
-              {cutouts.map((crop, index) => (
-                <rect
-                  fill="black"
-                  height={crop.cropHeight}
-                  key={`${crop.sourceElementId}-${index}`}
-                  width={crop.cropWidth}
-                  x={crop.cropX}
-                  y={crop.cropY}
-                />
-              ))}
+              {cutouts.map((crop, index) =>
+                crop.maskPoints?.length ? (
+                  <polygon
+                    fill="black"
+                    key={`${crop.sourceElementId}-${index}`}
+                    points={crop.maskPoints
+                      .map((point) => `${point.x},${point.y}`)
+                      .join(' ')}
+                  />
+                ) : (
+                  <rect
+                    fill="black"
+                    height={crop.cropHeight}
+                    key={`${crop.sourceElementId}-${index}`}
+                    width={crop.cropWidth}
+                    x={crop.cropX}
+                    y={crop.cropY}
+                  />
+                ),
+              )}
             </mask>
           </defs>
           <g mask={`url(#${maskId})`}>
@@ -2652,6 +2703,7 @@ function SceneView({
                     ? true
                     : undefined
                 }
+                data-image-rig-part={element.imageRigPart ? true : undefined}
                 data-locked={element.locked || undefined}
                 data-motion-trigger={
                   readerTriggers ? compiledMotion.event : undefined
@@ -4019,7 +4071,7 @@ export function MotusStudio() {
     focusEditorTarget(activeScene.id, group.id);
   };
 
-  const extractImageRigPart = () => {
+  const extractImageRigPart = (selection?: SmartCutResult) => {
     if (
       !selectedElement ||
       selectedElement.type !== 'image' ||
@@ -4029,42 +4081,55 @@ export function MotusStudio() {
     ) {
       return;
     }
-    const cropX = Math.min(rigRegionDraft.x, 99);
-    const cropY = Math.min(rigRegionDraft.y, 99);
-    const cropWidth = Math.min(rigRegionDraft.width, 100 - cropX);
-    const cropHeight = Math.min(rigRegionDraft.height, 100 - cropY);
+    const region = selection
+      ? {
+          x: selection.cropX,
+          y: selection.cropY,
+          width: selection.cropWidth,
+          height: selection.cropHeight,
+        }
+      : rigRegionDraft;
+    const cropX = Math.min(Math.max(region.x, 0), 99);
+    const cropY = Math.min(Math.max(region.y, 0), 99);
+    const cropWidth = Math.min(Math.max(region.width, 0.1), 100 - cropX);
+    const cropHeight = Math.min(Math.max(region.height, 0.1), 100 - cropY);
+    const imageRigPart = normalizeElementImageRigPart({
+      sourceElementId: selectedElement.id,
+      cropX,
+      cropY,
+      cropWidth,
+      cropHeight,
+      ...(selection?.maskPoints ? { maskPoints: selection.maskPoints } : {}),
+    });
+    if (!imageRigPart || (selection && !imageRigPart.maskPoints)) {
+      setNotice('Draw a larger closed selection');
+      return;
+    }
     const part = createElement('image', activeScene.elements.length + 1, {
       id: uniqueId('rig-part'),
       name: `${selectedElement.name} part`,
       parentId: selectedElement.id,
       pivotX: 50,
       pivotY: 50,
-      x: selectedElement.x + (selectedElement.width * cropX) / 100,
-      y: selectedElement.y + (selectedElement.height * cropY) / 100,
+      x: selectedElement.x + (selectedElement.width * imageRigPart.cropX) / 100,
+      y:
+        selectedElement.y + (selectedElement.height * imageRigPart.cropY) / 100,
       width: Math.max(
         MIN_ELEMENT_WIDTH,
-        (selectedElement.width * cropWidth) / 100,
+        (selectedElement.width * imageRigPart.cropWidth) / 100,
       ),
       height: Math.max(
         MIN_ELEMENT_HEIGHT,
-        (selectedElement.height * cropHeight) / 100,
+        (selectedElement.height * imageRigPart.cropHeight) / 100,
       ),
       src: undefined,
-      imageRigPart: {
-        sourceElementId: selectedElement.id,
-        cropX,
-        cropY,
-        cropWidth,
-        cropHeight,
-      },
+      imageRigPart,
     });
     commitProject((draft) => {
       findProjectScene(draft, activeScene.id)?.scene.elements.push(part);
     });
     setSelectedElementId(part.id);
-    setNotice(
-      `${part.name} cut out and attached · set its pivot, parent, and blocks`,
-    );
+    setNotice(`${part.name} ${selection ? 'masked' : 'cropped'} and attached`);
     focusEditorTarget(activeScene.id, part.id);
   };
 
@@ -8344,6 +8409,28 @@ export function MotusStudio() {
                           </div>
                           <span>NON-DESTRUCTIVE MASK</span>
                         </div>
+                        <MotusSmartCut
+                          aspectRatio={
+                            selectedElement.width / selectedElement.height
+                          }
+                          focalX={selectedImageFraming?.focalX ?? 50}
+                          focalY={selectedImageFraming?.focalY ?? 50}
+                          imageFit={selectedImageFraming?.fit ?? 'cover'}
+                          imageName={selectedElement.name}
+                          imageSrc={selectedElement.src}
+                          key={[
+                            selectedElement.id,
+                            selectedElement.width,
+                            selectedElement.height,
+                            selectedImageFraming?.fit,
+                            selectedImageFraming?.focalX,
+                            selectedImageFraming?.focalY,
+                          ].join(':')}
+                          onApply={extractImageRigPart}
+                        />
+                        <div className="rig-cut-divider">
+                          <span>Rectangle crop</span>
+                        </div>
                         <div
                           aria-label="Image region preview"
                           className="rig-region-preview"
@@ -8406,7 +8493,10 @@ export function MotusStudio() {
                             </label>
                           ))}
                         </div>
-                        <Button onClick={extractImageRigPart} type="button">
+                        <Button
+                          onClick={() => extractImageRigPart()}
+                          type="button"
+                        >
                           <Plus aria-hidden="true" />
                           Cut region into child part
                         </Button>
@@ -8432,6 +8522,9 @@ export function MotusStudio() {
                           {Math.round(selectedElement.imageRigPart.cropY)} ·{' '}
                           {Math.round(selectedElement.imageRigPart.cropWidth)}×
                           {Math.round(selectedElement.imageRigPart.cropHeight)}%
+                          {selectedElement.imageRigPart.maskPoints?.length
+                            ? ` · Freeform ${selectedElement.imageRigPart.maskPoints.length}-point mask`
+                            : ' · Rectangle mask'}
                         </small>
                         <div className="rig-region-fields">
                           {(
@@ -8469,11 +8562,11 @@ export function MotusStudio() {
                                     selectedElement.id,
                                     (item) => {
                                       if (!item.imageRigPart) return;
-                                      const normalized =
-                                        normalizeElementImageRigPart({
-                                          ...item.imageRigPart,
-                                          [field]: Number(event.target.value),
-                                        });
+                                      const normalized = resizeImageRigPartCrop(
+                                        item.imageRigPart,
+                                        field,
+                                        Number(event.target.value),
+                                      );
                                       if (normalized) {
                                         item.imageRigPart = normalized;
                                       }

@@ -1,4 +1,4 @@
-export const PROJECT_SCHEMA_VERSION = 10 as const;
+export const PROJECT_SCHEMA_VERSION = 11 as const;
 export const MOTION_SCHEMA_VERSION = 2 as const;
 export const MOTUS_PROJECT_FORMATS = [
   'vertical-scroll',
@@ -32,6 +32,15 @@ export const MIN_ELEMENT_RIG_PIVOT = 0;
 export const MAX_ELEMENT_RIG_PIVOT = 100;
 export const DEFAULT_ELEMENT_RIG_PIVOT = 50;
 export const MAX_ELEMENT_RIG_DEPTH = 12;
+export const MIN_ELEMENT_IMAGE_RIG_MASK_POINTS = 3;
+export const MAX_ELEMENT_IMAGE_RIG_MASK_POINTS = 512;
+/** Polygon area in the source image's normalized 0..100 coordinate space. */
+export const MIN_ELEMENT_IMAGE_RIG_MASK_AREA = 0.01;
+
+export type ElementImageRigMaskPoint = {
+  x: number;
+  y: number;
+};
 
 export type ElementImageRigPart = {
   sourceElementId: string;
@@ -39,6 +48,8 @@ export type ElementImageRigPart = {
   cropY: number;
   cropWidth: number;
   cropHeight: number;
+  /** Optional arbitrary mask polygon in source-image 0..100 coordinates. */
+  maskPoints?: ElementImageRigMaskPoint[];
 };
 export const ELEMENT_FONT_PRESETS = [
   'editorial',
@@ -3161,8 +3172,84 @@ const normalizeRigPercent = (value: unknown, fallback: number) =>
 const normalizeRigCropOrigin = (value: unknown, fallback: number) =>
   clamp(finite(value, fallback), 0, MAX_ELEMENT_RIG_PIVOT - 1);
 
+export function getElementImageRigMaskArea(
+  points: readonly ElementImageRigMaskPoint[],
+): number {
+  let twiceSignedArea = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    twiceSignedArea += current.x * next.y - next.x * current.y;
+  }
+  return Math.abs(twiceSignedArea) / 2;
+}
+
+export function getElementImageRigMaskBounds(
+  points: readonly ElementImageRigMaskPoint[],
+): Pick<ElementImageRigPart, 'cropX' | 'cropY' | 'cropWidth' | 'cropHeight'> {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const naturalWidth = maxX - minX;
+  const naturalHeight = maxY - minY;
+  const cropX =
+    naturalWidth >= 1 ? minX : clamp((minX + maxX) / 2 - 0.5, 0, 99);
+  const cropY =
+    naturalHeight >= 1 ? minY : clamp((minY + maxY) / 2 - 0.5, 0, 99);
+  return {
+    cropX,
+    cropY,
+    cropWidth: naturalWidth >= 1 ? naturalWidth : 1,
+    cropHeight: naturalHeight >= 1 ? naturalHeight : 1,
+  };
+}
+
+function normalizeElementImageRigMaskPoints(
+  value: unknown,
+): ElementImageRigMaskPoint[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    value.length < MIN_ELEMENT_IMAGE_RIG_MASK_POINTS ||
+    value.length > MAX_ELEMENT_IMAGE_RIG_MASK_POINTS
+  ) {
+    return undefined;
+  }
+
+  const points: ElementImageRigMaskPoint[] = [];
+  for (const valuePoint of value) {
+    if (
+      !valuePoint ||
+      typeof valuePoint !== 'object' ||
+      Array.isArray(valuePoint)
+    ) {
+      return undefined;
+    }
+    const candidate = valuePoint as Record<string, unknown>;
+    if (
+      typeof candidate.x !== 'number' ||
+      !Number.isFinite(candidate.x) ||
+      typeof candidate.y !== 'number' ||
+      !Number.isFinite(candidate.y)
+    ) {
+      return undefined;
+    }
+    points.push({
+      x: clamp(candidate.x, MIN_ELEMENT_RIG_PIVOT, MAX_ELEMENT_RIG_PIVOT),
+      y: clamp(candidate.y, MIN_ELEMENT_RIG_PIVOT, MAX_ELEMENT_RIG_PIVOT),
+    });
+  }
+
+  return getElementImageRigMaskArea(points) >= MIN_ELEMENT_IMAGE_RIG_MASK_AREA
+    ? points
+    : undefined;
+}
+
 export function normalizeElementImageRigPart(
   value: unknown,
+  includeMaskPoints = true,
 ): ElementImageRigPart | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
@@ -3178,12 +3265,19 @@ export function normalizeElementImageRigPart(
   const cropY = normalizeRigCropOrigin(candidate.cropY, 0);
   const cropWidth = clamp(finite(candidate.cropWidth, 100), 1, 100 - cropX);
   const cropHeight = clamp(finite(candidate.cropHeight, 100), 1, 100 - cropY);
+  const maskPoints = includeMaskPoints
+    ? normalizeElementImageRigMaskPoints(candidate.maskPoints)
+    : undefined;
+  const maskBounds = maskPoints
+    ? getElementImageRigMaskBounds(maskPoints)
+    : undefined;
   return {
     sourceElementId: candidate.sourceElementId,
-    cropX,
-    cropY,
-    cropWidth,
-    cropHeight,
+    cropX: maskBounds?.cropX ?? cropX,
+    cropY: maskBounds?.cropY ?? cropY,
+    cropWidth: maskBounds?.cropWidth ?? cropWidth,
+    cropHeight: maskBounds?.cropHeight ?? cropHeight,
+    ...(maskPoints ? { maskPoints } : {}),
   };
 }
 
@@ -7055,6 +7149,62 @@ const isValidElementImageFocalPosition = (value: unknown): value is number =>
   value >= MIN_ELEMENT_IMAGE_FOCAL_POSITION &&
   value <= MAX_ELEMENT_IMAGE_FOCAL_POSITION;
 
+const isValidElementImageRigMaskPoints = (
+  value: unknown,
+): value is ElementImageRigMaskPoint[] => {
+  if (
+    !Array.isArray(value) ||
+    value.length < MIN_ELEMENT_IMAGE_RIG_MASK_POINTS ||
+    value.length > MAX_ELEMENT_IMAGE_RIG_MASK_POINTS
+  ) {
+    return false;
+  }
+  const points: ElementImageRigMaskPoint[] = [];
+  for (const valuePoint of value) {
+    if (
+      !isRecord(valuePoint) ||
+      typeof valuePoint.x !== 'number' ||
+      !Number.isFinite(valuePoint.x) ||
+      valuePoint.x < MIN_ELEMENT_RIG_PIVOT ||
+      valuePoint.x > MAX_ELEMENT_RIG_PIVOT ||
+      typeof valuePoint.y !== 'number' ||
+      !Number.isFinite(valuePoint.y) ||
+      valuePoint.y < MIN_ELEMENT_RIG_PIVOT ||
+      valuePoint.y > MAX_ELEMENT_RIG_PIVOT
+    ) {
+      return false;
+    }
+    points.push({ x: valuePoint.x, y: valuePoint.y });
+  }
+  return getElementImageRigMaskArea(points) >= MIN_ELEMENT_IMAGE_RIG_MASK_AREA;
+};
+
+const hasValidContainedElementImageRigMask = (
+  imageRigPart: UnknownRecord,
+): boolean => {
+  if (imageRigPart.maskPoints === undefined) return true;
+  if (!isValidElementImageRigMaskPoints(imageRigPart.maskPoints)) return false;
+  const cropX = imageRigPart.cropX;
+  const cropY = imageRigPart.cropY;
+  const cropWidth = imageRigPart.cropWidth;
+  const cropHeight = imageRigPart.cropHeight;
+  if (
+    typeof cropX !== 'number' ||
+    typeof cropY !== 'number' ||
+    typeof cropWidth !== 'number' ||
+    typeof cropHeight !== 'number'
+  ) {
+    return false;
+  }
+  return imageRigPart.maskPoints.every(
+    (point) =>
+      point.x >= cropX - 1e-6 &&
+      point.x <= cropX + cropWidth + 1e-6 &&
+      point.y >= cropY - 1e-6 &&
+      point.y <= cropY + cropHeight + 1e-6,
+  );
+};
+
 function validateMotion(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)) return 'Project contains invalid motion instructions';
@@ -7198,6 +7348,7 @@ function validateScenes(
   projectSceneIds = new Set<string>(),
   validateImageFraming = false,
   validateRigging = false,
+  validatePolygonMasks = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one scene`;
@@ -7320,7 +7471,9 @@ function validateScenes(
             100 ||
           (elementValue.imageRigPart.cropY as number) +
             (elementValue.imageRigPart.cropHeight as number) >
-            100
+            100 ||
+          (validatePolygonMasks &&
+            !hasValidContainedElementImageRigMask(elementValue.imageRigPart))
         ) {
           return `${context} contains an invalid image rig part`;
         }
@@ -7384,6 +7537,7 @@ function validateChapters(
   context: string,
   validateImageFraming = false,
   validateRigging = false,
+  validatePolygonMasks = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one chapter`;
@@ -7416,6 +7570,7 @@ function validateChapters(
       projectSceneIds,
       validateImageFraming,
       validateRigging,
+      validatePolygonMasks,
     );
     if (sceneError) return sceneError;
     sceneCount += (chapterValue.scenes as unknown[]).length;
@@ -7439,6 +7594,7 @@ function normalizeEditableName(
 function normalizeScenes(
   value: unknown[],
   normalizeRigging = true,
+  normalizePolygonMasks = true,
 ): MotusScene[] {
   return value.map((sceneValue) => {
     const item = sceneValue as UnknownRecord;
@@ -7508,7 +7664,10 @@ function normalizeScenes(
                 imageFocalX: imageFraming.focalX,
                 imageFocalY: imageFraming.focalY,
                 imageRigPart: normalizeRigging
-                  ? normalizeElementImageRigPart(elementValue.imageRigPart)
+                  ? normalizeElementImageRigPart(
+                      elementValue.imageRigPart,
+                      normalizePolygonMasks,
+                    )
                   : undefined,
               }
             : {}),
@@ -7528,6 +7687,7 @@ function normalizeScenes(
 function normalizeChapters(
   value: unknown[],
   normalizeRigging = true,
+  normalizePolygonMasks = true,
 ): MotusChapter[] {
   return value.map((chapterValue) => {
     const chapter = chapterValue as UnknownRecord;
@@ -7538,7 +7698,11 @@ function normalizeChapters(
         'Untitled chapter',
         MAX_PROJECT_TITLE_LENGTH,
       ),
-      scenes: normalizeScenes(chapter.scenes as unknown[], normalizeRigging),
+      scenes: normalizeScenes(
+        chapter.scenes as unknown[],
+        normalizeRigging,
+        normalizePolygonMasks,
+      ),
     };
   });
 }
@@ -7693,6 +7857,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 7 &&
     candidate.schemaVersion !== 8 &&
     candidate.schemaVersion !== 9 &&
+    candidate.schemaVersion !== 10 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {
@@ -7712,6 +7877,7 @@ export function restoreProjectWithError(
   const usesWorkMetadata = schemaVersion >= 8;
   const usesImageFraming = schemaVersion >= 9;
   const usesRigging = schemaVersion >= 10;
+  const usesPolygonMasks = schemaVersion >= 11;
   if (usesChapterHierarchy && !isProjectFormat(candidate.format)) {
     return { project: null, error: 'Project uses an unsupported format' };
   }
@@ -7739,6 +7905,7 @@ export function restoreProjectWithError(
         'Project',
         usesImageFraming,
         usesRigging,
+        usesPolygonMasks,
       )
     : validateScenes(
         candidate.scenes,
@@ -7746,6 +7913,7 @@ export function restoreProjectWithError(
         new Set<string>(),
         usesImageFraming,
         usesRigging,
+        usesPolygonMasks,
       );
   if (hierarchyError) return { project: null, error: hierarchyError };
 
@@ -7797,6 +7965,7 @@ export function restoreProjectWithError(
           `Publication revision ${revision}`,
           usesImageFraming,
           usesRigging,
+          usesPolygonMasks,
         )
       : validateScenes(
           publicationValue.scenes,
@@ -7804,6 +7973,7 @@ export function restoreProjectWithError(
           new Set<string>(),
           usesImageFraming,
           usesRigging,
+          usesPolygonMasks,
         );
     if (revisionError) return { project: null, error: revisionError };
   }
@@ -7812,7 +7982,11 @@ export function restoreProjectWithError(
     (publicationValue) => {
       const revision = publicationValue as UnknownRecord;
       const chapters = usesChapterHierarchy
-        ? normalizeChapters(revision.chapters as unknown[], usesRigging)
+        ? normalizeChapters(
+            revision.chapters as unknown[],
+            usesRigging,
+            usesPolygonMasks,
+          )
         : [
             {
               id: legacyChapterId,
@@ -7824,6 +7998,7 @@ export function restoreProjectWithError(
               scenes: normalizeScenes(
                 revision.scenes as unknown[],
                 usesRigging,
+                usesPolygonMasks,
               ),
             },
           ];
@@ -7879,7 +8054,11 @@ export function restoreProjectWithError(
       ? candidate.updatedAt
       : new Date(0).toISOString();
   const chapters = usesChapterHierarchy
-    ? normalizeChapters(candidate.chapters as unknown[], usesRigging)
+    ? normalizeChapters(
+        candidate.chapters as unknown[],
+        usesRigging,
+        usesPolygonMasks,
+      )
     : [
         {
           id: legacyChapterId,
@@ -7888,7 +8067,11 @@ export function restoreProjectWithError(
             'Chapter 1',
             MAX_PROJECT_TITLE_LENGTH,
           ),
-          scenes: normalizeScenes(candidate.scenes as unknown[], usesRigging),
+          scenes: normalizeScenes(
+            candidate.scenes as unknown[],
+            usesRigging,
+            usesPolygonMasks,
+          ),
         },
       ];
   const format: MotusProjectFormat = usesChapterHierarchy

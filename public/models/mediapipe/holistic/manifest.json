@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "mediapipe-holistic-landmarker-float16",
+  "label": "Holistic Landmarker",
+  "format": "mediapipe-task",
+  "path": "holistic-landmarker-float16.task",
+  "bytes": 13683609,
+  "sha256": "e2dab61191e2dcd0a15f943d8e3ed1dce13c82dfa597b9dd39f562975a50c3f8",
+  "source": "https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/1/holistic_landmarker.task",
+  "documentation": "https://developers.google.com/edge/mediapipe/solutions/vision/holistic_landmarker/web_js",
+  "license": "Apache-2.0"
+}
