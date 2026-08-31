@@ -378,7 +378,12 @@ export function MotusHome() {
                       {draft.project.chapters.length === 1
                         ? 'chapter'
                         : 'chapters'}{' '}
-                      · {draft.project.format === 'page' ? 'Page' : 'Vertical'}
+                      ·{' '}
+                      {draft.project.format === 'spread'
+                        ? 'Spread'
+                        : draft.project.format === 'page'
+                          ? 'Page'
+                          : 'Vertical'}
                     </p>
                     <MotusWorkMetadataSummary
                       contentRating={draft.project.contentRating}
@@ -459,9 +464,11 @@ export function MotusHome() {
                   <div className="home-published-copy">
                     <span>
                       {publication.source.visibility.toUpperCase()} INTENT ·{' '}
-                      {publication.source.format === 'page'
-                        ? 'PAGE'
-                        : 'VERTICAL'}
+                      {publication.source.format === 'spread'
+                        ? 'SPREAD'
+                        : publication.source.format === 'page'
+                          ? 'PAGE'
+                          : 'VERTICAL'}
                     </span>
                     <h3>{publication.source.title}</h3>
                     <p>by {publication.source.creatorName}</p>

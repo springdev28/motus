@@ -297,6 +297,9 @@ export function MotusWorkDetailsDialog({
                     <NativeSelectOption value="page">
                       Page by page
                     </NativeSelectOption>
+                    <NativeSelectOption value="spread">
+                      Two-page spread
+                    </NativeSelectOption>
                   </NativeSelect>
                 </label>
                 <label

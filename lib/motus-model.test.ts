@@ -16,6 +16,7 @@ import {
   MAX_ELEMENT_ID_LENGTH,
   MAX_ELEMENT_LETTER_SPACING,
   MAX_ELEMENT_NAME_LENGTH,
+  MAX_ELEMENT_RIG_DEPTH,
   MAX_MOTION_BLOCKS,
   MAX_MOTION_EVENT_SOURCE_ID_LENGTH,
   MAX_PROJECT_DESCRIPTION_LENGTH,
@@ -62,6 +63,10 @@ import {
   getDraftExitAction,
   getEditorShortcut,
   getElementImageFraming,
+  getElementRigCascadeDeleteIds,
+  getElementRigDepth,
+  getElementRigDescendantIds,
+  getElementRigIntegrityIssue,
   getElementVisualBounds,
   getDefaultElementTypography,
   getFitCanvasWidth,
@@ -79,8 +84,10 @@ import {
   insertMotionActionBefore,
   isMotionContainerBlockKind,
   isMotionEventBlockKind,
+  isElementEffectivelyVisible,
   normalizeBounceJumpNumericField,
   normalizeElementImageFraming,
+  normalizeElementImageRigPart,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
@@ -105,11 +112,13 @@ import {
   snapSelectedElementMovement,
   trimProjectHistory,
   transformElementByPointer,
+  translateElementRigBranch,
   translateSelectedElements,
   type CompiledMotionKeyframe,
   type ProjectHistoryState,
   validateImageAsset,
   wouldCreateAnimationFinishCycle,
+  wouldCreateElementRigCycle,
   writeDraftJournal,
 } from './motus-model.ts';
 
@@ -585,6 +594,48 @@ void test('visual element bounds include rotation around the element center', ()
   assert.deepEqual(
     { centerX: bounds.centerX, centerY: bounds.centerY },
     { centerX: 160, centerY: 230 },
+  );
+});
+
+void test('visual bounds and resizing honor an articulated off-center pivot', () => {
+  const arm = createElement('shape', 1, {
+    id: 'pivot-arm',
+    x: 100,
+    y: 200,
+    width: 120,
+    height: 60,
+    pivotX: 0,
+    pivotY: 50,
+    rotation: 90,
+  });
+  const bounds = getElementVisualBounds(arm);
+  assert.deepEqual(bounds, {
+    left: 70,
+    top: 230,
+    right: 130,
+    bottom: 350,
+    centerX: 100,
+    centerY: 290,
+  });
+
+  const resized = transformElementByPointer(arm, 'resize-e', 0, 40);
+  assert.deepEqual(
+    {
+      x: resized.x,
+      y: resized.y,
+      width: resized.width,
+      height: resized.height,
+      pivotX: resized.pivotX,
+      pivotY: resized.pivotY,
+    },
+    {
+      x: 100,
+      y: 200,
+      width: 160,
+      height: 60,
+      pivotX: 0,
+      pivotY: 50,
+    },
   );
 });
 
@@ -3768,7 +3819,7 @@ void test('nested project validation rejects malformed hierarchy and aggregate o
     string,
     unknown
   >;
-  unsupportedFormat.format = 'spread';
+  unsupportedFormat.format = 'book';
   assert.equal(
     restoreProjectWithError(JSON.stringify(unsupportedFormat)).error,
     'Project uses an unsupported format',
@@ -4680,5 +4731,338 @@ void test('image validation enforces format, storage, and decoded dimensions', (
       height: 2_000,
     }),
     null,
+  );
+});
+
+void test('rig hierarchy helpers preserve nested branches and reject cycles', () => {
+  const body = createElement('group', 1, {
+    id: 'body',
+    x: 100,
+    y: 200,
+  });
+  const head = createElement('group', 2, {
+    id: 'head',
+    parentId: body.id,
+    x: 180,
+    y: 260,
+  });
+  const hair = createElement('image', 3, {
+    id: 'hair',
+    parentId: head.id,
+    x: 210,
+    y: 250,
+  });
+  const elements = [body, head, hair];
+
+  assert.deepEqual(getElementRigDescendantIds(elements, body.id), [
+    head.id,
+    hair.id,
+  ]);
+  assert.equal(getElementRigDepth(elements, hair.id), 2);
+  assert.equal(wouldCreateElementRigCycle(elements, body.id, hair.id), true);
+  assert.equal(wouldCreateElementRigCycle(elements, hair.id, body.id), false);
+
+  const moved = translateElementRigBranch(elements, body.id, 30, -20);
+  assert.deepEqual(
+    moved.map(({ x, y }) => ({ x, y })),
+    [
+      { x: 130, y: 180 },
+      { x: 210, y: 240 },
+      { x: 240, y: 230 },
+    ],
+  );
+  assert.deepEqual(
+    elements.map(({ x, y }) => ({ x, y })),
+    [
+      { x: 100, y: 200 },
+      { x: 180, y: 260 },
+      { x: 210, y: 250 },
+    ],
+  );
+});
+
+void test('rig branch movement uses one bounded delta at canvas edges', () => {
+  const body = createElement('group', 1, {
+    id: 'edge-body',
+    x: 0,
+    y: 120,
+    width: 200,
+    height: 200,
+  });
+  const arm = createElement('shape', 2, {
+    id: 'edge-arm',
+    parentId: body.id,
+    x: 400,
+    y: 160,
+    width: 100,
+    height: 100,
+  });
+
+  const blockedLeft = translateElementRigBranch([body, arm], body.id, -50, 0);
+  assert.deepEqual(
+    blockedLeft.map(({ x, y }) => ({ x, y })),
+    [
+      { x: 0, y: 120 },
+      { x: 400, y: 160 },
+    ],
+  );
+  const movedRight = translateElementRigBranch([body, arm], body.id, 40, 0);
+  assert.deepEqual(
+    movedRight.map(({ x }) => x),
+    [40, 440],
+  );
+});
+
+void test('rig crop normalization always keeps a finite positive region', () => {
+  assert.deepEqual(
+    normalizeElementImageRigPart({
+      sourceElementId: 'character',
+      cropX: 100,
+      cropY: 100,
+      cropWidth: 100,
+      cropHeight: 100,
+    }),
+    {
+      sourceElementId: 'character',
+      cropX: 99,
+      cropY: 99,
+      cropWidth: 1,
+      cropHeight: 1,
+    },
+  );
+});
+
+void test('rig visibility, dependency closure, and cascade deletion stay coherent', () => {
+  const source = createElement('image', 1, {
+    id: 'rig-source',
+    src: 'data:image/png;base64,iVBORw0KGgo=',
+  });
+  const hiddenHead = createElement('group', 2, {
+    id: 'hidden-head',
+    visible: false,
+  });
+  const hair = createElement('image', 3, {
+    id: 'rig-hair',
+    parentId: hiddenHead.id,
+    imageRigPart: {
+      sourceElementId: source.id,
+      cropX: 10,
+      cropY: 10,
+      cropWidth: 20,
+      cropHeight: 30,
+    },
+  });
+  const visibleArm = createElement('image', 4, {
+    id: 'rig-arm',
+    parentId: null,
+    imageRigPart: {
+      sourceElementId: source.id,
+      cropX: 60,
+      cropY: 20,
+      cropWidth: 20,
+      cropHeight: 40,
+    },
+  });
+  const elements = [source, hiddenHead, hair, visibleArm];
+
+  assert.equal(isElementEffectivelyVisible(elements, hair.id), false);
+  assert.equal(isElementEffectivelyVisible(elements, visibleArm.id), true);
+  assert.deepEqual(
+    getSceneThumbnailElements({ elements }, 1).map((element) => element.id),
+    [source.id, visibleArm.id],
+  );
+  assert.deepEqual(getElementRigCascadeDeleteIds(elements, [source.id]), [
+    source.id,
+    hair.id,
+    visibleArm.id,
+  ]);
+  assert.equal(getElementRigIntegrityIssue(elements), null);
+});
+
+void test('schema 9 projects migrate to independent centered rig layers', () => {
+  const legacy = JSON.parse(JSON.stringify(createDefaultProject())) as Record<
+    string,
+    unknown
+  >;
+  legacy.schemaVersion = 9;
+  for (const chapter of legacy.chapters as Array<Record<string, unknown>>) {
+    for (const scene of chapter.scenes as Array<Record<string, unknown>>) {
+      for (const element of scene.elements as Array<Record<string, unknown>>) {
+        delete element.parentId;
+        delete element.pivotX;
+        delete element.pivotY;
+      }
+    }
+  }
+
+  const restored = restoreProject(JSON.stringify(legacy));
+  assert.ok(restored);
+  assert.equal(restored.schemaVersion, PROJECT_SCHEMA_VERSION);
+  for (const element of restored.chapters[0].scenes[0].elements) {
+    assert.equal(element.parentId, null);
+    assert.equal(element.pivotX, 50);
+    assert.equal(element.pivotY, 50);
+  }
+});
+
+void test('schema 9 migration discards forward rig fields instead of smuggling cycles', () => {
+  const legacy = structuredClone(createDefaultProject()) as unknown as Record<
+    string,
+    unknown
+  >;
+  legacy.schemaVersion = 9;
+  const elements = (
+    (legacy.chapters as Array<Record<string, unknown>>)[0].scenes as Array<
+      Record<string, unknown>
+    >
+  )[0].elements as Array<Record<string, unknown>>;
+  elements[0].parentId = elements[1].id;
+  elements[1].parentId = elements[0].id;
+  elements[0].pivotX = 8;
+  elements[0].imageRigPart = {
+    sourceElementId: elements[1].id,
+    cropX: 0,
+    cropY: 0,
+    cropWidth: 10,
+    cropHeight: 10,
+  };
+
+  const restored = restoreProject(JSON.stringify(legacy));
+  assert.ok(restored);
+  for (const element of restored.chapters[0].scenes[0].elements) {
+    assert.equal(element.parentId, null);
+    assert.equal(element.pivotX, 50);
+    assert.equal(element.pivotY, 50);
+    assert.equal(element.imageRigPart, undefined);
+  }
+});
+
+void test('masked image rig parts and spread format survive publication round trips', () => {
+  const project = createBlankProject('rig-round-trip');
+  project.format = 'spread';
+  const scene = project.chapters[0].scenes[0];
+  const source = createElement('image', 1, {
+    id: 'character-source',
+    name: 'Character',
+    src: 'data:image/png;base64,iVBORw0KGgo=',
+    x: 120,
+    y: 180,
+    width: 600,
+    height: 900,
+  });
+  const arm = createElement('image', 2, {
+    id: 'character-arm',
+    name: 'Arm',
+    parentId: source.id,
+    pivotX: 15,
+    pivotY: 20,
+    src: undefined,
+    imageRigPart: {
+      sourceElementId: source.id,
+      cropX: 62,
+      cropY: 28,
+      cropWidth: 20,
+      cropHeight: 42,
+    },
+  });
+  scene.elements = [source, arm];
+  const revision = createPublicationRevision(project);
+  project.publications = [revision];
+  project.publishedRevision = revision.revision;
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  assert.equal(restored.format, 'spread');
+  assert.equal(restored.publications[0].format, 'spread');
+  assert.equal(restored.chapters[0].scenes[0].elements[1].parentId, source.id);
+  assert.deepEqual(
+    restored.chapters[0].scenes[0].elements[1].imageRigPart,
+    arm.imageRigPart,
+  );
+});
+
+void test('current project restore rejects orphaned, cyclic, and overdeep rigs', () => {
+  const orphaned = createDefaultProject();
+  orphaned.chapters[0].scenes[0].elements[0].parentId = 'missing-parent';
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(orphaned)).error,
+    'Project chapter 1 contains an orphaned or self-parented rig layer',
+  );
+
+  const cyclic = createBlankProject('cyclic-rig');
+  const first = createElement('group', 1, { id: 'first', parentId: 'second' });
+  const second = createElement('group', 2, { id: 'second', parentId: 'first' });
+  cyclic.chapters[0].scenes[0].elements = [first, second];
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(cyclic)).error,
+    'Project chapter 1 contains a cyclic rig hierarchy',
+  );
+
+  const overdeep = createBlankProject('overdeep-rig');
+  overdeep.chapters[0].scenes[0].elements = Array.from(
+    { length: MAX_ELEMENT_RIG_DEPTH + 2 },
+    (_, index) =>
+      createElement('group', index + 1, {
+        id: `joint-${index}`,
+        parentId: index === 0 ? null : `joint-${index - 1}`,
+      }),
+  );
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(overdeep)).error,
+    `Project chapter 1 contains a rig deeper than ${MAX_ELEMENT_RIG_DEPTH} levels`,
+  );
+
+  const missingImageSource = createBlankProject('missing-rig-source');
+  const emptySource = createElement('image', 1, {
+    id: 'empty-source',
+    src: undefined,
+  });
+  const dependentPart = createElement('image', 2, {
+    id: 'dependent-part',
+    imageRigPart: {
+      sourceElementId: emptySource.id,
+      cropX: 0,
+      cropY: 0,
+      cropWidth: 20,
+      cropHeight: 20,
+    },
+  });
+  missingImageSource.chapters[0].scenes[0].elements = [
+    emptySource,
+    dependentPart,
+  ];
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(missingImageSource)).error,
+    'Project chapter 1 contains an orphaned image rig part',
+  );
+});
+
+void test('publication readiness ignores empty groups and catches broken rigs', () => {
+  const project = createBlankProject('empty-rig-project');
+  project.title = 'Empty rig';
+  project.metadata.contributorNames = ['Creator'];
+  project.metadata.workStatus = 'ongoing';
+  project.metadata.origin = 'original';
+  project.chapters[0].scenes[0].elements = [createElement('group', 1)];
+  assert.ok(
+    getPublicationReadiness(project).issues.includes(
+      'Add at least one visible layer',
+    ),
+  );
+
+  const brokenPart = createElement('image', 2, {
+    imageRigPart: {
+      sourceElementId: 'missing',
+      cropX: 0,
+      cropY: 0,
+      cropWidth: 20,
+      cropHeight: 20,
+    },
+  });
+  project.chapters[0].scenes[0].elements.push(brokenPart);
+  assert.ok(
+    getPublicationReadiness(project).issues.includes(
+      'Repair broken character rig links before publishing',
+    ),
   );
 });
