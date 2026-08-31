@@ -1,0 +1,6 @@
+# Vendored runtime and model artifacts are reviewed through their pinned
+# manifests, SHA-256 checks, and upstream licenses rather than line diffs.
+public/vendor/mediapipe/wasm/*.js binary
+public/vendor/mediapipe/wasm/*.wasm binary
+public/models/mediapipe/**/*.task binary
+public/models/mediapipe/**/model.part-* binary
