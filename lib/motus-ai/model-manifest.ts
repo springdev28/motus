@@ -160,7 +160,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isSafeRelativeAssetPath(value: unknown): value is string {
+export function isSafeRelativeAssetPath(value: unknown): value is string {
   if (
     typeof value !== 'string' ||
     !value ||

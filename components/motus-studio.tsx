@@ -99,6 +99,9 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { MotusLogo } from '@/components/motus-logo';
+import { MotusMeshImage } from '@/components/motus-mesh-image';
+import { MotusMeshWarpEditor } from '@/components/motus-mesh-warp-editor';
+import { MotusRigJointFinder } from '@/components/motus-rig-joint-finder';
 import {
   MotusSmartCut,
   type SmartCutResult,
@@ -291,6 +294,7 @@ import {
   DRAFT_SLOT_B_KEY,
   readNewestMotusDraft,
 } from '@/lib/motus-draft-storage';
+import { createImageRigMesh } from '@/lib/motus-mesh-warp';
 const MOTUS_LAYER_CLIPBOARD_TYPE = 'application/x-motus-layer';
 const STUDIO_PANEL_LAYOUT_KEY = 'motus.studio.panel-layout.v1';
 const BLOCK_WORKSPACE_LAYOUT_KEY = 'motus.studio.block-workspace-layout.v1';
@@ -2021,6 +2025,7 @@ function renderElementContent(
   element: MotusElement,
   sceneElements: readonly MotusElement[] = [],
   maskNamespace = 'scene',
+  enableMesh = true,
 ) {
   const rigSourceElement = element.imageRigPart
     ? sceneElements.find(
@@ -2032,26 +2037,49 @@ function renderElementContent(
     if (element.imageRigPart) {
       const crop = element.imageRigPart;
       const framing = getElementImageFraming(rigSourceElement ?? element);
+      const meshFraming = {
+        aspectRatio:
+          (rigSourceElement?.width ?? element.width) /
+          (rigSourceElement?.height ?? element.height),
+        fit: framing.fit,
+        focalX: framing.focalX,
+        focalY: framing.focalY,
+      };
+      const fallbackStyle = {
+        height: `${10_000 / crop.cropHeight}%`,
+        left: `${(-crop.cropX / crop.cropWidth) * 100}%`,
+        maxWidth: 'none',
+        objectFit: framing.fit,
+        objectPosition: `${framing.focalX}% ${framing.focalY}%`,
+        top: `${(-crop.cropY / crop.cropHeight) * 100}%`,
+        width: `${10_000 / crop.cropWidth}%`,
+      } as CSSProperties;
       return (
         <span
           className="image-rig-part-crop"
-          style={{ clipPath: getImageRigPartClipPath(crop) }}
+          style={
+            crop.mesh && enableMesh
+              ? undefined
+              : { clipPath: getImageRigPartClipPath(crop) }
+          }
         >
-          {/* oxlint-disable-next-line next/no-img-element */}
-          <img
-            alt=""
-            draggable={false}
-            src={resolvedImageSource}
-            style={{
-              height: `${10_000 / crop.cropHeight}%`,
-              left: `${(-crop.cropX / crop.cropWidth) * 100}%`,
-              maxWidth: 'none',
-              objectFit: framing.fit,
-              objectPosition: `${framing.focalX}% ${framing.focalY}%`,
-              top: `${(-crop.cropY / crop.cropHeight) * 100}%`,
-              width: `${10_000 / crop.cropWidth}%`,
-            }}
-          />
+          {crop.mesh && enableMesh ? (
+            <MotusMeshImage
+              crop={crop}
+              fallbackStyle={fallbackStyle}
+              framing={meshFraming}
+              mesh={crop.mesh}
+              src={resolvedImageSource}
+            />
+          ) : (
+            // oxlint-disable-next-line next/no-img-element
+            <img
+              alt=""
+              draggable={false}
+              src={resolvedImageSource}
+              style={fallbackStyle}
+            />
+          )}
         </span>
       );
     }
@@ -2863,7 +2891,12 @@ function SceneView({
                     onFinish={onEndTextEdit}
                   />
                 ) : (
-                  renderElementContent(element, renderedElements, maskNamespace)
+                  renderElementContent(
+                    element,
+                    renderedElements,
+                    maskNamespace,
+                    elementLimit === undefined,
+                  )
                 )}
                 {primarySelected &&
                 interactive &&
@@ -3351,6 +3384,15 @@ export function MotusStudio() {
     selectedElement?.type === 'image'
       ? getElementImageFraming(selectedElement)
       : undefined;
+  const selectedRigSourceElement = selectedElement?.imageRigPart
+    ? activeScene.elements.find(
+        (element) =>
+          element.id === selectedElement.imageRigPart?.sourceElementId,
+      )
+    : undefined;
+  const selectedRigSourceFraming = selectedRigSourceElement
+    ? getElementImageFraming(selectedRigSourceElement)
+    : undefined;
   const projectImageAssets = useMemo(() => {
     const assets = new Map<string, ProjectImageAsset>();
     for (const scene of allScenes) {
@@ -8511,11 +8553,7 @@ export function MotusStudio() {
                         <span>EXTRACTED PART</span>
                         <strong>
                           Source ·{' '}
-                          {activeScene.elements.find(
-                            (candidate) =>
-                              candidate.id ===
-                              selectedElement.imageRigPart?.sourceElementId,
-                          )?.name ?? 'Missing source'}
+                          {selectedRigSourceElement?.name ?? 'Missing source'}
                         </strong>
                         <small>
                           Crop {Math.round(selectedElement.imageRigPart.cropX)},{' '}
@@ -8526,6 +8564,116 @@ export function MotusStudio() {
                             ? ` · Freeform ${selectedElement.imageRigPart.maskPoints.length}-point mask`
                             : ' · Rectangle mask'}
                         </small>
+                        <div className="mesh-warp-heading">
+                          <div>
+                            <Sparkles aria-hidden="true" />
+                            <div>
+                              <strong>Warp mesh</strong>
+                              <span>PIXEL-DEFORM · PIXIJS</span>
+                            </div>
+                          </div>
+                          {selectedElement.imageRigPart.mesh ? (
+                            <Button
+                              onClick={() => {
+                                updateElement(selectedElement.id, (item) => {
+                                  if (item.imageRigPart) {
+                                    delete item.imageRigPart.mesh;
+                                  }
+                                });
+                                endHistoryTransaction();
+                                setNotice(
+                                  'Warp mesh removed · flat part restored',
+                                );
+                              }}
+                              size="sm"
+                              type="button"
+                              variant="outline"
+                            >
+                              Remove
+                            </Button>
+                          ) : (
+                            <Button
+                              onClick={() => {
+                                updateElement(selectedElement.id, (item) => {
+                                  if (item.imageRigPart) {
+                                    item.imageRigPart.mesh =
+                                      createImageRigMesh();
+                                  }
+                                });
+                                endHistoryTransaction();
+                                setNotice(
+                                  'Warp mesh enabled · drag any of the nine points',
+                                );
+                              }}
+                              size="sm"
+                              type="button"
+                            >
+                              Enable warp
+                            </Button>
+                          )}
+                        </div>
+                        {selectedElement.imageRigPart.mesh ? (
+                          <MotusMeshWarpEditor
+                            crop={selectedElement.imageRigPart}
+                            imageName={selectedElement.name}
+                            imageSrc={selectedRigSourceElement?.src ?? ''}
+                            focalX={selectedRigSourceFraming?.focalX ?? 50}
+                            focalY={selectedRigSourceFraming?.focalY ?? 50}
+                            imageFit={selectedRigSourceFraming?.fit ?? 'cover'}
+                            mesh={selectedElement.imageRigPart.mesh}
+                            onChange={(mesh) =>
+                              updateElement(
+                                selectedElement.id,
+                                (item) => {
+                                  if (item.imageRigPart) {
+                                    item.imageRigPart.mesh = mesh;
+                                  }
+                                },
+                                `element:${selectedElement.id}:mesh`,
+                              )
+                            }
+                            onInteractionEnd={endHistoryTransaction}
+                          />
+                        ) : (
+                          <p className="mesh-warp-help">
+                            Bend hair, cloth, limbs, and other cut parts without
+                            redrawing them. The mesh stays inside this layer, so
+                            every parent rig and motion block still composes.
+                          </p>
+                        )}
+                        <MotusRigJointFinder
+                          aspectRatio={
+                            selectedRigSourceElement
+                              ? selectedRigSourceElement.width /
+                                selectedRigSourceElement.height
+                              : 1
+                          }
+                          crop={selectedElement.imageRigPart}
+                          focalX={selectedRigSourceFraming?.focalX ?? 50}
+                          focalY={selectedRigSourceFraming?.focalY ?? 50}
+                          imageFit={selectedRigSourceFraming?.fit ?? 'cover'}
+                          imageName={selectedElement.name}
+                          imageSrc={selectedRigSourceElement?.src ?? ''}
+                          key={[
+                            selectedElement.id,
+                            selectedRigSourceElement?.id,
+                            selectedRigSourceElement?.width,
+                            selectedRigSourceElement?.height,
+                            selectedRigSourceFraming?.fit,
+                            selectedRigSourceFraming?.focalX,
+                            selectedRigSourceFraming?.focalY,
+                          ].join(':')}
+                          onApplyPivot={(pivot, joint) => {
+                            updateElement(selectedElement.id, (item) => {
+                              item.pivotX = pivot.x;
+                              item.pivotY = pivot.y;
+                            });
+                            endHistoryTransaction();
+                            setNotice(
+                              `${joint.label} set as ${selectedElement.name} pivot`,
+                            );
+                          }}
+                        />
                         <div className="rig-region-fields">
                           {(
                             [

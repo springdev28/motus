@@ -1,3 +1,9 @@
+import {
+  isSafeRelativeAssetPath,
+  isMotusAiModelManifest,
+  type MotusAiFileManifest,
+} from './model-manifest.ts';
+
 export type ModelChunkManifestEntry = {
   path: string;
   bytes?: number;
@@ -18,6 +24,11 @@ export type ModelChunkProgress = {
   totalBytes?: number;
   chunkIndex: number;
   chunkCount: number;
+};
+
+export type ModelFileProgress = {
+  loadedBytes: number;
+  totalBytes: number;
 };
 
 export class ModelAssetError extends Error {
@@ -83,7 +94,7 @@ export function parseModelChunkManifest(value: unknown): ModelChunkManifest {
   }
 
   const chunks = value.chunks.map((entry, index) => {
-    if (!isRecord(entry) || typeof entry.path !== 'string' || !entry.path) {
+    if (!isRecord(entry) || !isSafeRelativeAssetPath(entry.path)) {
       throw new ModelAssetError(
         'INVALID_MODEL_MANIFEST',
         `Model chunk ${index + 1} is missing a relative path.`,
@@ -146,9 +157,16 @@ async function fetchOrThrow(
 async function readResponse(
   response: Response,
   onBytes: (byteCount: number) => void,
+  maxBytes = MAX_MODEL_BYTES,
 ): Promise<Uint8Array> {
   if (!response.body) {
     const buffer = new Uint8Array(await response.arrayBuffer());
+    if (buffer.byteLength > maxBytes) {
+      throw new ModelAssetError(
+        maxBytes < MAX_MODEL_BYTES ? 'MODEL_SIZE_MISMATCH' : 'MODEL_TOO_LARGE',
+        `A model asset exceeded its ${maxBytes}-byte limit.`,
+      );
+    }
     onBytes(buffer.byteLength);
     return buffer;
   }
@@ -163,11 +181,11 @@ async function readResponse(
     pieces.push(value);
     length += value.byteLength;
     onBytes(value.byteLength);
-    if (length > MAX_MODEL_BYTES) {
+    if (length > maxBytes) {
       await reader.cancel();
       throw new ModelAssetError(
-        'MODEL_TOO_LARGE',
-        `A model chunk exceeded the ${MAX_MODEL_BYTES}-byte safety limit.`,
+        maxBytes < MAX_MODEL_BYTES ? 'MODEL_SIZE_MISMATCH' : 'MODEL_TOO_LARGE',
+        `A model asset exceeded its ${maxBytes}-byte limit.`,
       );
     }
   }
@@ -200,7 +218,7 @@ async function verifySha256(
   const digest = bytesToHex(
     await globalThis.crypto.subtle.digest('SHA-256', source),
   );
-  if (digest !== expected) {
+  if (digest !== expected.toLowerCase()) {
     throw new ModelAssetError(
       'MODEL_INTEGRITY_MISMATCH',
       `${description} failed its SHA-256 integrity check.`,
@@ -251,15 +269,23 @@ export async function loadChunkedModel(
       chunkUrl.href,
       `model chunk ${index + 1} of ${manifest.chunks.length}`,
     );
-    const chunk = await readResponse(response, (increment) => {
-      loadedBytes += increment;
-      options.onProgress?.({
-        loadedBytes,
-        totalBytes,
-        chunkIndex: index,
-        chunkCount: manifest.chunks.length,
-      });
-    });
+    const remainingDeclaredBytes =
+      manifest.bytes === undefined
+        ? MAX_MODEL_BYTES
+        : Math.max(0, manifest.bytes - loadedBytes);
+    const chunk = await readResponse(
+      response,
+      (increment) => {
+        loadedBytes += increment;
+        options.onProgress?.({
+          loadedBytes,
+          totalBytes,
+          chunkIndex: index,
+          chunkCount: manifest.chunks.length,
+        });
+      },
+      entry.bytes ?? remainingDeclaredBytes,
+    );
     if (entry.bytes !== undefined && chunk.byteLength !== entry.bytes) {
       throw new ModelAssetError(
         'MODEL_SIZE_MISMATCH',
@@ -297,6 +323,75 @@ export async function loadChunkedModel(
   if (options.verifyIntegrity !== false && manifest.sha256) {
     options.onVerifying?.();
     await verifySha256(model, manifest.sha256, 'The assembled model');
+  }
+  return model;
+}
+
+export async function loadSingleFileModel(
+  manifestUrl: string,
+  options: {
+    expectedId?: string;
+    verifyIntegrity?: boolean;
+    onManifest?: (manifest: MotusAiFileManifest) => void;
+    onProgress?: (progress: ModelFileProgress) => void;
+    onVerifying?: () => void;
+  } = {},
+): Promise<Uint8Array> {
+  const absoluteManifestUrl = new URL(manifestUrl, globalThis.location.href);
+  const manifestResponse = await fetchOrThrow(
+    absoluteManifestUrl.href,
+    'the model manifest',
+  );
+  let manifestJson: unknown;
+  try {
+    manifestJson = await manifestResponse.json();
+  } catch (error) {
+    throw new ModelAssetError(
+      'INVALID_MODEL_MANIFEST',
+      'The model manifest is not valid JSON.',
+      { cause: error instanceof Error ? error.message : String(error) },
+    );
+  }
+  if (
+    !isMotusAiModelManifest(manifestJson, options.expectedId) ||
+    manifestJson.format !== 'mediapipe-task'
+  ) {
+    throw new ModelAssetError(
+      'INVALID_MODEL_MANIFEST',
+      'The model manifest must describe one safe MediaPipe task file.',
+    );
+  }
+  const manifest = manifestJson;
+  options.onManifest?.(manifest);
+  if (manifest.bytes > MAX_MODEL_BYTES) {
+    throw new ModelAssetError(
+      'MODEL_TOO_LARGE',
+      `The declared model size exceeds the ${MAX_MODEL_BYTES}-byte safety limit.`,
+      { declaredBytes: manifest.bytes },
+    );
+  }
+
+  const modelUrl = new URL(manifest.path, absoluteManifestUrl);
+  let loadedBytes = 0;
+  const response = await fetchOrThrow(modelUrl.href, 'the model file');
+  const model = await readResponse(
+    response,
+    (increment) => {
+      loadedBytes += increment;
+      options.onProgress?.({ loadedBytes, totalBytes: manifest.bytes });
+    },
+    manifest.bytes,
+  );
+  if (model.byteLength !== manifest.bytes) {
+    throw new ModelAssetError(
+      'MODEL_SIZE_MISMATCH',
+      `The model has ${model.byteLength} bytes; expected ${manifest.bytes}.`,
+      { expected: manifest.bytes, actual: model.byteLength },
+    );
+  }
+  if (options.verifyIntegrity !== false) {
+    options.onVerifying?.();
+    await verifySha256(model, manifest.sha256, 'The model file');
   }
   return model;
 }
