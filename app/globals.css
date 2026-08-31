@@ -5670,6 +5670,22 @@
   color: #292430;
   font-size: 11px;
 }
+.property-stack .selected-layer-name-field {
+  gap: 6px;
+  padding: 9px 10px 10px;
+  border: 1px solid #ddd6e7;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 74%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 86%);
+}
+.selected-layer-name-field > span {
+  color: #554b63;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
 .property-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5768,6 +5784,34 @@
   padding: 11px;
   background:
     linear-gradient(145deg, rgb(255 255 255 / 90%), transparent 68%), #f3ecff;
+}
+.rig-cut-sequence {
+  display: grid;
+  grid-template-columns: auto 12px auto 12px auto;
+  align-items: center;
+  justify-content: start;
+  gap: 4px;
+  margin-top: 10px;
+  color: #6751bd;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.rig-cut-sequence svg {
+  width: 10px;
+  height: 10px;
+  color: #a398b1;
+}
+.property-stack .rig-part-name-field {
+  margin-top: 8px;
+}
+.rig-part-name-field > small {
+  color: #756b81;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 .smart-cut-editor {
   display: flex;
@@ -6033,6 +6077,19 @@
   color: #786e86;
   font-family: var(--font-mono);
   font-size: 8px;
+}
+.rig-part-source-card .rig-cut-another {
+  width: 100%;
+  min-height: 38px;
+  justify-content: flex-start;
+  margin-top: 7px;
+  padding-inline: 9px;
+}
+.rig-cut-another > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mesh-warp-heading,
 .mesh-warp-heading > div {
@@ -11311,7 +11368,9 @@
   .typography-grid input[data-slot='input'],
   .typography-alignment-buttons button,
   .image-fit-toggle button,
-  .image-framing-reset {
+  .image-framing-reset,
+  .rig-part-name-field input[data-slot='input'],
+  .rig-cut-another {
     min-height: 44px !important;
   }
   .image-framing-control input[type='range'] {

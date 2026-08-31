@@ -6857,6 +6857,26 @@ export function createCopyName(name: string, maxLength: number): string {
   return `${base.slice(0, safeLength - suffix.length)}${suffix}`;
 }
 
+export type ElementRigPartNameIssue = 'required' | 'duplicate' | 'too-long';
+
+export function validateElementRigPartName(
+  value: string,
+  existingNames: Iterable<string>,
+): { issue: ElementRigPartNameIssue | null; name: string } {
+  const name = value.trim();
+  if (!name) return { issue: 'required', name };
+  if (name.length > MAX_ELEMENT_NAME_LENGTH) {
+    return { issue: 'too-long', name };
+  }
+  const comparableName = name.normalize('NFKC').toLocaleLowerCase('en-US');
+  const duplicate = [...existingNames].some(
+    (existingName) =>
+      existingName.trim().normalize('NFKC').toLocaleLowerCase('en-US') ===
+      comparableName,
+  );
+  return { issue: duplicate ? 'duplicate' : null, name };
+}
+
 export function createElementCopy(
   source: MotusElement,
   id: string,

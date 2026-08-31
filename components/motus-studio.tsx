@@ -252,6 +252,7 @@ import {
   reorderElementRigSibling,
   replaceMotionEvent,
   reparentElementRigBranchPreservingPose,
+  validateElementRigPartName,
   reorderChapters,
   reorderMotionActionBefore,
   reorderScenes,
@@ -3531,6 +3532,10 @@ export function MotusStudio() {
   const [rigRegionDraft, setRigRegionDraft] = useState<RigRegionDraft>(
     DEFAULT_RIG_REGION_DRAFT,
   );
+  const [rigPartNameDraftState, setRigPartNameDraftState] = useState({
+    sourceElementId: '',
+    value: '',
+  });
   const [activeMotionDrag, setActiveMotionDrag] =
     useState<ActiveMotionDrag | null>(null);
   const [activeLayerDrag, setActiveLayerDrag] =
@@ -3568,6 +3573,8 @@ export function MotusStudio() {
   const imageInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const blockPaletteSearchInput = useRef<HTMLInputElement>(null);
+  const rigPartNameInput = useRef<HTMLInputElement>(null);
+  const rigCutPanel = useRef<HTMLElement>(null);
   const canvasStage = useRef<HTMLDivElement>(null);
   const studioGrid = useRef<HTMLDivElement>(null);
   const motionProperties = useRef<HTMLDivElement>(null);
@@ -3741,6 +3748,16 @@ export function MotusStudio() {
       activeScene.elements.find((element) => element.id === selectedElementId),
     [activeScene.elements, selectedElementId],
   );
+  const selectedRigCutterSourceId =
+    selectedElement?.type === 'image' &&
+    selectedElement.src &&
+    !selectedElement.imageRigPart
+      ? selectedElement.id
+      : null;
+  const rigPartNameDraft =
+    rigPartNameDraftState.sourceElementId === selectedRigCutterSourceId
+      ? rigPartNameDraftState.value
+      : '';
   const selectedRigPath = useMemo(() => {
     if (!selectedElement) return [];
     const byId = new Map(
@@ -4570,6 +4587,35 @@ export function MotusStudio() {
     focusEditorTarget(activeScene.id, group.id);
   };
 
+  const openRigPartCutter = (sourceElementId: string) => {
+    const source = activeScene.elements.find(
+      (element) =>
+        element.id === sourceElementId &&
+        element.type === 'image' &&
+        element.src &&
+        !element.imageRigPart,
+    );
+    if (!source) {
+      setNotice('The original image layer is no longer available');
+      return;
+    }
+    setRigPartNameDraftState({ sourceElementId: source.id, value: '' });
+    setRigRegionDraft(DEFAULT_RIG_REGION_DRAFT);
+    setSelectedElementId(source.id);
+    setInspectorTab('design');
+    setMobileStudioPane('blocks');
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        rigCutPanel.current?.scrollIntoView({
+          behavior: 'auto',
+          block: 'start',
+        });
+        rigPartNameInput.current?.focus({ preventScroll: true });
+      });
+    });
+    setNotice(`Ready to cut another part from ${source.name}`);
+  };
+
   const extractImageRigPart = (selection?: SmartCutResult) => {
     if (
       !selectedElement ||
@@ -4578,6 +4624,27 @@ export function MotusStudio() {
       selectedElement.imageRigPart ||
       !canAddElementToScene(activeScene)
     ) {
+      return;
+    }
+    const partName = validateElementRigPartName(
+      rigPartNameDraft,
+      activeScene.elements
+        .filter(
+          (element) =>
+            element.imageRigPart?.sourceElementId === selectedElement.id,
+        )
+        .map((element) => element.name),
+    );
+    if (partName.issue) {
+      setNotice(
+        partName.issue === 'required'
+          ? 'Name the new rig part before cutting'
+          : partName.issue === 'duplicate'
+            ? `A part named ${partName.name} already exists under ${selectedElement.name}`
+            : `Part names can use up to ${MAX_ELEMENT_NAME_LENGTH} characters`,
+      );
+      rigPartNameInput.current?.focus();
+      rigPartNameInput.current?.select();
       return;
     }
     const region = selection
@@ -4606,7 +4673,7 @@ export function MotusStudio() {
     }
     const part = createElement('image', activeScene.elements.length + 1, {
       id: uniqueId('rig-part'),
-      name: `${selectedElement.name} part`,
+      name: partName.name,
       parentId: selectedElement.id,
       pivotX: 50,
       pivotY: 50,
@@ -4626,6 +4693,10 @@ export function MotusStudio() {
     });
     commitProject((draft) => {
       findProjectScene(draft, activeScene.id)?.scene.elements.push(part);
+    });
+    setRigPartNameDraftState({
+      sourceElementId: selectedElement.id,
+      value: '',
     });
     setSelectedElementId(part.id);
     setNotice(`${part.name} ${selection ? 'masked' : 'cropped'} and attached`);
@@ -9112,6 +9183,27 @@ export function MotusStudio() {
 
                 {inspectorTab === 'design' ? (
                   <div className="property-stack">
+                    <label
+                      className="selected-layer-name-field"
+                      htmlFor="selected-layer-name"
+                    >
+                      <span>Layer name</span>
+                      <Input
+                        {...textHistoryProps}
+                        id="selected-layer-name"
+                        maxLength={MAX_ELEMENT_NAME_LENGTH}
+                        onChange={(event) =>
+                          updateElement(
+                            selectedElement.id,
+                            (item) => {
+                              item.name = event.target.value;
+                            },
+                            `element:${selectedElement.id}:name`,
+                          )
+                        }
+                        value={selectedElement.name}
+                      />
+                    </label>
                     <section
                       aria-labelledby="rig-panel-title"
                       className="rig-panel"
@@ -9235,6 +9327,7 @@ export function MotusStudio() {
                       <section
                         aria-labelledby="rig-cut-panel-title"
                         className="rig-cut-panel"
+                        ref={rigCutPanel}
                       >
                         <div className="rig-cut-heading">
                           <div>
@@ -9245,6 +9338,42 @@ export function MotusStudio() {
                           </div>
                           <span>NON-DESTRUCTIVE MASK</span>
                         </div>
+                        <div
+                          aria-label="Name, paint, then cut"
+                          className="rig-cut-sequence"
+                        >
+                          <span>Name</span>
+                          <ArrowRight aria-hidden="true" />
+                          <span>Paint</span>
+                          <ArrowRight aria-hidden="true" />
+                          <span>Cut</span>
+                        </div>
+                        <label
+                          className="rig-part-name-field"
+                          htmlFor="rig-part-name"
+                        >
+                          <span>New part name</span>
+                          <Input
+                            aria-describedby="rig-part-name-help"
+                            autoComplete="off"
+                            id="rig-part-name"
+                            maxLength={MAX_ELEMENT_NAME_LENGTH}
+                            onChange={(event) =>
+                              setRigPartNameDraftState({
+                                sourceElementId: selectedElement.id,
+                                value: event.target.value,
+                              })
+                            }
+                            placeholder="Head, left arm, front hair…"
+                            ref={rigPartNameInput}
+                            required
+                            value={rigPartNameDraft}
+                          />
+                          <small id="rig-part-name-help">
+                            Paint Include inside the part; mark overlapping
+                            artwork with Exclude.
+                          </small>
+                        </label>
                         <MotusSmartCut
                           aspectRatio={
                             selectedElement.width / selectedElement.height
@@ -9358,6 +9487,23 @@ export function MotusStudio() {
                             ? ` · Freeform ${selectedElement.imageRigPart.maskPoints.length}-point mask`
                             : ' · Rectangle mask'}
                         </small>
+                        {selectedRigSourceElement ? (
+                          <Button
+                            className="rig-cut-another"
+                            onClick={() =>
+                              openRigPartCutter(selectedRigSourceElement.id)
+                            }
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            <Plus aria-hidden="true" />
+                            <span>
+                              Cut another part from{' '}
+                              {selectedRigSourceElement.name}
+                            </span>
+                          </Button>
+                        ) : null}
                         <div className="mesh-warp-heading">
                           <div>
                             <Sparkles aria-hidden="true" />
@@ -9525,24 +9671,6 @@ export function MotusStudio() {
                         </div>
                       </section>
                     ) : null}
-                    <label htmlFor="selected-layer-name">
-                      <span>Layer name</span>
-                      <Input
-                        {...textHistoryProps}
-                        id="selected-layer-name"
-                        maxLength={MAX_ELEMENT_NAME_LENGTH}
-                        onChange={(event) =>
-                          updateElement(
-                            selectedElement.id,
-                            (item) => {
-                              item.name = event.target.value;
-                            },
-                            `element:${selectedElement.id}:name`,
-                          )
-                        }
-                        value={selectedElement.name}
-                      />
-                    </label>
                     {selectedElement.type === 'shape' ? (
                       <label htmlFor="selected-layer-shape-preset">
                         <span>Shape style</span>
