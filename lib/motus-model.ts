@@ -1,4 +1,10 @@
-export const PROJECT_SCHEMA_VERSION = 11 as const;
+import {
+  isValidElementImageRigMesh,
+  normalizeElementImageRigMesh,
+  type ElementImageRigMesh,
+} from './motus-mesh-warp.ts';
+
+export const PROJECT_SCHEMA_VERSION = 12 as const;
 export const MOTION_SCHEMA_VERSION = 2 as const;
 export const MOTUS_PROJECT_FORMATS = [
   'vertical-scroll',
@@ -50,6 +56,8 @@ export type ElementImageRigPart = {
   cropHeight: number;
   /** Optional arbitrary mask polygon in source-image 0..100 coordinates. */
   maskPoints?: ElementImageRigMaskPoint[];
+  /** Optional part-local 3×3 deformation mesh rendered by PixiJS. */
+  mesh?: ElementImageRigMesh;
 };
 export const ELEMENT_FONT_PRESETS = [
   'editorial',
@@ -3250,6 +3258,7 @@ function normalizeElementImageRigMaskPoints(
 export function normalizeElementImageRigPart(
   value: unknown,
   includeMaskPoints = true,
+  includeMesh = true,
 ): ElementImageRigPart | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
@@ -3271,6 +3280,9 @@ export function normalizeElementImageRigPart(
   const maskBounds = maskPoints
     ? getElementImageRigMaskBounds(maskPoints)
     : undefined;
+  const mesh = includeMesh
+    ? normalizeElementImageRigMesh(candidate.mesh)
+    : undefined;
   return {
     sourceElementId: candidate.sourceElementId,
     cropX: maskBounds?.cropX ?? cropX,
@@ -3278,6 +3290,7 @@ export function normalizeElementImageRigPart(
     cropWidth: maskBounds?.cropWidth ?? cropWidth,
     cropHeight: maskBounds?.cropHeight ?? cropHeight,
     ...(maskPoints ? { maskPoints } : {}),
+    ...(mesh ? { mesh } : {}),
   };
 }
 
@@ -7349,6 +7362,7 @@ function validateScenes(
   validateImageFraming = false,
   validateRigging = false,
   validatePolygonMasks = false,
+  validateImageMeshes = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one scene`;
@@ -7473,7 +7487,10 @@ function validateScenes(
             (elementValue.imageRigPart.cropHeight as number) >
             100 ||
           (validatePolygonMasks &&
-            !hasValidContainedElementImageRigMask(elementValue.imageRigPart))
+            !hasValidContainedElementImageRigMask(elementValue.imageRigPart)) ||
+          (validateImageMeshes &&
+            elementValue.imageRigPart.mesh !== undefined &&
+            !isValidElementImageRigMesh(elementValue.imageRigPart.mesh))
         ) {
           return `${context} contains an invalid image rig part`;
         }
@@ -7538,6 +7555,7 @@ function validateChapters(
   validateImageFraming = false,
   validateRigging = false,
   validatePolygonMasks = false,
+  validateImageMeshes = false,
 ): string | null {
   if (!Array.isArray(value) || value.length === 0) {
     return `${context} needs at least one chapter`;
@@ -7571,6 +7589,7 @@ function validateChapters(
       validateImageFraming,
       validateRigging,
       validatePolygonMasks,
+      validateImageMeshes,
     );
     if (sceneError) return sceneError;
     sceneCount += (chapterValue.scenes as unknown[]).length;
@@ -7595,6 +7614,7 @@ function normalizeScenes(
   value: unknown[],
   normalizeRigging = true,
   normalizePolygonMasks = true,
+  normalizeImageMeshes = true,
 ): MotusScene[] {
   return value.map((sceneValue) => {
     const item = sceneValue as UnknownRecord;
@@ -7667,6 +7687,7 @@ function normalizeScenes(
                   ? normalizeElementImageRigPart(
                       elementValue.imageRigPart,
                       normalizePolygonMasks,
+                      normalizeImageMeshes,
                     )
                   : undefined,
               }
@@ -7688,6 +7709,7 @@ function normalizeChapters(
   value: unknown[],
   normalizeRigging = true,
   normalizePolygonMasks = true,
+  normalizeImageMeshes = true,
 ): MotusChapter[] {
   return value.map((chapterValue) => {
     const chapter = chapterValue as UnknownRecord;
@@ -7702,6 +7724,7 @@ function normalizeChapters(
         chapter.scenes as unknown[],
         normalizeRigging,
         normalizePolygonMasks,
+        normalizeImageMeshes,
       ),
     };
   });
@@ -7858,6 +7881,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 8 &&
     candidate.schemaVersion !== 9 &&
     candidate.schemaVersion !== 10 &&
+    candidate.schemaVersion !== 11 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {
@@ -7878,6 +7902,7 @@ export function restoreProjectWithError(
   const usesImageFraming = schemaVersion >= 9;
   const usesRigging = schemaVersion >= 10;
   const usesPolygonMasks = schemaVersion >= 11;
+  const usesImageMeshes = schemaVersion >= 12;
   if (usesChapterHierarchy && !isProjectFormat(candidate.format)) {
     return { project: null, error: 'Project uses an unsupported format' };
   }
@@ -7906,6 +7931,7 @@ export function restoreProjectWithError(
         usesImageFraming,
         usesRigging,
         usesPolygonMasks,
+        usesImageMeshes,
       )
     : validateScenes(
         candidate.scenes,
@@ -7914,6 +7940,7 @@ export function restoreProjectWithError(
         usesImageFraming,
         usesRigging,
         usesPolygonMasks,
+        usesImageMeshes,
       );
   if (hierarchyError) return { project: null, error: hierarchyError };
 
@@ -7966,6 +7993,7 @@ export function restoreProjectWithError(
           usesImageFraming,
           usesRigging,
           usesPolygonMasks,
+          usesImageMeshes,
         )
       : validateScenes(
           publicationValue.scenes,
@@ -7974,6 +8002,7 @@ export function restoreProjectWithError(
           usesImageFraming,
           usesRigging,
           usesPolygonMasks,
+          usesImageMeshes,
         );
     if (revisionError) return { project: null, error: revisionError };
   }
@@ -7986,6 +8015,7 @@ export function restoreProjectWithError(
             revision.chapters as unknown[],
             usesRigging,
             usesPolygonMasks,
+            usesImageMeshes,
           )
         : [
             {
@@ -7999,6 +8029,7 @@ export function restoreProjectWithError(
                 revision.scenes as unknown[],
                 usesRigging,
                 usesPolygonMasks,
+                usesImageMeshes,
               ),
             },
           ];
@@ -8058,6 +8089,7 @@ export function restoreProjectWithError(
         candidate.chapters as unknown[],
         usesRigging,
         usesPolygonMasks,
+        usesImageMeshes,
       )
     : [
         {
@@ -8071,6 +8103,7 @@ export function restoreProjectWithError(
             candidate.scenes as unknown[],
             usesRigging,
             usesPolygonMasks,
+            usesImageMeshes,
           ),
         },
       ];

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createImageRigMesh } from './motus-mesh-warp.ts';
+
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -5145,6 +5147,84 @@ void test('schema 11 restore rejects malformed or degenerate polygon masks', () 
       'Project chapter 1 contains an invalid image rig part',
     );
   }
+});
+
+void test('schema 11 migration preserves masks and discards forward mesh fields', () => {
+  const legacy = createBlankProject('schema-11-mesh-forward-field');
+  const scene = legacy.chapters[0].scenes[0];
+  const source = createElement('image', 1, {
+    id: 'mesh-source',
+    src: 'data:image/png;base64,iVBORw0KGgo=',
+  });
+  const part = createElement('image', 2, {
+    id: 'mesh-part',
+    imageRigPart: {
+      sourceElementId: source.id,
+      cropX: 10,
+      cropY: 10,
+      cropWidth: 40,
+      cropHeight: 50,
+      maskPoints: [
+        { x: 10, y: 10 },
+        { x: 50, y: 10 },
+        { x: 30, y: 60 },
+      ],
+      mesh: createImageRigMesh('wind-left'),
+    },
+  });
+  scene.elements = [source, part];
+  (legacy as unknown as Record<string, unknown>).schemaVersion = 11;
+
+  const restored = restoreProject(JSON.stringify(legacy));
+  assert.ok(restored);
+  const restoredPart = restored.chapters[0].scenes[0].elements[1];
+  assert.equal(restoredPart.imageRigPart?.maskPoints?.length, 3);
+  assert.equal(restoredPart.imageRigPart?.mesh, undefined);
+});
+
+void test('current schema preserves valid meshes and rejects malformed meshes', () => {
+  const project = createBlankProject('mesh-round-trip');
+  const scene = project.chapters[0].scenes[0];
+  const source = createElement('image', 1, {
+    id: 'mesh-round-trip-source',
+    src: 'data:image/png;base64,iVBORw0KGgo=',
+  });
+  const part = createElement('image', 2, {
+    id: 'mesh-round-trip-part',
+    imageRigPart: {
+      sourceElementId: source.id,
+      cropX: 10,
+      cropY: 10,
+      cropWidth: 40,
+      cropHeight: 50,
+      mesh: createImageRigMesh('s-curve'),
+    },
+  });
+  scene.elements = [source, part];
+
+  const restored = restoreProject(JSON.stringify(project));
+  assert.ok(restored);
+  assert.deepEqual(
+    restored.chapters[0].scenes[0].elements[1].imageRigPart?.mesh,
+    part.imageRigPart?.mesh,
+  );
+
+  const invalid = structuredClone(project) as unknown as {
+    chapters: Array<{
+      scenes: Array<{
+        elements: Array<{
+          imageRigPart?: {
+            mesh?: { offsets: Array<{ x: number; y: number }> };
+          };
+        }>;
+      }>;
+    }>;
+  };
+  invalid.chapters[0].scenes[0].elements[1].imageRigPart!.mesh!.offsets[4].x = 21;
+  assert.equal(
+    restoreProjectWithError(JSON.stringify(invalid)).error,
+    'Project chapter 1 contains an invalid image rig part',
+  );
 });
 
 void test('masked image rig parts and spread format survive publication round trips', () => {

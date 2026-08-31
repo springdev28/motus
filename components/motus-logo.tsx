@@ -4,8 +4,8 @@ type MotusLogoProps = {
 };
 
 const LOGO_SOURCE = {
-  'on-dark': '/motus-mark-white.svg',
-  'on-light': '/motus-mark-purple-outline.svg',
+  'on-dark': '/motus-mark-white-v2.svg',
+  'on-light': '/motus-mark-purple-outline-v2.svg',
 } as const;
 
 export function MotusLogo({ className, variant }: MotusLogoProps) {
@@ -15,6 +15,7 @@ export function MotusLogo({ className, variant }: MotusLogoProps) {
       alt=""
       aria-hidden="true"
       className={className}
+      decoding="async"
       draggable={false}
       height="640"
       src={LOGO_SOURCE[variant]}

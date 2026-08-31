@@ -15,6 +15,10 @@ import {
 
 import { Button } from '@/components/ui/button';
 import type { InteractiveSegmenterWorkerResponse } from '@/lib/motus-ai/interactive-segmentation';
+import {
+  getFramedCanvasSize,
+  getFramedImageDrawRect,
+} from '@/lib/motus-image-framing';
 
 export type SmartCutPoint = { x: number; y: number };
 
@@ -196,18 +200,11 @@ export function MotusSmartCut({
       const response = await fetch(imageSrc);
       if (!response.ok) throw new Error('The image could not be opened');
       const source = await createImageBitmap(await response.blob());
-      const safeAspectRatio =
+      const { width: targetWidth, height: targetHeight } = getFramedCanvasSize(
         Number.isFinite(aspectRatio) && aspectRatio > 0
           ? aspectRatio
-          : source.width / source.height;
-      const targetWidth =
-        safeAspectRatio >= 1
-          ? 1024
-          : Math.max(1, Math.round(1024 * safeAspectRatio));
-      const targetHeight =
-        safeAspectRatio >= 1
-          ? Math.max(1, Math.round(1024 / safeAspectRatio))
-          : 1024;
+          : source.width / source.height,
+      );
       const canvas = document.createElement('canvas');
       canvas.width = targetWidth;
       canvas.height = targetHeight;
@@ -216,15 +213,16 @@ export function MotusSmartCut({
         source.close();
         throw new Error('The image renderer is unavailable');
       }
-      const scale =
-        imageFit === 'cover'
-          ? Math.max(targetWidth / source.width, targetHeight / source.height)
-          : Math.min(targetWidth / source.width, targetHeight / source.height);
-      const drawWidth = source.width * scale;
-      const drawHeight = source.height * scale;
-      const drawX = (targetWidth - drawWidth) * (focalX / 100);
-      const drawY = (targetHeight - drawHeight) * (focalY / 100);
-      context.drawImage(source, drawX, drawY, drawWidth, drawHeight);
+      const draw = getFramedImageDrawRect(
+        source.width,
+        source.height,
+        targetWidth,
+        targetHeight,
+        imageFit,
+        focalX,
+        focalY,
+      );
+      context.drawImage(source, draw.x, draw.y, draw.width, draw.height);
       source.close();
       const bitmap = await createImageBitmap(canvas);
       requestSequence.current += 1;

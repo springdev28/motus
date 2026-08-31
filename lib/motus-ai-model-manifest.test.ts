@@ -13,6 +13,7 @@ import {
 } from './motus-ai/model-manifest.ts';
 
 const MAGIC_TOUCH_MODEL_ID = 'mediapipe-magic-touch-int8';
+const HOLISTIC_MODEL_ID = 'mediapipe-holistic-landmarker-float16';
 const SHA_256_A = 'a'.repeat(64);
 const SHA_256_B = 'b'.repeat(64);
 
@@ -21,6 +22,18 @@ function readPublicMagicTouchManifest(): unknown {
     readFileSync(
       new URL(
         '../public/models/mediapipe/magic-touch/manifest.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as unknown;
+}
+
+function readPublicHolisticManifest(): unknown {
+  return JSON.parse(
+    readFileSync(
+      new URL(
+        '../public/models/mediapipe/holistic/manifest.json',
         import.meta.url,
       ),
       'utf8',
@@ -74,6 +87,20 @@ void test('the installed public MagicTouch manifest passes both manifest parsers
   );
 });
 
+void test('the installed Holistic model is a safe single-file manifest', () => {
+  const manifest = readPublicHolisticManifest();
+
+  assert.ok(isMotusAiModelManifest(manifest, HOLISTIC_MODEL_ID));
+  assert.equal(isMotusAiChunkManifest(manifest, HOLISTIC_MODEL_ID), false);
+  assert.equal(manifest.format, 'mediapipe-task');
+  assert.equal(manifest.path, 'holistic-landmarker-float16.task');
+  assert.equal(manifest.bytes, 13_683_609);
+  assert.equal(
+    manifest.sha256,
+    'e2dab61191e2dcd0a15f943d8e3ed1dce13c82dfa597b9dd39f562975a50c3f8',
+  );
+});
+
 void test('strict chunk manifests reject unsafe and duplicate asset paths', () => {
   const unsafePaths = [
     '../model.part-00',
@@ -95,6 +122,10 @@ void test('strict chunk manifests reject unsafe and duplicate asset paths', () =
       isMotusAiChunkManifest(manifest, MAGIC_TOUCH_MODEL_ID),
       false,
       `expected path ${JSON.stringify(path)} to be rejected`,
+    );
+    assertManifestError(
+      () => parseModelChunkManifest(manifest),
+      'INVALID_MODEL_MANIFEST',
     );
   }
 
