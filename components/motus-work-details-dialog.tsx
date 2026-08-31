@@ -22,14 +22,19 @@ import { MOTUS_LIBRARY_WORKS } from '@/lib/motus-library';
 import {
   MAX_PROJECT_DESCRIPTION_LENGTH,
   MAX_PROJECT_TITLE_LENGTH,
+  MAX_READER_TRANSITION_DURATION_MS,
+  MIN_READER_TRANSITION_DURATION_MS,
   createWorkMetadata,
   getProjectScenes,
+  normalizeReaderPresentation,
   parseProjectTags,
   parseWorkMetadataItems,
   type ContentRating,
   type MotusProject,
   type MotusProjectFormat,
   type MotusWorkMetadata,
+  type ReaderDirection,
+  type ReaderTransitionStyle,
   type WorkOrigin,
   type WorkStatus,
 } from '@/lib/motus-model';
@@ -322,6 +327,105 @@ export function MotusWorkDetailsDialog({
                     <NativeSelectOption value="fr">French</NativeSelectOption>
                     <NativeSelectOption value="ja">Japanese</NativeSelectOption>
                   </NativeSelect>
+                </label>
+                <label
+                  className="work-details-field"
+                  htmlFor="work-details-page-transition"
+                >
+                  <span>Page transition</span>
+                  <NativeSelect
+                    id="work-details-page-transition"
+                    onChange={(event) =>
+                      onCommit((draft) => {
+                        draft.readerPresentation = normalizeReaderPresentation({
+                          ...draft.readerPresentation,
+                          transition: event.target
+                            .value as ReaderTransitionStyle,
+                        });
+                      })
+                    }
+                    value={project.readerPresentation.transition}
+                  >
+                    <NativeSelectOption value="cut">Cut</NativeSelectOption>
+                    <NativeSelectOption value="slide">Slide</NativeSelectOption>
+                    <NativeSelectOption value="book">
+                      Book turn
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </label>
+                <label
+                  className="work-details-field"
+                  htmlFor="work-details-reading-direction"
+                >
+                  <span>Reading direction</span>
+                  <NativeSelect
+                    id="work-details-reading-direction"
+                    onChange={(event) =>
+                      onCommit((draft) => {
+                        draft.readerPresentation = normalizeReaderPresentation({
+                          ...draft.readerPresentation,
+                          direction: event.target.value as ReaderDirection,
+                        });
+                      })
+                    }
+                    value={project.readerPresentation.direction}
+                  >
+                    <NativeSelectOption value="ltr">
+                      Left to right
+                    </NativeSelectOption>
+                    <NativeSelectOption value="rtl">
+                      Right to left
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </label>
+                <label
+                  className="work-details-field"
+                  htmlFor="work-details-transition-duration"
+                >
+                  <span>Transition time (ms)</span>
+                  <Input
+                    defaultValue={project.readerPresentation.durationMs}
+                    disabled={project.readerPresentation.transition === 'cut'}
+                    id="work-details-transition-duration"
+                    key={`${project.id}:${project.readerPresentation.durationMs}`}
+                    max={MAX_READER_TRANSITION_DURATION_MS}
+                    min={MIN_READER_TRANSITION_DURATION_MS}
+                    onBlur={(event) => {
+                      const rawValue = event.currentTarget.value.trim();
+                      const candidate = rawValue
+                        ? Number(rawValue)
+                        : project.readerPresentation.durationMs;
+                      const durationMs = normalizeReaderPresentation({
+                        ...project.readerPresentation,
+                        durationMs: Number.isFinite(candidate)
+                          ? candidate
+                          : project.readerPresentation.durationMs,
+                      }).durationMs;
+                      event.currentTarget.value = String(durationMs);
+                      if (
+                        durationMs !== project.readerPresentation.durationMs
+                      ) {
+                        onCommit((draft) => {
+                          draft.readerPresentation =
+                            normalizeReaderPresentation({
+                              ...draft.readerPresentation,
+                              durationMs,
+                            });
+                        });
+                      }
+                      endHistoryTransaction();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.currentTarget.blur();
+                    }}
+                    step={10}
+                    type="number"
+                  />
+                  <small>
+                    {project.readerPresentation.transition === 'cut'
+                      ? 'Cut is immediate.'
+                      : `${MIN_READER_TRANSITION_DURATION_MS}–${MAX_READER_TRANSITION_DURATION_MS} ms`}
+                  </small>
                 </label>
               </div>
             </TabsContent>

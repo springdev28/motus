@@ -291,6 +291,13 @@ import {
 } from '@/lib/motus-model';
 import type { MotionTimelineSpan } from '@/lib/motus-motion-timeline';
 import {
+  getAdjacentReaderPosition,
+  getReaderControlIntent,
+  getReaderTransitionPresentation,
+  getReaderVisibleSceneIndexes,
+  type ReaderNavigationIntent,
+} from '@/lib/motus-reader-navigation';
+import {
   DRAFT_POINTER_KEY,
   DRAFT_SLOT_A_KEY,
   DRAFT_SLOT_B_KEY,
@@ -3199,6 +3206,10 @@ export function MotusStudio() {
     'signal-in-the-fog-chapter-1',
   );
   const [readerPageIndex, setReaderPageIndex] = useState(0);
+  const [readerPageTurnIntent, setReaderPageTurnIntent] =
+    useState<ReaderNavigationIntent | null>(null);
+  const [readerPageTransitionSequence, setReaderPageTransitionSequence] =
+    useState(0);
   const [publishOpen, setPublishOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('works');
@@ -5963,6 +5974,7 @@ export function MotusStudio() {
     const source = resolveReaderSource(project, revision);
     setReaderMode(readerModeForFormat(source.format));
     setReaderChapterId(source.chapters[0].id);
+    setReaderPageTurnIntent(null);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
@@ -5980,6 +5992,7 @@ export function MotusStudio() {
     setReaderMatureConfirmed(false);
     setReaderMode(readerModeForFormat(catalogProject.format));
     setReaderChapterId(catalogProject.chapters[0].id);
+    setReaderPageTurnIntent(null);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
@@ -6025,6 +6038,7 @@ export function MotusStudio() {
         setReaderMatureConfirmed(false);
         setReaderMode(readerModeForFormat(project.format));
         setReaderChapterId(project.chapters[0].id);
+        setReaderPageTurnIntent(null);
         setReaderPageIndex(0);
         setReaderPreviewKey((key) => key + 1);
         setReaderOpen(true);
@@ -6044,6 +6058,7 @@ export function MotusStudio() {
         setReaderMatureConfirmed(false);
         setReaderMode(readerModeForFormat(catalogProject.format));
         setReaderChapterId(catalogProject.chapters[0].id);
+        setReaderPageTurnIntent(null);
         setReaderPageIndex(0);
         setReaderPreviewKey((key) => key + 1);
         setReaderOpen(true);
@@ -6119,6 +6134,7 @@ export function MotusStudio() {
     setReaderMatureConfirmed(false);
     setReaderMode(readerModeForFormat(revision.format));
     setReaderChapterId(revision.chapters[0].id);
+    setReaderPageTurnIntent(null);
     setReaderPageIndex(0);
     setReaderPreviewKey((key) => key + 1);
     setReaderOpen(true);
@@ -6774,6 +6790,52 @@ export function MotusStudio() {
     Math.max(readerPageIndex, 0),
     Math.max(readerScenes.length - 1, 0),
   );
+  const readerPagedLayout = readerMode === 'spread' ? 'spread' : 'page';
+  const readerSceneCounts = readerSource.chapters.map(
+    (chapter) => chapter.scenes.length,
+  );
+  const readerPageTargets = {
+    previous: getAdjacentReaderPosition(
+      readerSceneCounts,
+      {
+        chapterIndex: readerChapterIndex,
+        pageIndex: resolvedReaderPageIndex,
+      },
+      readerPagedLayout,
+      'previous',
+    ),
+    next: getAdjacentReaderPosition(
+      readerSceneCounts,
+      {
+        chapterIndex: readerChapterIndex,
+        pageIndex: resolvedReaderPageIndex,
+      },
+      readerPagedLayout,
+      'next',
+    ),
+  };
+  const readerLeftControlIntent = getReaderControlIntent(
+    readerSource.readerPresentation.direction,
+    'left',
+  );
+  const readerRightControlIntent = getReaderControlIntent(
+    readerSource.readerPresentation.direction,
+    'right',
+  );
+  const readerPageTransition = getReaderTransitionPresentation(
+    readerSource.readerPresentation.transition,
+    readerSource.readerPresentation.direction,
+    readerPageTurnIntent,
+    false,
+  );
+  const readerVisibleSceneIndexes = getReaderVisibleSceneIndexes(
+    readerScenes.length,
+    resolvedReaderPageIndex,
+    readerPagedLayout,
+  );
+  const readerPageTransitionStyle = {
+    '--reader-transition-duration': `${readerSource.readerPresentation.durationMs}ms`,
+  } as CSSProperties;
   const selectedPreviewDurationMs = useMemo(() => {
     if (!selectedElement?.visible) return 0;
     const compiled = compileElementMotion(selectedElement);
@@ -6953,6 +7015,7 @@ export function MotusStudio() {
   };
   const replayReader = () => {
     setReaderChapterId(readerSource.chapters[0].id);
+    setReaderPageTurnIntent(null);
     if (readerMode !== 'scroll') setReaderPageIndex(0);
     readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
     setReaderPreviewKey((key) => key + 1);
@@ -6961,36 +7024,22 @@ export function MotusStudio() {
 
   const selectReaderChapter = (chapter: MotusChapter) => {
     setReaderChapterId(chapter.id);
+    setReaderPageTurnIntent(null);
     setReaderPageIndex(0);
     readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
     setReaderPreviewKey((key) => key + 1);
   };
 
-  const moveReaderPage = (direction: -1 | 1) => {
-    const pageStep = readerMode === 'spread' ? 2 : 1;
-    if (direction < 0 && resolvedReaderPageIndex > 0) {
-      setReaderPageIndex(Math.max(0, resolvedReaderPageIndex - pageStep));
-    } else if (
-      direction > 0 &&
-      resolvedReaderPageIndex + pageStep < readerScenes.length
-    ) {
-      setReaderPageIndex(
-        Math.min(readerScenes.length - 1, resolvedReaderPageIndex + pageStep),
-      );
-    } else {
-      const targetChapterIndex = readerChapterIndex + direction;
-      const targetChapter = readerSource.chapters[targetChapterIndex];
-      if (!targetChapter) return;
-      setReaderChapterId(targetChapter.id);
-      const lastSceneIndex = targetChapter.scenes.length - 1;
-      setReaderPageIndex(
-        direction < 0
-          ? readerMode === 'spread'
-            ? Math.max(0, lastSceneIndex - (lastSceneIndex % 2))
-            : lastSceneIndex
-          : 0,
-      );
+  const moveReaderPage = (intent: ReaderNavigationIntent) => {
+    if (readerMode === 'scroll') return;
+    const target = readerPageTargets[intent];
+    if (!target) return;
+    setReaderPageTurnIntent(intent);
+    setReaderPageTransitionSequence((sequence) => sequence + 1);
+    if (target.chapterIndex !== readerChapterIndex) {
+      setReaderChapterId(readerSource.chapters[target.chapterIndex].id);
     }
+    setReaderPageIndex(target.pageIndex);
     readerScroll.current?.scrollTo({ top: 0, behavior: 'auto' });
   };
   const requestNewWork = () => {
@@ -11233,6 +11282,7 @@ export function MotusStudio() {
                     <button
                       aria-pressed={readerMode === 'scroll'}
                       onClick={() => {
+                        setReaderPageTurnIntent(null);
                         setReaderMode('scroll');
                         readerScroll.current?.scrollTo({
                           top: 0,
@@ -11246,7 +11296,10 @@ export function MotusStudio() {
                     </button>
                     <button
                       aria-pressed={readerMode === 'page'}
-                      onClick={() => setReaderMode('page')}
+                      onClick={() => {
+                        setReaderPageTurnIntent(null);
+                        setReaderMode('page');
+                      }}
                       type="button"
                     >
                       <FileImage aria-hidden="true" />
@@ -11255,6 +11308,7 @@ export function MotusStudio() {
                     <button
                       aria-pressed={readerMode === 'spread'}
                       onClick={() => {
+                        setReaderPageTurnIntent(null);
                         setReaderMode('spread');
                         setReaderPageIndex((index) => index - (index % 2));
                       }}
@@ -11285,45 +11339,54 @@ export function MotusStudio() {
                     />
                   ))
                 ) : (
-                  <div className="reader-page-mode" data-layout={readerMode}>
+                  <div
+                    className="reader-page-mode"
+                    data-layout={readerMode}
+                    data-reading-direction={
+                      readerSource.readerPresentation.direction
+                    }
+                    data-transition={readerPageTransition.effectiveStyle}
+                    data-turn={readerPageTransition.entryEdge}
+                    style={readerPageTransitionStyle}
+                  >
                     <div
                       className="reader-page-leaf"
-                      key={`${readerChapter.id}-${readerMode}-${resolvedReaderPageIndex}-${readerPreviewKey}`}
+                      key={`${readerChapter.id}-${readerMode}-${resolvedReaderPageIndex}-${readerPageTransitionSequence}`}
                     >
-                      {(readerMode === 'spread'
-                        ? readerScenes.slice(
-                            resolvedReaderPageIndex,
-                            resolvedReaderPageIndex + 2,
-                          )
-                        : [readerScenes[resolvedReaderPageIndex]]
-                      ).map((scene, spreadOffset) => (
-                        <ReaderScene
-                          index={resolvedReaderPageIndex + spreadOffset}
-                          key={`${scene.id}-${readerPreviewKey}-${resolvedReaderPageIndex}`}
-                          scene={scene}
-                          sessionKey={
-                            readerPreviewKey +
-                            resolvedReaderPageIndex +
-                            spreadOffset +
-                            1
-                          }
-                        />
-                      ))}
+                      {readerVisibleSceneIndexes.map(
+                        (sceneIndex, spreadOffset) => (
+                          <ReaderScene
+                            index={sceneIndex}
+                            key={`${readerScenes[sceneIndex].id}-${readerPreviewKey}-${resolvedReaderPageIndex}`}
+                            scene={readerScenes[sceneIndex]}
+                            sessionKey={
+                              readerPreviewKey +
+                              resolvedReaderPageIndex +
+                              spreadOffset +
+                              1
+                            }
+                          />
+                        ),
+                      )}
                     </div>
                     <nav
                       aria-label="Scene navigation"
                       className="reader-page-navigation"
                     >
                       <Button
-                        disabled={
-                          readerChapterIndex === 0 &&
-                          resolvedReaderPageIndex === 0
+                        aria-label={
+                          readerLeftControlIntent === 'previous'
+                            ? 'Previous page'
+                            : 'Next page'
                         }
-                        onClick={() => moveReaderPage(-1)}
+                        disabled={!readerPageTargets[readerLeftControlIntent]}
+                        onClick={() => moveReaderPage(readerLeftControlIntent)}
                         variant="secondary"
                       >
                         <ArrowLeft />
-                        Previous
+                        {readerLeftControlIntent === 'previous'
+                          ? 'Previous'
+                          : 'Next'}
                       </Button>
                       <span aria-atomic="true" aria-live="polite">
                         Chapter {readerChapterIndex + 1} ·{' '}
@@ -11333,17 +11396,18 @@ export function MotusStudio() {
                         / {readerScenes.length}
                       </span>
                       <Button
-                        disabled={
-                          readerChapterIndex ===
-                            readerSource.chapters.length - 1 &&
-                          resolvedReaderPageIndex +
-                            (readerMode === 'spread' ? 2 : 1) >=
-                            readerScenes.length
+                        aria-label={
+                          readerRightControlIntent === 'previous'
+                            ? 'Previous page'
+                            : 'Next page'
                         }
-                        onClick={() => moveReaderPage(1)}
+                        disabled={!readerPageTargets[readerRightControlIntent]}
+                        onClick={() => moveReaderPage(readerRightControlIntent)}
                         variant="secondary"
                       >
-                        Next
+                        {readerRightControlIntent === 'previous'
+                          ? 'Previous'
+                          : 'Next'}
                         <ArrowRight />
                       </Button>
                     </nav>

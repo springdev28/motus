@@ -4,7 +4,7 @@ import {
   type ElementImageRigMesh,
 } from './motus-mesh-warp.ts';
 
-export const PROJECT_SCHEMA_VERSION = 12 as const;
+export const PROJECT_SCHEMA_VERSION = 13 as const;
 export const MOTION_SCHEMA_VERSION = 2 as const;
 export const MOTUS_PROJECT_FORMATS = [
   'vertical-scroll',
@@ -12,6 +12,44 @@ export const MOTUS_PROJECT_FORMATS = [
   'spread',
 ] as const;
 export type MotusProjectFormat = (typeof MOTUS_PROJECT_FORMATS)[number];
+export const READER_TRANSITION_STYLES = ['cut', 'slide', 'book'] as const;
+export type ReaderTransitionStyle = (typeof READER_TRANSITION_STYLES)[number];
+export const READER_DIRECTIONS = ['ltr', 'rtl'] as const;
+export type ReaderDirection = (typeof READER_DIRECTIONS)[number];
+export const MIN_READER_TRANSITION_DURATION_MS = 100;
+export const MAX_READER_TRANSITION_DURATION_MS = 2_000;
+export const DEFAULT_READER_PRESENTATION = {
+  transition: 'book',
+  direction: 'ltr',
+  durationMs: 360,
+} as const satisfies ReaderPresentation;
+export type ReaderPresentation = {
+  transition: ReaderTransitionStyle;
+  direction: ReaderDirection;
+  durationMs: number;
+};
+
+export function normalizeReaderPresentation(
+  value?: Partial<ReaderPresentation> | null,
+): ReaderPresentation {
+  const duration = Number(value?.durationMs);
+  return {
+    transition: READER_TRANSITION_STYLES.includes(
+      value?.transition as ReaderTransitionStyle,
+    )
+      ? (value?.transition as ReaderTransitionStyle)
+      : DEFAULT_READER_PRESENTATION.transition,
+    direction: READER_DIRECTIONS.includes(value?.direction as ReaderDirection)
+      ? (value?.direction as ReaderDirection)
+      : DEFAULT_READER_PRESENTATION.direction,
+    durationMs: Number.isFinite(duration)
+      ? Math.min(
+          Math.max(Math.round(duration), MIN_READER_TRANSITION_DURATION_MS),
+          MAX_READER_TRANSITION_DURATION_MS,
+        )
+      : DEFAULT_READER_PRESENTATION.durationMs,
+  };
+}
 export const CANVAS_WIDTH = 1_080;
 export const CANVAS_HEIGHT = 1_440;
 export const MIN_ELEMENT_WIDTH = 60;
@@ -2824,6 +2862,7 @@ export type MotusPublicationRevision = {
   visibility: PublicationVisibility;
   metadata: MotusWorkMetadata;
   format: MotusProjectFormat;
+  readerPresentation: ReaderPresentation;
   coverSceneId: string;
   chapters: MotusChapter[];
 };
@@ -2840,6 +2879,7 @@ export type MotusProject = {
   visibility: PublicationVisibility;
   metadata: MotusWorkMetadata;
   format: MotusProjectFormat;
+  readerPresentation: ReaderPresentation;
   coverSceneId: string;
   publishedRevision: number;
   publications: MotusPublicationRevision[];
@@ -2914,6 +2954,7 @@ export type MotusReaderSource = {
   visibility: PublicationVisibility;
   metadata: MotusWorkMetadata;
   format: MotusProjectFormat;
+  readerPresentation: ReaderPresentation;
   coverSceneId: string;
   chapters: MotusChapter[];
 };
@@ -2985,6 +3026,9 @@ export function resolveReaderSource(
         visibility: revision.visibility,
         metadata: cloneWorkMetadata(revision.metadata),
         format: revision.format,
+        readerPresentation: normalizeReaderPresentation(
+          revision.readerPresentation,
+        ),
         coverSceneId: resolveProjectCoverSceneId(
           revision,
           revision.coverSceneId,
@@ -3004,6 +3048,9 @@ export function resolveReaderSource(
         visibility: project.visibility,
         metadata: cloneWorkMetadata(project.metadata),
         format: project.format,
+        readerPresentation: normalizeReaderPresentation(
+          project.readerPresentation,
+        ),
         coverSceneId: resolveProjectCoverSceneId(project, project.coverSceneId),
         chapters: project.chapters,
       };
@@ -6661,6 +6708,7 @@ export const createDefaultProject = (): MotusProject => ({
     'Bahar Yüksel',
   ),
   format: 'vertical-scroll',
+  readerPresentation: normalizeReaderPresentation(),
   coverSceneId: 'scene-1',
   publishedRevision: 0,
   publications: [],
@@ -6721,6 +6769,7 @@ export function createBlankProject(
       'New creator',
     ),
     format: 'vertical-scroll',
+    readerPresentation: normalizeReaderPresentation(),
     coverSceneId: openingSceneId,
     publishedRevision: 0,
     publications: [],
@@ -7053,6 +7102,7 @@ export function createPublicationRevision(
     visibility: project.visibility,
     metadata,
     format: project.format,
+    readerPresentation: normalizeReaderPresentation(project.readerPresentation),
     coverSceneId: resolveProjectCoverSceneId(project, project.coverSceneId),
     chapters: structuredClone(project.chapters),
   };
@@ -7076,6 +7126,8 @@ export function hasUnpublishedChanges(project: MotusProject): boolean {
     published.visibility !== project.visibility ||
     JSON.stringify(published.metadata) !== JSON.stringify(project.metadata) ||
     published.format !== project.format ||
+    JSON.stringify(published.readerPresentation) !==
+      JSON.stringify(project.readerPresentation) ||
     published.coverSceneId !== project.coverSceneId ||
     JSON.stringify(published.chapters) !== JSON.stringify(project.chapters)
   );
@@ -7103,6 +7155,9 @@ export function restorePublicationToDraft(
   restored.contentRating = revision.contentRating;
   restored.visibility = revision.visibility;
   restored.format = revision.format;
+  restored.readerPresentation = normalizeReaderPresentation(
+    revision.readerPresentation,
+  );
   restored.coverSceneId = revision.coverSceneId;
   restored.chapters = structuredClone(revision.chapters);
   restored.updatedAt = updatedAt;
@@ -7748,6 +7803,19 @@ function isProjectFormat(value: unknown): value is MotusProjectFormat {
   return value === 'vertical-scroll' || value === 'page' || value === 'spread';
 }
 
+function isReaderPresentation(value: unknown): value is ReaderPresentation {
+  if (!isRecord(value)) return false;
+  return (
+    READER_TRANSITION_STYLES.includes(
+      value.transition as ReaderTransitionStyle,
+    ) &&
+    READER_DIRECTIONS.includes(value.direction as ReaderDirection) &&
+    Number.isSafeInteger(value.durationMs) &&
+    (value.durationMs as number) >= MIN_READER_TRANSITION_DURATION_MS &&
+    (value.durationMs as number) <= MAX_READER_TRANSITION_DURATION_MS
+  );
+}
+
 const WORK_METADATA_LIST_FIELDS = [
   'genres',
   'characters',
@@ -7882,6 +7950,7 @@ export function restoreProjectWithError(
     candidate.schemaVersion !== 9 &&
     candidate.schemaVersion !== 10 &&
     candidate.schemaVersion !== 11 &&
+    candidate.schemaVersion !== 12 &&
     candidate.schemaVersion !== PROJECT_SCHEMA_VERSION
   ) {
     return {
@@ -7903,8 +7972,18 @@ export function restoreProjectWithError(
   const usesRigging = schemaVersion >= 10;
   const usesPolygonMasks = schemaVersion >= 11;
   const usesImageMeshes = schemaVersion >= 12;
+  const usesReaderPresentation = schemaVersion >= 13;
   if (usesChapterHierarchy && !isProjectFormat(candidate.format)) {
     return { project: null, error: 'Project uses an unsupported format' };
+  }
+  if (
+    usesReaderPresentation &&
+    !isReaderPresentation(candidate.readerPresentation)
+  ) {
+    return {
+      project: null,
+      error: 'Project reader presentation is invalid',
+    };
   }
   if (usesWorkMetadata) {
     const metadataError = validateWorkMetadata(
@@ -7965,6 +8044,15 @@ export function restoreProjectWithError(
     }
     if (usesChapterHierarchy && !isProjectFormat(publicationValue.format)) {
       return { project: null, error: 'Project publication format is invalid' };
+    }
+    if (
+      usesReaderPresentation &&
+      !isReaderPresentation(publicationValue.readerPresentation)
+    ) {
+      return {
+        project: null,
+        error: 'Project publication reader presentation is invalid',
+      };
     }
     if (usesWorkMetadata) {
       const metadataError = validateWorkMetadata(
@@ -8036,6 +8124,11 @@ export function restoreProjectWithError(
       const format: MotusProjectFormat = usesChapterHierarchy
         ? (revision.format as MotusProjectFormat)
         : 'vertical-scroll';
+      const readerPresentation = usesReaderPresentation
+        ? normalizeReaderPresentation(
+            revision.readerPresentation as Partial<ReaderPresentation>,
+          )
+        : normalizeReaderPresentation();
       const legacyCreatorName = normalizeEditableName(
         revision.creatorName,
         'Unknown creator',
@@ -8067,6 +8160,7 @@ export function restoreProjectWithError(
         visibility: normalizeVisibility(revision.visibility),
         metadata,
         format,
+        readerPresentation,
         coverSceneId: resolveProjectCoverSceneId(
           { chapters },
           revision.coverSceneId,
@@ -8110,6 +8204,11 @@ export function restoreProjectWithError(
   const format: MotusProjectFormat = usesChapterHierarchy
     ? (candidate.format as MotusProjectFormat)
     : 'vertical-scroll';
+  const readerPresentation = usesReaderPresentation
+    ? normalizeReaderPresentation(
+        candidate.readerPresentation as Partial<ReaderPresentation>,
+      )
+    : normalizeReaderPresentation();
   const legacyCreatorName = normalizeEditableName(
     candidate.creatorName,
     'Unknown creator',
@@ -8143,6 +8242,7 @@ export function restoreProjectWithError(
       visibility: normalizeVisibility(candidate.visibility),
       metadata,
       format,
+      readerPresentation,
       coverSceneId: resolveProjectCoverSceneId(
         { chapters },
         candidate.coverSceneId,
