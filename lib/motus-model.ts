@@ -3780,6 +3780,103 @@ export function reparentElementRigBranchPreservingPose(
   };
 }
 
+export type ElementRigPivotIssue =
+  | 'missing-layer'
+  | 'invalid-pivot'
+  | 'coordinate-limit';
+
+/**
+ * Moves a rig branch's authored coordinates while changing its root pivot so
+ * the current rendered pose does not jump. Future rotation still uses the new
+ * pivot, which is the intended joint-authoring behavior.
+ */
+export function setElementRigPivotPreservingPose(
+  elements: readonly MotusElement[],
+  elementId: string,
+  pivotX: number,
+  pivotY: number,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): {
+  changed: boolean;
+  elements: MotusElement[];
+  issue: ElementRigPivotIssue | null;
+} {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  if (!element) {
+    return { changed: false, elements: [...elements], issue: 'missing-layer' };
+  }
+  if (
+    !Number.isFinite(pivotX) ||
+    pivotX < MIN_ELEMENT_RIG_PIVOT ||
+    pivotX > MAX_ELEMENT_RIG_PIVOT ||
+    !Number.isFinite(pivotY) ||
+    pivotY < MIN_ELEMENT_RIG_PIVOT ||
+    pivotY > MAX_ELEMENT_RIG_PIVOT
+  ) {
+    return { changed: false, elements: [...elements], issue: 'invalid-pivot' };
+  }
+  if (element.pivotX === pivotX && element.pivotY === pivotY) {
+    return { changed: false, elements: [...elements], issue: null };
+  }
+
+  const nextAuthoredPivot = {
+    x: element.x + (element.width * pivotX) / 100,
+    y: element.y + (element.height * pivotY) / 100,
+  };
+  const fixedNextPivot = rotateRigPointAroundElement(
+    nextAuthoredPivot,
+    element,
+  );
+  const deltaX = fixedNextPivot.x - nextAuthoredPivot.x;
+  const deltaY = fixedNextPivot.y - nextAuthoredPivot.y;
+  const safeCanvasWidth = Math.max(
+    MIN_ELEMENT_WIDTH,
+    finite(canvasWidth, CANVAS_WIDTH),
+  );
+  const safeCanvasHeight = Math.max(
+    MIN_ELEMENT_HEIGHT,
+    finite(canvasHeight, CANVAS_HEIGHT),
+  );
+  const branchIds = new Set([
+    elementId,
+    ...getElementRigDescendantIds(elements, elementId),
+  ]);
+  const nextElements = elements.map((candidate) => {
+    if (!branchIds.has(candidate.id)) return candidate;
+    return {
+      ...candidate,
+      ...(candidate.id === elementId ? { pivotX, pivotY } : {}),
+      x: candidate.x + deltaX,
+      y: candidate.y + deltaY,
+    };
+  });
+  const exceedsCoordinateLimit = nextElements.some((candidate) => {
+    if (!branchIds.has(candidate.id)) return false;
+    const normalized = constrainElementToCanvas(
+      candidate,
+      safeCanvasWidth,
+      safeCanvasHeight,
+    );
+    return (
+      Math.abs(normalized.x - candidate.x) > 1e-9 ||
+      Math.abs(normalized.y - candidate.y) > 1e-9
+    );
+  });
+  if (exceedsCoordinateLimit) {
+    return {
+      changed: false,
+      elements: [...elements],
+      issue: 'coordinate-limit',
+    };
+  }
+  return {
+    changed: true,
+    elements: nextElements,
+    issue: null,
+  };
+}
+
 /** Returns visible bounds after the element and every rig ancestor rotate it. */
 export function getElementRigRenderedVisualBounds(
   elements: readonly MotusElement[],

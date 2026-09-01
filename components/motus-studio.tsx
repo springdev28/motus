@@ -252,6 +252,7 @@ import {
   reorderElementRigSibling,
   replaceMotionEvent,
   reparentElementRigBranchPreservingPose,
+  setElementRigPivotPreservingPose,
   validateElementRigPartName,
   reorderChapters,
   reorderMotionActionBefore,
@@ -3579,6 +3580,10 @@ export function MotusStudio() {
   const studioGrid = useRef<HTMLDivElement>(null);
   const motionProperties = useRef<HTMLDivElement>(null);
   const readerScroll = useRef<HTMLDivElement>(null);
+  const activePivotGesture = useRef<{
+    elementId: string;
+    elementName: string;
+  } | null>(null);
   const canvasElementRefs = useRef(new Map<string, HTMLDivElement>());
   const chapterButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const sceneButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -4491,6 +4496,44 @@ export function MotusStudio() {
         ? `${element.name} now follows ${parent.name} · pose preserved`
         : `${element.name} detached to scene root · pose preserved`,
     );
+  };
+
+  const updateElementRigPivot = (
+    elementId: string,
+    pivotX: number,
+    pivotY: number,
+    transactionKey: string | null = null,
+  ) => {
+    const preview = setElementRigPivotPreservingPose(
+      activeScene.elements,
+      elementId,
+      pivotX,
+      pivotY,
+    );
+    if (preview.issue) {
+      activePivotGesture.current = null;
+      setNotice(
+        preview.issue === 'coordinate-limit'
+          ? 'Move this rig away from the canvas edge before changing its pivot'
+          : preview.issue === 'invalid-pivot'
+            ? 'Pivot values must stay between 0 and 100%'
+            : 'Layer is no longer available',
+      );
+      return false;
+    }
+    if (!preview.changed) return false;
+    commitProject((draft) => {
+      const scene = findProjectScene(draft, activeScene.id)?.scene;
+      if (!scene) return;
+      const result = setElementRigPivotPreservingPose(
+        scene.elements,
+        elementId,
+        pivotX,
+        pivotY,
+      );
+      if (result.changed) scene.elements = result.elements;
+    }, transactionKey);
+    return true;
   };
 
   const groupSelectionAsRig = () => {
@@ -7660,6 +7703,22 @@ export function MotusStudio() {
     onPointerCancel: endHistoryTransaction,
     onPointerUp: endHistoryTransaction,
   };
+  const finishPivotHistory = () => {
+    endHistoryTransaction();
+    const gesture = activePivotGesture.current;
+    activePivotGesture.current = null;
+    if (gesture) {
+      setNotice(`${gesture.elementName} pivot updated · pose preserved`);
+    }
+  };
+  const pivotHistoryProps = {
+    onBlur: finishPivotHistory,
+    onKeyUp: (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (shouldEndContinuousHistoryOnKey(event.key)) finishPivotHistory();
+    },
+    onPointerCancel: finishPivotHistory,
+    onPointerUp: finishPivotHistory,
+  };
   const numericDraftProps = (
     key: string,
     value: number,
@@ -9296,18 +9355,32 @@ export function MotusStudio() {
                               {Math.round(selectedElement[property])}%
                             </output>
                             <input
-                              {...continuousHistoryProps}
+                              {...pivotHistoryProps}
+                              aria-label={
+                                property === 'pivotX' ? 'Pivot X' : 'Pivot Y'
+                              }
                               max="100"
                               min="0"
-                              onChange={(event) =>
-                                updateElement(
-                                  selectedElement.id,
-                                  (item) => {
-                                    item[property] = Number(event.target.value);
-                                  },
-                                  `element:${selectedElement.id}:${property}`,
-                                )
-                              }
+                              onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (
+                                  updateElementRigPivot(
+                                    selectedElement.id,
+                                    property === 'pivotX'
+                                      ? value
+                                      : selectedElement.pivotX,
+                                    property === 'pivotY'
+                                      ? value
+                                      : selectedElement.pivotY,
+                                    `element:${selectedElement.id}:${property}`,
+                                  )
+                                ) {
+                                  activePivotGesture.current = {
+                                    elementId: selectedElement.id,
+                                    elementName: selectedElement.name,
+                                  };
+                                }
+                              }}
                               step="1"
                               type="range"
                               value={selectedElement[property]}
@@ -9604,14 +9677,19 @@ export function MotusStudio() {
                             selectedRigSourceFraming?.focalY,
                           ].join(':')}
                           onApplyPivot={(pivot, joint) => {
-                            updateElement(selectedElement.id, (item) => {
-                              item.pivotX = pivot.x;
-                              item.pivotY = pivot.y;
-                            });
                             endHistoryTransaction();
-                            setNotice(
-                              `${joint.label} set as ${selectedElement.name} pivot`,
-                            );
+                            activePivotGesture.current = null;
+                            if (
+                              updateElementRigPivot(
+                                selectedElement.id,
+                                pivot.x,
+                                pivot.y,
+                              )
+                            ) {
+                              setNotice(
+                                `${joint.label} set as ${selectedElement.name} pivot · pose preserved`,
+                              );
+                            }
                           }}
                         />
                         <div className="rig-region-fields">
