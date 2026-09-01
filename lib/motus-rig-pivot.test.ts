@@ -9,6 +9,7 @@ import {
   createBlankProject,
   createElement,
   getElementRigPivotForRenderedCanvasPoint,
+  getElementRigRenderedPivotPoint,
   getElementRigRenderedVisualBounds,
   restoreProject,
   setElementRigPivotPreservingPose,
@@ -663,4 +664,80 @@ void test('round-trips direct stage placement through pose compensation', () => 
     getElementRigRenderedVisualBounds(result.elements, hand.id),
     expectedHandBounds,
   );
+});
+
+void test('resolves a rig joint through every rotated ancestor without mutation', () => {
+  const root = layer('root', null, {
+    x: 90,
+    y: 120,
+    width: 760,
+    height: 980,
+    pivotX: 45,
+    pivotY: 62,
+    rotation: -24,
+  });
+  const head = layer('head', 'root', {
+    x: 360,
+    y: 220,
+    width: 280,
+    height: 260,
+    pivotX: 52,
+    pivotY: 76,
+    rotation: 39,
+  });
+  const hair = layer('hair', 'head', {
+    x: 410,
+    y: 180,
+    width: 220,
+    height: 180,
+    pivotX: 18,
+    pivotY: 88,
+    rotation: -17,
+  });
+  const source = [root, head, hair];
+  const sourceSnapshot = structuredClone(source);
+  const authoredPivot = {
+    x: hair.x + (hair.width * hair.pivotX) / 100,
+    y: hair.y + (hair.height * hair.pivotY) / 100,
+  };
+
+  const rendered = getElementRigRenderedPivotPoint(source, 'hair');
+
+  assert.ok(rendered);
+  const expected = renderRigPoint(source, 'hair', authoredPivot);
+  assertClose(rendered.x, expected.x);
+  assertClose(rendered.y, expected.y);
+  assert.deepEqual(source, sourceSnapshot);
+  assert.equal(getElementRigRenderedPivotPoint(source, 'missing'), null);
+});
+
+void test('rejects malformed ancestor transforms and cyclic ancestry', () => {
+  const child = layer('child', 'parent', {
+    x: 20,
+    y: 30,
+    width: 100,
+    height: 80,
+    pivotX: 25,
+    pivotY: 75,
+  });
+  const parent = {
+    ...layer('parent', null),
+    rotation: Number.NaN,
+  };
+  const malformedSource = [parent, child];
+  const malformedSnapshot = structuredClone(malformedSource);
+
+  assert.equal(
+    getElementRigRenderedPivotPoint(malformedSource, child.id),
+    null,
+  );
+  assert.deepEqual(malformedSource, malformedSnapshot);
+
+  const cycleA = layer('cycle-a', 'cycle-b', { rotation: 30 });
+  const cycleB = layer('cycle-b', 'cycle-a', { rotation: -45 });
+  const cyclicSource = [cycleA, cycleB];
+  const cyclicSnapshot = structuredClone(cyclicSource);
+
+  assert.equal(getElementRigRenderedPivotPoint(cyclicSource, cycleA.id), null);
+  assert.deepEqual(cyclicSource, cyclicSnapshot);
 });

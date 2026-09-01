@@ -3485,6 +3485,44 @@ export function getElementRigDescendantIds(
   return descendants;
 }
 
+/** Returns the complete transform-connected rig containing one layer. */
+export function getElementRigComponentIds(
+  elements: readonly MotusElement[],
+  elementId: string,
+): string[] {
+  const ids = new Set(elements.map((element) => element.id));
+  if (!ids.has(elementId)) return [];
+
+  const neighbors = new Map<string, Set<string>>(
+    elements.map((element) => [element.id, new Set<string>()]),
+  );
+  for (const element of elements) {
+    if (
+      !element.parentId ||
+      element.parentId === element.id ||
+      !ids.has(element.parentId)
+    ) {
+      continue;
+    }
+    neighbors.get(element.id)?.add(element.parentId);
+    neighbors.get(element.parentId)?.add(element.id);
+  }
+
+  const connected = new Set<string>([elementId]);
+  const queue = [elementId];
+  while (queue.length) {
+    const current = queue.shift()!;
+    for (const neighbor of neighbors.get(current) ?? []) {
+      if (connected.has(neighbor)) continue;
+      connected.add(neighbor);
+      queue.push(neighbor);
+    }
+  }
+  return elements
+    .filter((element) => connected.has(element.id))
+    .map((element) => element.id);
+}
+
 export function getElementRigDepth(
   elements: readonly MotusElement[],
   elementId: string,
@@ -3666,6 +3704,36 @@ function inverseRotateRigPointAroundElement(
     -element.rotation,
   );
   return { x: pivot.x + rotated.x, y: pivot.y + rotated.y };
+}
+
+/** Returns a layer joint's final canvas position after every parent transform. */
+export function getElementRigRenderedPivotPoint(
+  elements: readonly MotusElement[],
+  elementId: string,
+): { x: number; y: number } | null {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  if (!element) return null;
+  const authoredPivot = {
+    x: element.x + (element.width * element.pivotX) / 100,
+    y: element.y + (element.height * element.pivotY) / 100,
+  };
+  if (!Number.isFinite(authoredPivot.x) || !Number.isFinite(authoredPivot.y)) {
+    return null;
+  }
+  const visited = new Set<string>([elementId]);
+  let renderedPoint = authoredPivot;
+  for (const ancestor of getElementRigAncestors(elements, elementId)) {
+    if (visited.has(ancestor.id)) return null;
+    visited.add(ancestor.id);
+    renderedPoint = rotateRigPointAroundElement(renderedPoint, ancestor);
+    if (
+      !Number.isFinite(renderedPoint.x) ||
+      !Number.isFinite(renderedPoint.y)
+    ) {
+      return null;
+    }
+  }
+  return renderedPoint;
 }
 
 /**

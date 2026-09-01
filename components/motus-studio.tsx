@@ -220,9 +220,11 @@ import {
   getElementImageFraming,
   getElementShapePreset,
   getElementRigCascadeDeleteIds,
+  getElementRigComponentIds,
   getElementRigDepth,
   getElementRigDescendantIds,
   getElementRigPivotForRenderedCanvasPoint,
+  getElementRigRenderedPivotPoint,
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
@@ -2190,28 +2192,6 @@ function rotateCanvasVector(x: number, y: number, degrees: number) {
   };
 }
 
-function getRenderedRigPoint(
-  elements: readonly MotusElement[],
-  elementId: string,
-  point: { x: number; y: number },
-) {
-  return getElementRigAncestors(elements, elementId).reduce(
-    (renderedPoint, ancestor) => {
-      const pivot = {
-        x: ancestor.x + (ancestor.width * ancestor.pivotX) / 100,
-        y: ancestor.y + (ancestor.height * ancestor.pivotY) / 100,
-      };
-      const rotated = rotateCanvasVector(
-        renderedPoint.x - pivot.x,
-        renderedPoint.y - pivot.y,
-        ancestor.rotation,
-      );
-      return { x: pivot.x + rotated.x, y: pivot.y + rotated.y };
-    },
-    point,
-  );
-}
-
 function getRigSelectionRootIds(
   elements: readonly MotusElement[],
   selectedIds: Iterable<string>,
@@ -2685,6 +2665,7 @@ type SceneViewProps = {
   onPlaybackController?: (controller: ScenePlaybackController | null) => void;
   playbackStartsPaused?: boolean;
   interactive?: boolean;
+  jointEditing?: boolean;
   readerTriggers?: boolean;
   onSelect?: (id: string, additive?: boolean) => void;
   editingTextId?: string | null;
@@ -2727,6 +2708,7 @@ function SceneView({
   onPlaybackController,
   playbackStartsPaused = false,
   interactive = false,
+  jointEditing = false,
   readerTriggers = false,
   onSelect,
   editingTextId,
@@ -2756,6 +2738,50 @@ function SceneView({
         : getSceneThumbnailElements(scene, elementLimit),
     [elementLimit, scene],
   );
+  const rigOverlay = useMemo(() => {
+    if (
+      !interactive ||
+      !selectedId ||
+      !onPivotPointerAction ||
+      editingTextId !== null
+    ) {
+      return null;
+    }
+    const connectedIds = new Set(
+      getElementRigComponentIds(renderedElements, selectedId),
+    );
+    if (connectedIds.size < 2) return null;
+    const elements = renderedElements.filter(
+      (element) =>
+        connectedIds.has(element.id) &&
+        isElementEffectivelyVisible(renderedElements, element.id),
+    );
+    if (elements.length < 2) return null;
+    const points = new Map(
+      elements.flatMap((element) => {
+        const point = getElementRigRenderedPivotPoint(
+          renderedElements,
+          element.id,
+        );
+        return point ? ([[element.id, point]] as const) : [];
+      }),
+    );
+    return {
+      elements,
+      links: elements.flatMap((element) => {
+        const from = element.parentId ? points.get(element.parentId) : null;
+        const to = points.get(element.id);
+        return from && to ? [{ element, from, to }] : [];
+      }),
+      points,
+    };
+  }, [
+    editingTextId,
+    interactive,
+    onPivotPointerAction,
+    renderedElements,
+    selectedId,
+  ]);
 
   useEffect(() => {
     onPlaybackCompleteRef.current = onPlaybackComplete;
@@ -2974,6 +3000,7 @@ function SceneView({
     <section
       aria-label={interactive ? `${scene.name} layers` : undefined}
       className="artboard"
+      data-joint-editing={jointEditing || undefined}
       style={{ background: scene.background }}
     >
       <div className="artboard-grid" />
@@ -3102,7 +3129,10 @@ function SceneView({
                       : 'Selected layer. '
                     : ''
                 }${describeElementForAccessibility(element)}${
-                  interactive && textEditable && primarySelected
+                  interactive &&
+                  !jointEditing &&
+                  textEditable &&
+                  primarySelected
                     ? ' Press Enter to edit text.'
                     : readerTap
                       ? ' Activate to play this animation.'
@@ -3165,7 +3195,10 @@ function SceneView({
                       : undefined
                 }
                 onDoubleClick={
-                  interactive && textEditable && !element.locked
+                  interactive &&
+                  !jointEditing &&
+                  textEditable &&
+                  !element.locked
                     ? (event) => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -3200,6 +3233,7 @@ function SceneView({
                             !event.metaKey &&
                             !event.ctrlKey &&
                             primarySelected &&
+                            !jointEditing &&
                             textEditable &&
                             !element.locked
                           ) {
@@ -3244,7 +3278,7 @@ function SceneView({
                 onPointerDown={
                   interactive && !editingText
                     ? (event) => {
-                        if (!element.locked) {
+                        if (!element.locked && !jointEditing) {
                           onPointerAction?.(event, element.id, 'move');
                         }
                       }
@@ -3303,6 +3337,7 @@ function SceneView({
                 )}
                 {primarySelected &&
                 interactive &&
+                !jointEditing &&
                 textEditable &&
                 !element.locked &&
                 !editingText ? (
@@ -3325,6 +3360,7 @@ function SceneView({
                 ) : null}
                 {primarySelected &&
                 interactive &&
+                !jointEditing &&
                 !element.locked &&
                 !editingText ? (
                   <>
@@ -3376,7 +3412,107 @@ function SceneView({
           )
           .map((element) => renderRigElement(element));
       })()}
-      {interactive && selectedId
+      {rigOverlay ? (
+        <>
+          <svg
+            aria-hidden="true"
+            className="rig-skeleton-overlay"
+            preserveAspectRatio="none"
+            viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+          >
+            {rigOverlay.links.map(({ element, from, to }) => (
+              <line
+                className="rig-skeleton-bone"
+                data-selected-branch={
+                  element.id === selectedId ||
+                  element.parentId === selectedId ||
+                  undefined
+                }
+                key={element.id}
+                x1={from.x}
+                x2={to.x}
+                y1={from.y}
+                y2={to.y}
+              />
+            ))}
+          </svg>
+          <div
+            aria-label={`${rigOverlay.elements.length} connected rig joints`}
+            className="rig-skeleton-navigator"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={() => undefined}
+            onPointerDown={(event) => event.stopPropagation()}
+            role="toolbar"
+            tabIndex={-1}
+          >
+            <span aria-hidden="true" className="rig-skeleton-count">
+              RIG · {rigOverlay.elements.length}
+            </span>
+            <div className="rig-skeleton-joint-list">
+              {rigOverlay.elements.map((element, index) => (
+                <button
+                  aria-current={element.id === selectedId ? 'true' : undefined}
+                  aria-label={`Joint ${index + 1}: ${element.name}${
+                    element.locked ? ', locked' : ''
+                  }`}
+                  data-selected={element.id === selectedId || undefined}
+                  key={element.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelect?.(element.id);
+                  }}
+                  title={`Select ${element.name} joint`}
+                  type="button"
+                >
+                  <span aria-hidden="true">{index + 1}</span>
+                  {element.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          {rigOverlay.elements.map((element, index) => {
+            if (element.id === selectedId) return null;
+            const point = rigOverlay.points.get(element.id);
+            if (!point) return null;
+            const draggable = !element.locked && editingTextId === null;
+            return (
+              // The layer tree and inspector remain the keyboard-accessible equivalents.
+              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+              <span
+                aria-hidden="true"
+                className="rig-joint-node"
+                data-draggable={draggable || undefined}
+                data-joint-number={index + 1}
+                data-label={element.name}
+                data-locked={element.locked || undefined}
+                key={element.id}
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  if (draggable) {
+                    onPivotPointerAction?.(event, element.id);
+                  } else {
+                    onSelect?.(element.id);
+                  }
+                }}
+                style={{
+                  left: `${(point.x / CANVAS_WIDTH) * 100}%`,
+                  top: `${(point.y / CANVAS_HEIGHT) * 100}%`,
+                }}
+                title={
+                  element.locked
+                    ? `Select locked ${element.name} joint`
+                    : `Drag to place ${element.name} joint`
+                }
+              />
+            );
+          })}
+        </>
+      ) : null}
+      {interactive &&
+      selectedId &&
+      editingTextId === null &&
+      Boolean(onPivotPointerAction)
         ? (() => {
             const element = renderedElements.find(
               (candidate) => candidate.id === selectedId,
@@ -3387,14 +3523,17 @@ function SceneView({
             ) {
               return null;
             }
-            const point = getRenderedRigPoint(renderedElements, element.id, {
-              x: element.x + (element.width * element.pivotX) / 100,
-              y: element.y + (element.height * element.pivotY) / 100,
-            });
-            const draggable =
-              !element.locked &&
-              editingTextId !== element.id &&
-              Boolean(onPivotPointerAction);
+            const point = getElementRigRenderedPivotPoint(
+              renderedElements,
+              element.id,
+            );
+            if (!point) return null;
+            const draggable = !element.locked && Boolean(onPivotPointerAction);
+            const jointNumber = rigOverlay
+              ? rigOverlay.elements.findIndex(
+                  (candidate) => candidate.id === element.id,
+                ) + 1
+              : 1;
             return (
               // Inspector sliders remain the keyboard-accessible equivalent for this direct pointer control.
               // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
@@ -3418,6 +3557,9 @@ function SceneView({
                 }
               >
                 <span className="rig-pivot-glyph" />
+                <span aria-hidden="true" className="rig-pivot-number">
+                  {jointNumber}
+                </span>
               </span>
             );
           })()
@@ -3526,6 +3668,7 @@ export function MotusStudio() {
     'design',
   );
   const [zoom, setZoom] = useState(100);
+  const [jointEditing, setJointEditing] = useState(false);
   const [fitCanvasWidth, setFitCanvasWidth] = useState(430);
   const [imageDropActive, setImageDropActive] = useState(false);
   const [activeAlignmentGuides, setActiveAlignmentGuides] = useState<
@@ -6815,8 +6958,7 @@ export function MotusStudio() {
       event.button !== 0 ||
       !element ||
       element.locked ||
-      selectedElementId !== elementId ||
-      editingTextElementId === elementId ||
+      editingTextElementId !== null ||
       !artboard
     ) {
       return;
@@ -6829,6 +6971,7 @@ export function MotusStudio() {
     event.stopPropagation();
     activePointerCleanup.current?.();
     endHistoryTransaction();
+    setSelectedElementId(elementId);
     activePivotGesture.current = null;
     setActiveAlignmentGuides([]);
     const originSceneElements = activeScene.elements;
@@ -6840,10 +6983,11 @@ export function MotusStudio() {
       x: ((startX - bounds.left) / bounds.width) * CANVAS_WIDTH,
       y: ((startY - bounds.top) / bounds.height) * CANVAS_HEIGHT,
     };
-    const renderedPivot = getRenderedRigPoint(originSceneElements, elementId, {
-      x: element.x + (element.width * element.pivotX) / 100,
-      y: element.y + (element.height * element.pivotY) / 100,
-    });
+    const renderedPivot = getElementRigRenderedPivotPoint(
+      originSceneElements,
+      elementId,
+    );
+    if (!renderedPivot) return;
     const grabOffset = {
       x: startCanvasPoint.x - renderedPivot.x,
       y: startCanvasPoint.y - renderedPivot.y,
@@ -7031,14 +7175,12 @@ export function MotusStudio() {
       height: element.height,
       rotation: element.rotation,
     };
-    const renderedPivot = getRenderedRigPoint(
+    const renderedPivot = getElementRigRenderedPivotPoint(
       activeScene.elements,
       element.id,
-      {
-        x: origin.x + (origin.width * element.pivotX) / 100,
-        y: origin.y + (origin.height * element.pivotY) / 100,
-      },
     );
+    if (!renderedPivot) return;
+    const stableRenderedPivot = renderedPivot;
     const ancestorRotation = getElementRigAncestors(
       activeScene.elements,
       element.id,
@@ -7047,8 +7189,8 @@ export function MotusStudio() {
     const startCanvasY =
       ((startY - bounds.top) / bounds.height) * CANVAS_HEIGHT;
     const startRotationAngle = Math.atan2(
-      startCanvasY - renderedPivot.y,
-      startCanvasX - renderedPivot.x,
+      startCanvasY - stableRenderedPivot.y,
+      startCanvasX - stableRenderedPivot.x,
     );
     let moved = false;
     let aligned = false;
@@ -7119,8 +7261,8 @@ export function MotusStudio() {
         const pointerCanvasY =
           ((pointer.clientY - bounds.top) / bounds.height) * CANVAS_HEIGHT;
         const pointerAngle = Math.atan2(
-          pointerCanvasY - renderedPivot.y,
-          pointerCanvasX - renderedPivot.x,
+          pointerCanvasY - stableRenderedPivot.y,
+          pointerCanvasX - stableRenderedPivot.x,
         );
         const rawAngleDelta =
           ((pointerAngle - startRotationAngle) * 180) / Math.PI;
@@ -8834,11 +8976,13 @@ export function MotusStudio() {
             <div className="canvas-status">
               <Move />
               <span>
-                {inspectorTab === 'motion'
-                  ? 'Stage · select layers, then edit their blocks'
-                  : selectedElements.length > 1
-                    ? `Stage · ${selectedElements.length} layers selected · drag together`
-                    : 'Stage · drag layers · double-click text to edit'}
+                {jointEditing
+                  ? 'Joint mode · drag pivots or choose a named joint'
+                  : inspectorTab === 'motion'
+                    ? 'Stage · select layers, then edit their blocks'
+                    : selectedElements.length > 1
+                      ? `Stage · ${selectedElements.length} layers selected · drag together`
+                      : 'Stage · drag layers · double-click text to edit'}
               </span>
               <span className="canvas-sr-instructions" id="canvas-instructions">
                 Select a layer on the stage. Use arrow keys to move it one
@@ -8853,7 +8997,10 @@ export function MotusStudio() {
                 Double-click text, or press Enter on selected text, to edit it
                 directly on the stage. For exact keyboard resizing, rotation,
                 and joint placement, use Width, Height, Rotation, Pivot X, and
-                Pivot Y in the Design inspector.
+                Pivot Y in the Design inspector. Turn on Joints to reveal the
+                selected layer&apos;s connected skeleton. Its named joint strip,
+                Layers tree, and Pivot controls provide touch and keyboard paths
+                even when two pivots overlap.
               </span>
               {inspectorTab === 'design' ? (
                 <>
@@ -8867,34 +9014,70 @@ export function MotusStudio() {
             <output aria-live="polite" className="workspace-notice">
               {displayedNotice}
             </output>
-            <fieldset className="zoom-control" aria-label="Canvas zoom">
+            <div className="stage-view-controls">
               <button
-                aria-label="Zoom out"
-                disabled={zoom <= 50}
-                onClick={() => setZoom((value) => Math.max(50, value - 10))}
+                aria-label={
+                  jointEditing
+                    ? 'Exit joint editing mode'
+                    : 'Enter joint editing mode'
+                }
+                aria-pressed={jointEditing}
+                className="joint-edit-toggle"
+                disabled={
+                  !selectedElement ||
+                  previewActive ||
+                  editingTextElementId !== null
+                }
+                onClick={() => {
+                  const next = !jointEditing;
+                  setJointEditing(next);
+                  setNotice(
+                    next
+                      ? `Joint mode · editing ${selectedElement?.name ?? 'selected layer'}`
+                      : 'Transform mode · move, resize, and rotate layers',
+                  );
+                }}
+                title={
+                  selectedElement
+                    ? jointEditing
+                      ? 'Return to move, resize, and rotate controls'
+                      : 'Edit rig pivots directly on the stage'
+                    : 'Select a layer to edit its joint'
+                }
                 type="button"
               >
-                −
+                <Route aria-hidden="true" />
+                <span>Joints</span>
               </button>
-              <span>{zoom}%</span>
-              <button
-                aria-label="Zoom in"
-                disabled={zoom >= 160}
-                onClick={() => setZoom((value) => Math.min(160, value + 10))}
-                type="button"
-              >
-                +
-              </button>
-              <button
-                aria-label="Fit canvas"
-                className="zoom-fit"
-                disabled={zoom === 100}
-                onClick={() => setZoom(100)}
-                type="button"
-              >
-                Fit
-              </button>
-            </fieldset>
+              <fieldset className="zoom-control" aria-label="Canvas zoom">
+                <button
+                  aria-label="Zoom out"
+                  disabled={zoom <= 50}
+                  onClick={() => setZoom((value) => Math.max(50, value - 10))}
+                  type="button"
+                >
+                  −
+                </button>
+                <span>{zoom}%</span>
+                <button
+                  aria-label="Zoom in"
+                  disabled={zoom >= 160}
+                  onClick={() => setZoom((value) => Math.min(160, value + 10))}
+                  type="button"
+                >
+                  +
+                </button>
+                <button
+                  aria-label="Fit canvas"
+                  className="zoom-fit"
+                  disabled={zoom === 100}
+                  onClick={() => setZoom(100)}
+                  type="button"
+                >
+                  Fit
+                </button>
+              </fieldset>
+            </div>
           </div>
 
           <div
@@ -8930,7 +9113,13 @@ export function MotusStudio() {
               void uploadImage(image);
             }}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') setSelectedElementId('');
+              if (event.key !== 'Escape') return;
+              if (jointEditing) {
+                setJointEditing(false);
+                setNotice('Transform mode · move, resize, and rotate layers');
+                return;
+              }
+              setSelectedElementId('');
             }}
             ref={canvasStage}
             role="presentation"
@@ -8950,6 +9139,7 @@ export function MotusStudio() {
                 alignmentGuides={activeAlignmentGuides}
                 editingTextId={editingTextElementId}
                 interactive
+                jointEditing={jointEditing}
                 onBeginTextEdit={beginTextEditing}
                 onEndTextEdit={finishTextEditing}
                 onElementRef={(elementId, node) => {
@@ -8961,7 +9151,9 @@ export function MotusStudio() {
                 onPlaybackComplete={finishCanvasPreview}
                 onPlaybackController={handleCanvasPlaybackController}
                 onPivotPointerAction={
-                  previewActive ? undefined : beginPivotPointerAction
+                  jointEditing && !previewActive
+                    ? beginPivotPointerAction
+                    : undefined
                 }
                 onPointerAction={beginPointerAction}
                 onSelect={selectElement}
@@ -9576,9 +9768,11 @@ export function MotusStudio() {
                         ))}
                       </div>
                       <small>
-                        Parent transforms compose in order. A Body sway moves
-                        Head and Hair; their own blocks keep playing in their
-                        inherited coordinate space.
+                        Turn on Joints to reveal the selected part&apos;s full
+                        skeleton, then drag a numbered pivot or choose it by
+                        name. Parent transforms compose in order: a Body sway
+                        moves Head and Hair while their own blocks keep playing
+                        in inherited space.
                       </small>
                     </section>
                     {selectedElement.type === 'image' &&
