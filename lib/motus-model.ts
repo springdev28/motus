@@ -7324,6 +7324,20 @@ export function createProjectHistoryEntry(
   };
 }
 
+/**
+ * Materializes an undo or redo snapshot as a new draft revision. History
+ * snapshots intentionally retain their original timestamp, but restoring one
+ * must advance it so journal recovery cannot prefer the state being undone.
+ */
+export function prepareProjectHistoryRestore(
+  entry: ProjectHistoryEntry,
+  updatedAt = new Date().toISOString(),
+): ProjectHistoryEntry {
+  const project = cloneProject(entry.project);
+  project.updatedAt = updatedAt;
+  return createProjectHistoryEntry(project, entry.selection);
+}
+
 export function trimProjectHistory(
   entries: ProjectHistoryEntry[],
   entryLimit = MAX_PROJECT_HISTORY_ENTRIES,

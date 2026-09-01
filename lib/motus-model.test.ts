@@ -100,6 +100,7 @@ import {
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
+  prepareProjectHistoryRestore,
   recordProjectHistory,
   removePublicationRevision,
   replaceMotionEvent,
@@ -422,6 +423,36 @@ void test('history entries clone projects and repair stale selection', () => {
     elementId: 'scene-1-speech',
   });
   assert.equal(entry.bytes, getProjectStorageBytes(entry.project));
+});
+
+void test('restored history becomes the newest recoverable draft revision', () => {
+  const original = createDefaultProject();
+  original.updatedAt = '2026-08-29T06:00:00.000Z';
+  const entry = createProjectHistoryEntry(original, {
+    chapterId: DEFAULT_CHAPTER_ID,
+    sceneId: 'scene-1',
+    elementId: 'scene-1-orb',
+  });
+  const stateBeingUndone = structuredClone(original);
+  stateBeingUndone.title = 'State being undone';
+  stateBeingUndone.updatedAt = '2026-08-29T06:01:00.000Z';
+
+  const restored = prepareProjectHistoryRestore(
+    entry,
+    '2026-08-29T06:02:00.000Z',
+  );
+  const newest = restoreNewestProject([
+    { source: 'old-active-slot', value: JSON.stringify(stateBeingUndone) },
+    { source: 'restored-slot', value: JSON.stringify(restored.project) },
+  ]);
+
+  assert.equal(restored.project.updatedAt, '2026-08-29T06:02:00.000Z');
+  assert.equal(restored.project.title, original.title);
+  assert.notEqual(restored.project, entry.project);
+  assert.notEqual(restored.project.chapters, entry.project.chapters);
+  assert.equal(restored.bytes, getProjectStorageBytes(restored.project));
+  assert.equal(newest?.source, 'restored-slot');
+  assert.equal(entry.project.updatedAt, '2026-08-29T06:00:00.000Z');
 });
 
 void test('history pruning keeps the newest contiguous snapshots within budget', () => {

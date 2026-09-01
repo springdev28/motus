@@ -58,6 +58,7 @@ import {
   ArrowUp,
   BookOpen,
   Check,
+  ChevronRight,
   Circle,
   Clock3,
   Cloud,
@@ -250,6 +251,7 @@ import {
   normalizeElementImageRigPart,
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
+  prepareProjectHistoryRestore,
   recordProjectHistory,
   removePublicationRevision,
   reorderElementRigSibling,
@@ -327,6 +329,7 @@ import {
   readNewestMotusDraft,
 } from '@/lib/motus-draft-storage';
 import { createImageRigMesh } from '@/lib/motus-mesh-warp';
+import { buildCollapsibleRigLayerTree } from '@/lib/motus-rig-tree';
 const MOTUS_LAYER_CLIPBOARD_TYPE = 'application/x-motus-layer';
 const STUDIO_PANEL_LAYOUT_KEY = 'motus.studio.panel-layout.v1';
 const BLOCK_WORKSPACE_LAYOUT_KEY = 'motus.studio.block-workspace-layout.v1';
@@ -497,7 +500,7 @@ function getStudioGridTemplate(
   layout: StudioPanelLayout,
 ) {
   const centerMinimum = workspace === 'motion' ? '460px' : '340px';
-  return `60px minmax(112px, ${layout.left}fr) minmax(${centerMinimum}, ${layout.center}fr) minmax(260px, ${layout.right}fr)`;
+  return `60px minmax(220px, ${layout.left}fr) minmax(${centerMinimum}, ${layout.center}fr) minmax(260px, ${layout.right}fr)`;
 }
 
 function getBlockWorkspaceGridTemplate(layout: BlockWorkspaceLayout) {
@@ -720,18 +723,30 @@ function DraggableLayerRow({
   depth,
   disabled,
   element,
+  expanded,
+  hasChildren,
   nestAllowed,
+  onFocus,
+  onKeyDown,
   primarySelected,
   selected,
+  selectedDescendant,
+  tabIndex,
 }: {
   activeDrag: ActiveLayerDrag | null;
   children: (handle: LayerDragHandle) => ReactNode;
   depth: number;
   disabled: boolean;
   element: MotusElement;
+  expanded: boolean;
+  hasChildren: boolean;
   nestAllowed: boolean;
+  onFocus: () => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   primarySelected: boolean;
   selected: boolean;
+  selectedDescendant: boolean;
+  tabIndex: 0 | -1;
 }) {
   const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef } =
     useDraggable({
@@ -756,15 +771,25 @@ function DraggableLayerRow({
 
   return (
     <div
+      aria-expanded={hasChildren ? expanded : undefined}
+      aria-label={`${element.name}, ${element.type}${selectedDescendant ? ', contains a selected descendant' : ''}`}
       aria-level={depth + 1}
+      aria-selected={selected}
       className="layer-row"
       data-dragging={isDragging || undefined}
+      data-expanded={hasChildren && expanded ? true : undefined}
+      data-has-children={hasChildren || undefined}
       data-primary-selected={primarySelected || undefined}
       data-rig-depth={depth}
       data-selected={selected || undefined}
+      data-selected-descendant={selectedDescendant || undefined}
+      id={`layer-treeitem-${element.id}`}
+      onFocus={onFocus}
+      onKeyDown={onKeyDown}
       ref={setNodeRef}
       role="treeitem"
       style={style}
+      tabIndex={tabIndex}
     >
       {children({
         attributes,
@@ -3663,15 +3688,84 @@ export function MotusStudio() {
     'signal-in-the-fog-chapter-1',
   );
   const [activeSceneId, setActiveSceneId] = useState('scene-1');
-  const [selectedElementId, setPrimarySelectedElementId] =
+  const [collapsedLayerIdsByScene, setCollapsedLayerIdsByScene] = useState<
+    Record<string, string[]>
+  >({});
+  const [layerTreeFocusId, setLayerTreeFocusId] = useState('scene-1-orb');
+  const [selectedElementId, setPrimarySelectedElementIdState] =
     useState('scene-1-orb');
   const [selectedElementIds, setSelectedElementIds] = useState<string[]>([
     'scene-1-orb',
   ]);
-  const setSelectedElementId = useCallback((elementId: string) => {
-    setPrimarySelectedElementId(elementId);
-    setSelectedElementIds(elementId ? [elementId] : []);
-  }, []);
+  const layerSelectionScenes = useRef<{
+    activeSceneId: string;
+    elementsBySceneId: ReadonlyMap<string, readonly MotusElement[]>;
+  }>({ activeSceneId: 'scene-1', elementsBySceneId: new Map() });
+  const revealSelectedLayerAncestors = useCallback(
+    (
+      elementId: string,
+      destinationSceneId?: string,
+      destinationElements?: readonly MotusElement[],
+    ) => {
+      if (!elementId) return;
+      const sceneId =
+        destinationSceneId ?? layerSelectionScenes.current.activeSceneId;
+      const elements =
+        destinationElements ??
+        layerSelectionScenes.current.elementsBySceneId.get(sceneId);
+      if (!elements) return;
+      const elementsById = new Map(
+        elements.map((element) => [element.id, element]),
+      );
+      const ancestorIds = new Set<string>();
+      let parentId = elementsById.get(elementId)?.parentId ?? null;
+      while (parentId && !ancestorIds.has(parentId)) {
+        ancestorIds.add(parentId);
+        parentId = elementsById.get(parentId)?.parentId ?? null;
+      }
+      if (ancestorIds.size === 0) return;
+      setCollapsedLayerIdsByScene((previous) => {
+        const current = previous[sceneId] ?? [];
+        const next = current.filter(
+          (collapsedId) => !ancestorIds.has(collapsedId),
+        );
+        if (next.length === current.length) return previous;
+        return { ...previous, [sceneId]: next };
+      });
+    },
+    [],
+  );
+  const setPrimarySelectedElementId = useCallback(
+    (
+      elementId: string,
+      destinationSceneId?: string,
+      destinationElements?: readonly MotusElement[],
+    ) => {
+      setPrimarySelectedElementIdState(elementId);
+      if (elementId) setLayerTreeFocusId(elementId);
+      revealSelectedLayerAncestors(
+        elementId,
+        destinationSceneId,
+        destinationElements,
+      );
+    },
+    [revealSelectedLayerAncestors],
+  );
+  const setSelectedElementId = useCallback(
+    (
+      elementId: string,
+      destinationSceneId?: string,
+      destinationElements?: readonly MotusElement[],
+    ) => {
+      setPrimarySelectedElementId(
+        elementId,
+        destinationSceneId,
+        destinationElements,
+      );
+      setSelectedElementIds(elementId ? [elementId] : []);
+    },
+    [setPrimarySelectedElementId],
+  );
   const [editingTextElementId, setEditingTextElementId] = useState<
     string | null
   >(null);
@@ -3933,6 +4027,19 @@ export function MotusStudio() {
     () => flattenRigLayers(activeScene.elements),
     [activeScene.elements],
   );
+  const layerElementsById = useMemo(
+    () => new Map(activeScene.elements.map((element) => [element.id, element])),
+    [activeScene.elements],
+  );
+  const layerTree = useMemo(
+    () =>
+      buildCollapsibleRigLayerTree(
+        flattenedLayerRows,
+        collapsedLayerIdsByScene[activeScene.id] ?? [],
+      ),
+    [activeScene.id, collapsedLayerIdsByScene, flattenedLayerRows],
+  );
+  const visibleLayerRows = layerTree.rows;
   const chapterIndex = Math.max(
     project.chapters.findIndex((chapter) => chapter.id === activeChapter.id),
     0,
@@ -3942,6 +4049,16 @@ export function MotusStudio() {
     0,
   );
   const allScenes = useMemo(() => getProjectScenes(project), [project]);
+  const layerElementsBySceneId = useMemo(
+    () => new Map(allScenes.map((scene) => [scene.id, scene.elements])),
+    [allScenes],
+  );
+  useEffect(() => {
+    layerSelectionScenes.current = {
+      activeSceneId: activeScene.id,
+      elementsBySceneId: layerElementsBySceneId,
+    };
+  }, [activeScene.id, layerElementsBySceneId]);
   const projectCoverScene =
     findProjectScene(project, project.coverSceneId)?.scene ?? allScenes[0];
   const selectedElement = useMemo(
@@ -3999,6 +4116,31 @@ export function MotusStudio() {
     () => new Set(selectedElementIds),
     [selectedElementIds],
   );
+  const selectedDescendantLayerIds = useMemo(() => {
+    const ancestorIds = new Set<string>();
+    selectedElementIds.forEach((elementId) => {
+      let parentId = layerElementsById.get(elementId)?.parentId ?? null;
+      const visited = new Set<string>();
+      while (parentId && !visited.has(parentId)) {
+        visited.add(parentId);
+        ancestorIds.add(parentId);
+        parentId = layerElementsById.get(parentId)?.parentId ?? null;
+      }
+    });
+    return ancestorIds;
+  }, [layerElementsById, selectedElementIds]);
+  const layerTreeTabStopId = useMemo(() => {
+    for (const candidateId of [layerTreeFocusId, selectedElementId]) {
+      const focusTargetId = layerTree.focusTargetIdByElementId.get(candidateId);
+      if (focusTargetId) return focusTargetId;
+    }
+    return visibleLayerRows[0]?.element.id ?? '';
+  }, [
+    layerTree.focusTargetIdByElementId,
+    layerTreeFocusId,
+    selectedElementId,
+    visibleLayerRows,
+  ]);
   const selectedElements = useMemo(
     () =>
       activeScene.elements.filter((element) =>
@@ -4262,6 +4404,8 @@ export function MotusStudio() {
         setActiveSceneId(restored.project.chapters[0].scenes[0].id);
         setSelectedElementId(
           restored.project.chapters[0].scenes[0].elements.at(-1)?.id ?? '',
+          restored.project.chapters[0].scenes[0].id,
+          restored.project.chapters[0].scenes[0].elements,
         );
         setNotice(
           restored.source === 'legacy'
@@ -4355,7 +4499,15 @@ export function MotusStudio() {
           );
           setActiveChapterId(selection.chapterId);
           setActiveSceneId(selection.sceneId);
-          setSelectedElementId(selection.elementId);
+          const selectionScene = findProjectScene(
+            saved.project,
+            selection.sceneId,
+          )?.scene;
+          setSelectedElementId(
+            selection.elementId,
+            selection.sceneId,
+            selectionScene?.elements,
+          );
           clearDeletionUndo();
           resetEditorHistory();
           setProject(saved.project);
@@ -4540,7 +4692,11 @@ export function MotusStudio() {
     );
     setActiveChapterId(selection.chapterId);
     setActiveSceneId(selection.sceneId);
-    setSelectedElementId(selection.elementId);
+    setSelectedElementId(
+      selection.elementId,
+      selection.sceneId,
+      findProjectScene(candidate, selection.sceneId)?.scene.elements,
+    );
   };
 
   const restoreHistorySelection = (
@@ -4568,18 +4724,25 @@ export function MotusStudio() {
         preservedSelection.includes(selection.elementId)
           ? selection.elementId
           : preservedSelection.at(-1)!,
+        selection.sceneId,
+        scene?.elements,
       );
       return;
     }
-    setSelectedElementId(selection.elementId);
+    setSelectedElementId(
+      selection.elementId,
+      selection.sceneId,
+      scene?.elements,
+    );
   };
 
   const undo = () => {
     activePointerCleanup.current?.();
     clearDeletionUndo();
     endHistoryTransaction();
-    const previous = undoStack.current.pop();
-    if (!previous) return;
+    const previousSnapshot = undoStack.current.pop();
+    if (!previousSnapshot) return;
+    const previous = prepareProjectHistoryRestore(previousSnapshot, nowIso());
     redoStack.current = trimProjectHistory([
       ...redoStack.current,
       createProjectHistoryEntry(project, {
@@ -4605,8 +4768,9 @@ export function MotusStudio() {
     activePointerCleanup.current?.();
     clearDeletionUndo();
     endHistoryTransaction();
-    const next = redoStack.current.pop();
-    if (!next) return;
+    const nextSnapshot = redoStack.current.pop();
+    if (!nextSnapshot) return;
+    const next = prepareProjectHistoryRestore(nextSnapshot, nowIso());
     undoStack.current = trimProjectHistory([
       ...undoStack.current,
       createProjectHistoryEntry(project, {
@@ -4636,9 +4800,9 @@ export function MotusStudio() {
     setActiveSceneId(recovery.sceneId);
     if (recovery.elementIds && recovery.elementIds.length > 1) {
       setSelectedElementIds(recovery.elementIds);
-      setPrimarySelectedElementId(recovery.elementId);
+      setPrimarySelectedElementId(recovery.elementId, recovery.sceneId);
     } else {
-      setSelectedElementId(recovery.elementId);
+      setSelectedElementId(recovery.elementId, recovery.sceneId);
     }
     focusEditorTarget(recovery.sceneId, recovery.elementId);
   };
@@ -4669,7 +4833,10 @@ export function MotusStudio() {
     } else {
       commitProject(addToDraft);
     }
-    setSelectedElementId(element.id);
+    setSelectedElementId(element.id, activeScene.id, [
+      ...activeScene.elements,
+      element,
+    ]);
     setInspectorTab('design');
     setNotice(`${element.name} added`);
     focusEditorTarget(activeScene.id, element.id);
@@ -4705,6 +4872,7 @@ export function MotusStudio() {
       );
       if (!result.issue && result.changed) scene.elements = result.elements;
     });
+    revealSelectedLayerAncestors(elementId, activeScene.id, preview.elements);
     const parent = parentId
       ? activeScene.elements.find((item) => item.id === parentId)
       : null;
@@ -4827,6 +4995,15 @@ export function MotusStudio() {
       height: Math.max(MIN_ELEMENT_HEIGHT, bottom - top),
       fill: '#7d5cff',
     });
+    const nextElements = [
+      ...activeScene.elements.map((element) =>
+        selectedIds.has(element.id) &&
+        topLevel.some((item) => item.id === element.id)
+          ? { ...element, parentId: group.id }
+          : element,
+      ),
+      group,
+    ];
     commitProject((draft) => {
       const scene = findProjectScene(draft, activeScene.id)?.scene;
       if (!scene) return;
@@ -4840,7 +5017,7 @@ export function MotusStudio() {
         }
       });
     });
-    setSelectedElementId(group.id);
+    setSelectedElementId(group.id, activeScene.id, nextElements);
     setNotice(
       `${topLevel.length} ${topLevel.length === 1 ? 'layer' : 'layers'} nested under ${group.name}`,
     );
@@ -4958,7 +5135,10 @@ export function MotusStudio() {
       sourceElementId: selectedElement.id,
       value: '',
     });
-    setSelectedElementId(part.id);
+    setSelectedElementId(part.id, activeScene.id, [
+      ...activeScene.elements,
+      part,
+    ]);
     setNotice(`${part.name} ${selection ? 'masked' : 'cropped'} and attached`);
     focusEditorTarget(activeScene.id, part.id);
   };
@@ -5068,8 +5248,75 @@ export function MotusStudio() {
 
   const focusLayerRow = (elementId: string) => {
     window.requestAnimationFrame(() => {
-      document.getElementById(`layer-select-${elementId}`)?.focus();
+      document.getElementById(`layer-treeitem-${elementId}`)?.focus();
     });
+  };
+
+  const focusLayerTreeItem = (elementId: string) => {
+    setLayerTreeFocusId(elementId);
+    focusLayerRow(elementId);
+  };
+
+  const setLayerExpanded = (elementId: string, expanded: boolean) => {
+    setCollapsedLayerIdsByScene((previous) => {
+      const collapsedIds = new Set(previous[activeScene.id] ?? []);
+      const wasExpanded = !collapsedIds.has(elementId);
+      if (wasExpanded === expanded) return previous;
+      if (expanded) collapsedIds.delete(elementId);
+      else collapsedIds.add(elementId);
+      return {
+        ...previous,
+        [activeScene.id]: [...collapsedIds],
+      };
+    });
+  };
+
+  const handleLayerTreeKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+    element: MotusElement,
+    hasChildren: boolean,
+    expanded: boolean,
+  ) => {
+    if (event.target !== event.currentTarget) return;
+    const row = layerTree.rowById.get(element.id);
+    if (!row) return;
+
+    let nextElementId: string | undefined;
+    if (event.key === 'ArrowDown') {
+      nextElementId = row.nextVisibleId ?? undefined;
+    } else if (event.key === 'ArrowUp') {
+      nextElementId = row.previousVisibleId ?? undefined;
+    } else if (event.key === 'Home') {
+      nextElementId = visibleLayerRows[0]?.element.id;
+    } else if (event.key === 'End') {
+      nextElementId = visibleLayerRows.at(-1)?.element.id;
+    } else if (event.key === 'ArrowRight' && hasChildren) {
+      if (!expanded) {
+        event.preventDefault();
+        setLayerExpanded(element.id, true);
+        return;
+      }
+      nextElementId = row.firstChildId ?? undefined;
+    } else if (event.key === 'ArrowLeft') {
+      if (hasChildren && expanded) {
+        event.preventDefault();
+        setLayerExpanded(element.id, false);
+        return;
+      }
+      nextElementId = row.parentId ?? undefined;
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      selectElement(
+        element.id,
+        event.shiftKey || event.metaKey || event.ctrlKey,
+      );
+      return;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    if (nextElementId) focusLayerTreeItem(nextElementId);
   };
 
   const startLayerDrag = (event: DragStartEvent) => {
@@ -5114,6 +5361,7 @@ export function MotusStudio() {
       return;
     }
     if (drop.intent === 'parent') {
+      setLayerExpanded(drop.targetElementId, true);
       setElementRigParent(drag.elementId, drop.targetElementId);
       focusLayerRow(drag.elementId);
       return;
@@ -5320,7 +5568,11 @@ export function MotusStudio() {
     const firstScene = chapter.scenes[0];
     setActiveChapterId(chapter.id);
     setActiveSceneId(firstScene.id);
-    setSelectedElementId(firstScene.elements.at(-1)?.id ?? '');
+    setSelectedElementId(
+      firstScene.elements.at(-1)?.id ?? '',
+      firstScene.id,
+      firstScene.elements,
+    );
     setNotice(`${chapter.title} selected`);
   };
 
@@ -5390,7 +5642,7 @@ export function MotusStudio() {
     setActiveChapterId(nextChapter.id);
     setActiveSceneId(nextScene.id);
     const nextElementId = nextScene.elements.at(-1)?.id ?? '';
-    setSelectedElementId(nextElementId);
+    setSelectedElementId(nextElementId, nextScene.id, nextScene.elements);
     showDeletionUndo({
       message: `${activeChapter.title} deleted`,
       chapterId: activeChapter.id,
@@ -6183,7 +6435,11 @@ export function MotusStudio() {
         ?.scenes.push(nextScene);
     });
     setActiveSceneId(id);
-    setSelectedElementId(nextScene.elements[0].id);
+    setSelectedElementId(
+      nextScene.elements[0].id,
+      nextScene.id,
+      nextScene.elements,
+    );
     setCatalogOpen(false);
     setNotice(`${template.name} scene added`);
     focusEditorTarget(id, nextScene.elements[0].id);
@@ -6311,7 +6567,10 @@ export function MotusStudio() {
         ...created.elements,
       );
     });
-    setSelectedElementId(created.rootElementId);
+    setSelectedElementId(created.rootElementId, activeScene.id, [
+      ...activeScene.elements,
+      ...created.elements,
+    ]);
     setInspectorTab('design');
     setCatalogOpen(false);
     setNotice(
@@ -6364,7 +6623,10 @@ export function MotusStudio() {
     ) {
       return false;
     }
-    setSelectedElementId(copy.id);
+    setSelectedElementId(copy.id, activeScene.id, [
+      ...activeScene.elements,
+      copy,
+    ]);
     setNotice(successMessage);
     focusEditorTarget(activeScene.id, copy.id);
     return true;
@@ -6445,8 +6707,13 @@ export function MotusStudio() {
     const selectedCopyIds = copyIds.filter((_, index) =>
       selectedSourceIds.has(sources[index].id),
     );
+    const nextElements = [...activeScene.elements, ...copies];
     setSelectedElementIds(selectedCopyIds);
-    setPrimarySelectedElementId(selectedCopyIds.at(-1) ?? copyIds.at(-1)!);
+    const primaryCopyId = selectedCopyIds.at(-1) ?? copyIds.at(-1)!;
+    setPrimarySelectedElementId(primaryCopyId, activeScene.id, nextElements);
+    selectedCopyIds.forEach((elementId) =>
+      revealSelectedLayerAncestors(elementId, activeScene.id, nextElements),
+    );
     setEditingTextElementId(null);
     setNotice(successMessage);
     focusEditorTarget(
@@ -6552,7 +6819,7 @@ export function MotusStudio() {
     }
     setActiveSceneId(copy.id);
     const selectedCopyId = copy.elements.at(-1)?.id ?? '';
-    setSelectedElementId(selectedCopyId);
+    setSelectedElementId(selectedCopyId, copy.id, copy.elements);
     setNotice('Scene duplicated');
     focusEditorTarget(copy.id, selectedCopyId);
   };
@@ -6581,7 +6848,11 @@ export function MotusStudio() {
     });
     setActiveSceneId(nextScene.id);
     const nextSelectedElementId = nextScene.elements.at(-1)?.id ?? '';
-    setSelectedElementId(nextSelectedElementId);
+    setSelectedElementId(
+      nextSelectedElementId,
+      nextScene.id,
+      nextScene.elements,
+    );
     setNotice('Scene deleted');
     showDeletionUndo({
       message: `${activeScene.name} deleted`,
@@ -6642,6 +6913,8 @@ export function MotusStudio() {
     setActiveSceneId(restored.chapters[0].scenes[0].id);
     setSelectedElementId(
       restored.chapters[0].scenes[0].elements.at(-1)?.id ?? '',
+      restored.chapters[0].scenes[0].id,
+      restored.chapters[0].scenes[0].elements,
     );
     setPendingProjectImport(null);
     setNotice('Project imported · previous draft downloaded');
@@ -6971,6 +7244,8 @@ export function MotusStudio() {
     setActiveSceneId(restored.chapters[0].scenes[0].id);
     setSelectedElementId(
       restored.chapters[0].scenes[0].elements.at(-1)?.id ?? '',
+      restored.chapters[0].scenes[0].id,
+      restored.chapters[0].scenes[0].elements,
     );
     setPublishOpen(false);
     setNotice(`Revision ${revision.revision} restored to draft`);
@@ -8825,8 +9100,13 @@ export function MotusStudio() {
               data-drag-active={Boolean(activeLayerDrag) || undefined}
               role="tree"
             >
-              {flattenedLayerRows.map(({ element, depth }) => {
+              {visibleLayerRows.map((row) => {
+                const { depth, element, hasChildren, isCollapsed } = row;
                 const Icon = elementIcon(element.type);
+                const expanded = hasChildren && !isCollapsed;
+                const selectedDescendant = selectedDescendantLayerIds.has(
+                  element.id,
+                );
                 const siblingElements = activeScene.elements.filter(
                   (item) => item.parentId === element.parentId,
                 );
@@ -8846,15 +9126,60 @@ export function MotusStudio() {
                     depth={depth}
                     disabled={!desktopPanelsEnabled || previewRunning}
                     element={element}
+                    expanded={expanded}
+                    hasChildren={hasChildren}
                     key={element.id}
                     nestAllowed={Boolean(
                       nestPreview?.changed && !nestPreview.issue,
                     )}
+                    onFocus={() => setLayerTreeFocusId(element.id)}
+                    onKeyDown={(event) =>
+                      handleLayerTreeKeyDown(
+                        event,
+                        element,
+                        hasChildren,
+                        expanded,
+                      )
+                    }
                     primarySelected={selectedElementId === element.id}
                     selected={selectedElementIdSet.has(element.id)}
+                    selectedDescendant={selectedDescendant}
+                    tabIndex={layerTreeTabStopId === element.id ? 0 : -1}
                   >
                     {(dragHandle) => (
                       <>
+                        {hasChildren ? (
+                          <button
+                            aria-expanded={expanded}
+                            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${element.name}${selectedDescendant ? ', contains a selected descendant' : ''}`}
+                            className="layer-disclosure"
+                            data-selected-descendant={
+                              selectedDescendant || undefined
+                            }
+                            onClick={(event) => {
+                              setLayerExpanded(element.id, !expanded);
+                              setLayerTreeFocusId(element.id);
+                              event.currentTarget.focus({
+                                preventScroll: true,
+                              });
+                            }}
+                            onFocus={() => setLayerTreeFocusId(element.id)}
+                            onKeyDown={(event) => {
+                              if (event.key !== ' ') return;
+                              event.preventDefault();
+                              setLayerExpanded(element.id, !expanded);
+                            }}
+                            title={`${expanded ? 'Collapse' : 'Expand'} ${element.name}`}
+                            type="button"
+                          >
+                            <ChevronRight aria-hidden="true" />
+                          </button>
+                        ) : (
+                          <span
+                            aria-hidden="true"
+                            className="layer-disclosure-spacer"
+                          />
+                        )}
                         <button
                           aria-label={
                             selectedElementIdSet.has(element.id)
@@ -8891,10 +9216,10 @@ export function MotusStudio() {
                           }
                           aria-label={
                             desktopPanelsEnabled
-                              ? `${selectedElementId === element.id ? `Edit ${element.name}, primary layer` : `Edit ${element.name} and make it primary`}. Drag to reorder or nest this rig branch.`
+                              ? `${selectedElementId === element.id ? `Edit ${element.name}, primary layer` : `Edit ${element.name} and make it primary`}.${selectedDescendant ? ' Contains a selected descendant.' : ''} Drag to reorder or nest this rig branch.`
                               : selectedElementId === element.id
                                 ? `Edit ${element.name}, primary layer`
-                                : `Edit ${element.name} and make it primary`
+                                : `Edit ${element.name} and make it primary${selectedDescendant ? ', contains a selected descendant' : ''}`
                           }
                           className="layer-select"
                           data-drag-enabled={
@@ -8903,13 +9228,15 @@ export function MotusStudio() {
                               : undefined
                           }
                           id={`layer-select-${element.id}`}
-                          onClick={(event) =>
+                          onClick={(event) => {
                             selectElement(
                               element.id,
                               event.shiftKey || event.metaKey || event.ctrlKey,
-                            )
-                          }
+                            );
+                            focusLayerTreeItem(element.id);
+                          }}
                           ref={dragHandle.setActivatorNodeRef}
+                          tabIndex={-1}
                           title={
                             desktopPanelsEnabled
                               ? 'Drag: row edge reorders · center nests'
@@ -9347,7 +9674,11 @@ export function MotusStudio() {
                     resetTransientCanvasState();
                     endHistoryTransaction();
                     setActiveSceneId(scene.id);
-                    setSelectedElementId(scene.elements.at(-1)?.id ?? '');
+                    setSelectedElementId(
+                      scene.elements.at(-1)?.id ?? '',
+                      scene.id,
+                      scene.elements,
+                    );
                   }}
                   onKeyDown={(event) => {
                     const nextIndex = getTabIndexForKey(
@@ -9361,7 +9692,11 @@ export function MotusStudio() {
                     resetTransientCanvasState();
                     endHistoryTransaction();
                     setActiveSceneId(nextScene.id);
-                    setSelectedElementId(nextScene.elements.at(-1)?.id ?? '');
+                    setSelectedElementId(
+                      nextScene.elements.at(-1)?.id ?? '',
+                      nextScene.id,
+                      nextScene.elements,
+                    );
                     window.requestAnimationFrame(() =>
                       sceneButtonRefs.current.get(nextScene.id)?.focus(),
                     );
@@ -11800,7 +12135,7 @@ export function MotusStudio() {
               onLayoutChanged={rememberStudioPanelLayout}
               orientation="horizontal"
             >
-              <ResizablePanel id="left" minSize="112px" />
+              <ResizablePanel id="left" minSize="220px" />
               <ResizableHandle
                 aria-label={
                   inspectorTab === 'motion'

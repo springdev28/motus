@@ -3735,7 +3735,7 @@
 .layer-row {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px;
   border: 1px solid transparent;
@@ -3774,6 +3774,52 @@
 }
 .layer-row[data-dragging] {
   opacity: 0.28;
+}
+.layer-disclosure,
+.layer-disclosure-spacer {
+  width: 24px;
+  height: 30px;
+}
+.layer-disclosure {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #756d7b;
+  cursor: pointer;
+}
+.layer-disclosure:hover {
+  background: #dfd8eb;
+  color: #4f3bb0;
+}
+.layer-disclosure:focus-visible,
+.layer-row:focus-visible,
+.layer-select:focus-visible {
+  border-radius: 7px;
+  outline: 2px solid var(--brand-violet);
+  outline-offset: 2px;
+}
+.layer-disclosure svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 120ms ease;
+}
+.layer-row[data-expanded] .layer-disclosure svg {
+  transform: rotate(90deg);
+}
+.layer-row:not([data-expanded])
+  .layer-disclosure[data-selected-descendant]::after {
+  position: absolute;
+  right: 1px;
+  bottom: 4px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid #fffdf9;
+  border-radius: 999px;
+  background: var(--brand-violet);
+  content: '';
 }
 .layer-drop-zone {
   position: absolute;
@@ -11608,6 +11654,25 @@
     width: 44px;
     height: 44px;
   }
+  .layer-disclosure,
+  .layer-disclosure-spacer {
+    width: 44px;
+    height: 44px;
+  }
+  .layer-row {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+  .layer-select {
+    min-height: 44px;
+  }
+  .layer-actions {
+    grid-column: 2 / -1;
+    grid-template-columns: repeat(2, minmax(44px, 1fr));
+  }
+  .layer-actions button {
+    width: 100%;
+    height: 44px;
+  }
   .mobile-pane-tab,
   .preview-play-button,
   .preview-stop-button,
@@ -11726,6 +11791,7 @@
   .element-category-list button,
   .element-catalog-card,
   .layer-row,
+  .layer-disclosure,
   .layer-root-drop,
   .layer-drag-preview,
   .joint-edit-toggle,
@@ -11778,6 +11844,18 @@
   .rig-skeleton-joint-list button[data-selected] {
     outline: 2px solid Highlight;
     outline-offset: -3px;
+  }
+  .layer-disclosure:focus-visible,
+  .layer-row:focus-visible,
+  .layer-select:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+  .layer-row:not([data-expanded])
+    .layer-disclosure[data-selected-descendant]::after {
+    border-color: Canvas;
+    background: Highlight;
+    forced-color-adjust: none;
   }
   .preview-progress-fill {
     background: Highlight;
