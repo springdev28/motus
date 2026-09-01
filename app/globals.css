@@ -11585,6 +11585,19 @@
   }
 }
 
+@media (max-width: 420px) {
+  .motion-timeline-header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .motion-timeline-title,
+  .motion-timeline-time {
+    display: none;
+  }
+  .motion-timeline-scope {
+    justify-self: center;
+  }
+}
+
 @media (pointer: coarse) {
   .work-details-tabs [data-slot='tabs-trigger'],
   .work-details-field :is(input, select, textarea),

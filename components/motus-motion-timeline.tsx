@@ -12,7 +12,7 @@ import {
   type MotionTimelineScope,
   type MotionTimelineSpan,
 } from '@/lib/motus-motion-timeline';
-import type { MotusScene } from '@/lib/motus-model';
+import { getElementRigComponentIds, type MotusScene } from '@/lib/motus-model';
 
 type MotusMotionTimelineProps = {
   active: boolean;
@@ -63,6 +63,12 @@ export function MotusMotionTimeline({
     () => buildMotionTimelineTracks(scene.elements, scope, selectedElementId),
     [scene.elements, scope, selectedElementId],
   );
+  const selectedElementName = scene.elements.find(
+    (element) => element.id === selectedElementId,
+  )?.name;
+  const rigPartCount = selectedElementId
+    ? getElementRigComponentIds(scene.elements, selectedElementId).length
+    : 0;
   const durationMs = getMotionTimelineDuration(tracks);
   const ticks = useMemo(
     () => getMotionTimelineTicks(durationMs, 5),
@@ -71,7 +77,7 @@ export function MotusMotionTimeline({
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
 
   const timelineSelectionKey =
-    scope === 'selected' ? (selectedElementId ?? '') : 'scene';
+    scope === 'scene' ? 'scene' : `${scope}:${selectedElementId ?? ''}`;
   const timelineProgramKey = tracks
     .map((track) =>
       [
@@ -126,6 +132,7 @@ export function MotusMotionTimeline({
       className="motion-timeline"
       data-collapsed={collapsed || undefined}
       data-playing={playing || undefined}
+      data-scope={scope}
     >
       <header className="motion-timeline-header">
         <div className="motion-timeline-transport">
@@ -160,17 +167,28 @@ export function MotusMotionTimeline({
           <strong>
             {scope === 'selected'
               ? (tracks[0]?.elementName ?? 'Selected layer')
-              : `${tracks.length} motion ${tracks.length === 1 ? 'track' : 'tracks'}`}
+              : scope === 'rig'
+                ? `${tracks.length} animated ${tracks.length === 1 ? 'layer' : 'layers'} · ${rigPartCount}-part rig`
+                : `${tracks.length} motion ${tracks.length === 1 ? 'track' : 'tracks'}`}
           </strong>
         </div>
 
-        <fieldset aria-label="Timeline scope" className="motion-timeline-scope">
+        <fieldset aria-label="Playback scope" className="motion-timeline-scope">
           <button
             aria-pressed={scope === 'selected'}
             onClick={() => onScopeChange('selected')}
             type="button"
           >
             Selected
+          </button>
+          <button
+            aria-label={`Connected rig${selectedElementName ? ` for ${selectedElementName}` : ''}`}
+            aria-pressed={scope === 'rig'}
+            onClick={() => onScopeChange('rig')}
+            title="Preview this layer's complete connected rig"
+            type="button"
+          >
+            Rig
           </button>
           <button
             aria-pressed={scope === 'scene'}
@@ -243,7 +261,11 @@ export function MotusMotionTimeline({
 
               <div className="motion-timeline-tracks">
                 {tracks.map((track) => (
-                  <div className="motion-timeline-track" key={track.elementId}>
+                  <div
+                    className="motion-timeline-track"
+                    data-element-id={track.elementId}
+                    key={track.elementId}
+                  >
                     <button
                       className="motion-timeline-track-label"
                       onClick={() =>
@@ -317,7 +339,9 @@ export function MotusMotionTimeline({
               <span>
                 {scope === 'selected'
                   ? 'Select a visible layer with an enabled action block.'
-                  : 'Add an enabled action block to a visible scene layer.'}
+                  : scope === 'rig'
+                    ? 'Add an enabled action block to a visible layer in this connected rig.'
+                    : 'Add an enabled action block to a visible scene layer.'}
               </span>
             </div>
           )}

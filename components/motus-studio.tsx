@@ -307,7 +307,12 @@ import {
   type PublicationVisibility,
   type MotionProgramRuntimeIssue,
 } from '@/lib/motus-model';
-import type { MotionTimelineSpan } from '@/lib/motus-motion-timeline';
+import {
+  buildMotionTimelineTracks,
+  getMotionTimelineDuration,
+  type MotionTimelineScope,
+  type MotionTimelineSpan,
+} from '@/lib/motus-motion-timeline';
 import {
   getAdjacentReaderPosition,
   getReaderControlIntent,
@@ -555,7 +560,7 @@ type ReaderMode = 'scroll' | 'page' | 'spread';
 
 const readerModeForFormat = (format: MotusProject['format']): ReaderMode =>
   format === 'spread' ? 'spread' : format === 'page' ? 'page' : 'scroll';
-type PreviewScope = 'selected' | 'scene';
+type PreviewScope = MotionTimelineScope;
 type MobileStudioPane = 'blocks' | 'stage' | 'layers';
 
 const MOBILE_STUDIO_PANES: MobileStudioPane[] = ['blocks', 'stage', 'layers'];
@@ -2660,7 +2665,7 @@ type SceneViewProps = {
   selectedId?: string;
   selectedIds?: ReadonlySet<string>;
   playingKey?: number;
-  playingElementId?: string;
+  playingElementIds?: readonly string[];
   onPlaybackComplete?: () => void;
   onPlaybackController?: (controller: ScenePlaybackController | null) => void;
   playbackStartsPaused?: boolean;
@@ -2703,7 +2708,7 @@ function SceneView({
   selectedId,
   selectedIds,
   playingKey = 0,
-  playingElementId,
+  playingElementIds,
   onPlaybackComplete,
   onPlaybackController,
   playbackStartsPaused = false,
@@ -2738,6 +2743,9 @@ function SceneView({
         : getSceneThumbnailElements(scene, elementLimit),
     [elementLimit, scene],
   );
+  const playingElementIdsKey = playingElementIds
+    ? JSON.stringify(playingElementIds)
+    : null;
   const rigOverlay = useMemo(() => {
     if (
       !interactive ||
@@ -2828,8 +2836,11 @@ function SceneView({
     }
 
     const sharedStartTime = document.timeline.currentTime;
+    const playingElementIdSet = playingElementIdsKey
+      ? new Set<string>(JSON.parse(playingElementIdsKey))
+      : null;
     for (const element of renderedElements) {
-      if (playingElementId && element.id !== playingElementId) continue;
+      if (playingElementIdSet && !playingElementIdSet.has(element.id)) continue;
       const node = elementNodes.current.get(element.id);
       if (!node) continue;
       const animation = animateElementProgram(
@@ -2883,7 +2894,7 @@ function SceneView({
     }
 
     return cleanup;
-  }, [playingElementId, playingKey, readerTriggers, renderedElements]);
+  }, [playingElementIdsKey, playingKey, readerTriggers, renderedElements]);
 
   const triggerReaderElement = useCallback<ReaderTriggerElement>(
     (elementId, restart = false, visited = new Set()) => {
@@ -3963,6 +3974,27 @@ export function MotusStudio() {
     }
     return path;
   }, [activeScene.elements, selectedElement]);
+  const selectedRigComponentIds = useMemo(
+    () =>
+      selectedElement
+        ? getElementRigComponentIds(activeScene.elements, selectedElement.id)
+        : [],
+    [activeScene.elements, selectedElement],
+  );
+  const selectedRigComponentIdSet = useMemo(
+    () => new Set(selectedRigComponentIds),
+    [selectedRigComponentIds],
+  );
+  const selectedRigRoot = useMemo(
+    () =>
+      activeScene.elements.find(
+        (element) =>
+          selectedRigComponentIdSet.has(element.id) &&
+          (!element.parentId ||
+            !selectedRigComponentIdSet.has(element.parentId)),
+      ) ?? selectedElement,
+    [activeScene.elements, selectedElement, selectedRigComponentIdSet],
+  );
   const selectedElementIdSet = useMemo(
     () => new Set(selectedElementIds),
     [selectedElementIds],
@@ -7775,25 +7807,40 @@ export function MotusStudio() {
   const readerPageTransitionStyle = {
     '--reader-transition-duration': `${readerSource.readerPresentation.durationMs}ms`,
   } as CSSProperties;
-  const selectedPreviewDurationMs = useMemo(() => {
-    if (!selectedElement?.visible) return 0;
-    const compiled = compileElementMotion(selectedElement);
-    return compiled.steps.some((step) => step.kind !== 'wait')
-      ? compiled.sequenceDurationMs
-      : 0;
-  }, [selectedElement]);
-  const scenePreviewDurationMs = useMemo(
-    () =>
-      activeScene.elements.reduce((longestDuration, element) => {
-        if (!element.visible) return longestDuration;
-        const compiled = compileElementMotion(element);
-        if (!compiled.steps.some((step) => step.kind !== 'wait')) {
-          return longestDuration;
-        }
-        return Math.max(longestDuration, compiled.sequenceDurationMs);
-      }, 0),
-    [activeScene.elements],
+  const previewTracksByScope = useMemo(
+    () => ({
+      selected: buildMotionTimelineTracks(
+        activeScene.elements,
+        'selected',
+        selectedElement?.id,
+      ),
+      rig: buildMotionTimelineTracks(
+        activeScene.elements,
+        'rig',
+        selectedElement?.id,
+      ),
+      scene: buildMotionTimelineTracks(
+        activeScene.elements,
+        'scene',
+        selectedElement?.id,
+      ),
+    }),
+    [activeScene.elements, selectedElement?.id],
   );
+  const canvasPreviewElementIds =
+    previewScope === 'scene'
+      ? undefined
+      : previewScope === 'rig'
+        ? selectedRigComponentIds
+        : selectedElement
+          ? [selectedElement.id]
+          : [];
+  const getPreviewScopeLabel = (scope: PreviewScope) =>
+    scope === 'scene'
+      ? 'Scene'
+      : scope === 'rig'
+        ? `${selectedRigRoot?.name ?? 'Selected'} rig`
+        : (selectedElement?.name ?? 'Selected layer');
   const finishCanvasPreview = useCallback(() => {
     if (!previewRunningRef.current) return;
     previewRunningRef.current = false;
@@ -7847,13 +7894,16 @@ export function MotusStudio() {
   const startCanvasPreview = (scope: PreviewScope = previewScope) => {
     activePointerCleanup.current?.();
     endHistoryTransaction();
-    const duration =
-      scope === 'selected' ? selectedPreviewDurationMs : scenePreviewDurationMs;
+    const duration = getMotionTimelineDuration(previewTracksByScope[scope]);
     if (duration <= 0) {
       setNotice(
         scope === 'selected'
           ? 'Select a visible layer with an enabled motion block'
-          : 'Add an enabled motion block to a visible layer',
+          : scope === 'rig'
+            ? selectedElement
+              ? 'Add an enabled motion block to this visible rig'
+              : 'Select a rig layer with an enabled motion block'
+            : 'Add an enabled motion block to a visible layer',
       );
       return;
     }
@@ -7874,7 +7924,7 @@ export function MotusStudio() {
     setMobileStudioPane('stage');
     setCanvasPreviewKey((key) => key + 1);
     setNotice(
-      `${scope === 'selected' ? selectedElement?.name : 'Scene'} preview · ${formatPreviewDuration(duration)}`,
+      `${getPreviewScopeLabel(scope)} preview · ${formatPreviewDuration(duration)}`,
     );
   };
 
@@ -7899,10 +7949,9 @@ export function MotusStudio() {
   };
 
   const seekCanvasPreview = (timeMs: number) => {
-    const duration =
-      previewScope === 'selected'
-        ? selectedPreviewDurationMs
-        : scenePreviewDurationMs;
+    const duration = getMotionTimelineDuration(
+      previewTracksByScope[previewScope],
+    );
     if (duration <= 0) return;
     const nextTime = Math.min(Math.max(timeMs, 0), duration);
     previewRunningRef.current = false;
@@ -7932,7 +7981,7 @@ export function MotusStudio() {
     setPreviewStartsPaused(false);
     setCanvasPreviewKey(0);
     setPreviewScope(scope);
-    setNotice(`${scope === 'selected' ? 'Selected layer' : 'Scene'} timeline`);
+    setNotice(`${getPreviewScopeLabel(scope)} timeline`);
   };
 
   const selectMotionTimelineSpan = (
@@ -9158,11 +9207,7 @@ export function MotusStudio() {
                 onPointerAction={beginPointerAction}
                 onSelect={selectElement}
                 onTextChange={changeTextOnCanvas}
-                playingElementId={
-                  previewScope === 'selected'
-                    ? (selectedElement?.id ?? '__no-selection__')
-                    : undefined
-                }
+                playingElementIds={canvasPreviewElementIds}
                 playingKey={canvasPreviewKey}
                 playbackStartsPaused={previewStartsPaused}
                 scene={activeScene}
@@ -10639,11 +10684,29 @@ export function MotusStudio() {
                             Edit layer
                           </Button>
                           <Button
-                            onClick={() => startCanvasPreview('selected')}
+                            aria-label={
+                              selectedRigComponentIds.length > 1
+                                ? `Run connected rig for ${selectedRigRoot?.name ?? selectedElement.name}`
+                                : `Run ${selectedElement.name}`
+                            }
+                            onClick={() =>
+                              startCanvasPreview(
+                                selectedRigComponentIds.length > 1
+                                  ? 'rig'
+                                  : 'selected',
+                              )
+                            }
                             size="sm"
+                            title={
+                              selectedRigComponentIds.length > 1
+                                ? `Preview all ${selectedRigComponentIds.length} connected rig layers together`
+                                : 'Preview this layer'
+                            }
                           >
                             <Flag fill="currentColor" />
-                            Run
+                            {selectedRigComponentIds.length > 1
+                              ? 'Run rig'
+                              : 'Run'}
                           </Button>
                         </div>
                       </section>
