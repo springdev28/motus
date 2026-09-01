@@ -8,6 +8,7 @@ import {
   compileElementMotion,
   createBlankProject,
   createElement,
+  getElementRigPivotForRenderedCanvasPoint,
   getElementRigRenderedVisualBounds,
   restoreProject,
   setElementRigPivotPreservingPose,
@@ -54,6 +55,33 @@ function assertBoundsClose(
   ] as const) {
     assertClose(actual[field], expected[field], 1e-6);
   }
+}
+
+function renderRigPoint(
+  elements: readonly MotusElement[],
+  elementId: string,
+  point: { x: number; y: number },
+) {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const visited = new Set<string>();
+  let current = byId.get(elementId);
+  let rendered = point;
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    const pivot = {
+      x: current.x + (current.width * current.pivotX) / 100,
+      y: current.y + (current.height * current.pivotY) / 100,
+    };
+    const radians = (current.rotation * Math.PI) / 180;
+    const deltaX = rendered.x - pivot.x;
+    const deltaY = rendered.y - pivot.y;
+    rendered = {
+      x: pivot.x + deltaX * Math.cos(radians) - deltaY * Math.sin(radians),
+      y: pivot.y + deltaX * Math.sin(radians) + deltaY * Math.cos(radians),
+    };
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  return rendered;
 }
 
 void test('applies exact pivot compensation to a full rig branch', () => {
@@ -467,5 +495,172 @@ void test('preflights every descendant and survives a restore round trip', () =>
   assertBoundsClose(
     getElementRigRenderedVisualBounds(restoredElements, 'descendant'),
     expectedDescendant,
+  );
+});
+
+void test('maps an unrotated canvas point to authored pivot percentages', () => {
+  const target = layer('target', null);
+
+  assert.deepEqual(
+    getElementRigPivotForRenderedCanvasPoint([target], target.id, {
+      x: 350,
+      y: 700,
+    }),
+    { pivotX: 25, pivotY: 80 },
+  );
+});
+
+void test('inverts the selected layer rotation before placing its pivot', () => {
+  const target = layer('target', null, { rotation: 90 });
+  const desiredAuthoredPoint = { x: 300, y: 800 };
+  const renderedPoint = renderRigPoint(
+    [target],
+    target.id,
+    desiredAuthoredPoint,
+  );
+
+  const pivot = getElementRigPivotForRenderedCanvasPoint(
+    [target],
+    target.id,
+    renderedPoint,
+  );
+
+  assert.ok(pivot);
+  assertClose(pivot.pivotX, 0);
+  assertClose(pivot.pivotY, 100);
+});
+
+void test('inverts every nested rig rotation in outer-to-inner order', () => {
+  const body = layer('body', null, {
+    x: 180,
+    y: 240,
+    width: 620,
+    height: 820,
+    rotation: 37,
+    pivotX: 44,
+    pivotY: 59,
+  });
+  const shoulder = layer('shoulder', body.id, {
+    x: 370,
+    y: 430,
+    width: 280,
+    height: 260,
+    rotation: -53,
+    pivotX: 15,
+    pivotY: 72,
+  });
+  const arm = layer('arm', shoulder.id, {
+    x: 460,
+    y: 520,
+    width: 170,
+    height: 430,
+    rotation: 81,
+    pivotX: 62,
+    pivotY: 11,
+  });
+  const source = [body, shoulder, arm];
+  const desired = { pivotX: 18.5, pivotY: 82.25 };
+  const renderedPoint = renderRigPoint(source, arm.id, {
+    x: arm.x + (arm.width * desired.pivotX) / 100,
+    y: arm.y + (arm.height * desired.pivotY) / 100,
+  });
+
+  const pivot = getElementRigPivotForRenderedCanvasPoint(
+    source,
+    arm.id,
+    renderedPoint,
+  );
+
+  assert.ok(pivot);
+  assertClose(pivot.pivotX, desired.pivotX, 1e-8);
+  assertClose(pivot.pivotY, desired.pivotY, 1e-8);
+});
+
+void test('clamps stage placement and rejects unusable canvas points', () => {
+  const target = layer('target', null);
+
+  assert.deepEqual(
+    getElementRigPivotForRenderedCanvasPoint([target], target.id, {
+      x: -500,
+      y: 5_000,
+    }),
+    { pivotX: 0, pivotY: 100 },
+  );
+  assert.equal(
+    getElementRigPivotForRenderedCanvasPoint([target], 'missing', {
+      x: 300,
+      y: 300,
+    }),
+    null,
+  );
+  assert.equal(
+    getElementRigPivotForRenderedCanvasPoint([target], target.id, {
+      x: Number.NaN,
+      y: 300,
+    }),
+    null,
+  );
+});
+
+void test('round-trips direct stage placement through pose compensation', () => {
+  const body = layer('body', null, {
+    x: 200,
+    y: 260,
+    width: 560,
+    height: 780,
+    rotation: -29,
+  });
+  const arm = layer('arm', body.id, {
+    x: 420,
+    y: 500,
+    width: 180,
+    height: 440,
+    rotation: 46,
+    pivotX: 50,
+    pivotY: 50,
+  });
+  const hand = layer('hand', arm.id, {
+    x: 455,
+    y: 850,
+    width: 125,
+    height: 140,
+  });
+  const source = [body, arm, hand];
+  const desiredAuthoredPoint = {
+    x: arm.x + arm.width * 0.12,
+    y: arm.y + arm.height * 0.2,
+  };
+  const renderedPoint = renderRigPoint(source, arm.id, desiredAuthoredPoint);
+  const pivot = getElementRigPivotForRenderedCanvasPoint(
+    source,
+    arm.id,
+    renderedPoint,
+  );
+  assert.ok(pivot);
+  const expectedArmBounds = getElementRigRenderedVisualBounds(source, arm.id);
+  const expectedHandBounds = getElementRigRenderedVisualBounds(source, hand.id);
+
+  const result = setElementRigPivotPreservingPose(
+    source,
+    arm.id,
+    pivot.pivotX,
+    pivot.pivotY,
+  );
+
+  assert.equal(result.issue, null);
+  const nextArm = result.elements[1];
+  const nextRenderedPivot = renderRigPoint(result.elements, arm.id, {
+    x: nextArm.x + (nextArm.width * nextArm.pivotX) / 100,
+    y: nextArm.y + (nextArm.height * nextArm.pivotY) / 100,
+  });
+  assertClose(nextRenderedPivot.x, renderedPoint.x, 1e-7);
+  assertClose(nextRenderedPivot.y, renderedPoint.y, 1e-7);
+  assertBoundsClose(
+    getElementRigRenderedVisualBounds(result.elements, arm.id),
+    expectedArmBounds,
+  );
+  assertBoundsClose(
+    getElementRigRenderedVisualBounds(result.elements, hand.id),
+    expectedHandBounds,
   );
 });

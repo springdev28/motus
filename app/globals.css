@@ -4841,7 +4841,25 @@
 }
 .rig-pivot-marker {
   position: absolute;
-  z-index: 12;
+  z-index: 50000;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  cursor: default;
+  pointer-events: auto;
+}
+.rig-pivot-marker[data-draggable] {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.rig-pivot-marker[data-draggable]:active {
+  cursor: grabbing;
+}
+.rig-pivot-glyph {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: 16px;
   height: 16px;
   border: 2px solid #fff;
@@ -4849,10 +4867,19 @@
   background: var(--brand-violet);
   box-shadow: 0 0 0 2px rgb(64 43 160 / 76%);
   transform: translate(-50%, -50%);
-  pointer-events: none;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
 }
-.rig-pivot-marker::before,
-.rig-pivot-marker::after {
+.rig-pivot-marker[data-draggable]:hover .rig-pivot-glyph,
+.rig-pivot-marker[data-draggable]:active .rig-pivot-glyph {
+  box-shadow:
+    0 0 0 3px rgb(64 43 160 / 78%),
+    0 4px 14px rgb(42 22 132 / 38%);
+  transform: translate(-50%, -50%) scale(1.12);
+}
+.rig-pivot-glyph::before,
+.rig-pivot-glyph::after {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -4860,11 +4887,11 @@
   content: '';
   transform: translate(-50%, -50%);
 }
-.rig-pivot-marker::before {
+.rig-pivot-glyph::before {
   width: 8px;
   height: 1px;
 }
-.rig-pivot-marker::after {
+.rig-pivot-glyph::after {
   width: 1px;
   height: 8px;
 }
@@ -11428,6 +11455,12 @@
   .resize-handle,
   .rotate-handle {
     border: 2px solid ButtonText;
+  }
+  .rig-pivot-glyph {
+    border-color: Canvas;
+    background: Highlight;
+    box-shadow: 0 0 0 2px ButtonText;
+    forced-color-adjust: none;
   }
   .mobile-pane-tab[data-active],
   .mobile-pane-tab[aria-pressed='true'],

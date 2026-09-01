@@ -222,6 +222,7 @@ import {
   getElementRigCascadeDeleteIds,
   getElementRigDepth,
   getElementRigDescendantIds,
+  getElementRigPivotForRenderedCanvasPoint,
   getPublicationReadiness,
   getDraftSaveStatus,
   getDraftExitAction,
@@ -2702,6 +2703,10 @@ type SceneViewProps = {
     elementId: string,
     mode: ElementPointerTransformMode,
   ) => void;
+  onPivotPointerAction?: (
+    event: ReactPointerEvent<HTMLElement>,
+    elementId: string,
+  ) => void;
 };
 
 type ReaderTriggerElement = (
@@ -2732,6 +2737,7 @@ function SceneView({
   onKeyboardNudgeEnd,
   onElementRef,
   onPointerAction,
+  onPivotPointerAction,
 }: SceneViewProps) {
   const maskNamespace = useId().replace(/[^a-z0-9_-]/gi, '-');
   const elementNodes = useRef(new Map<string, HTMLDivElement>());
@@ -3281,16 +3287,6 @@ function SceneView({
                       : undefined
                 }
               >
-                {primarySelected && interactive ? (
-                  <span
-                    aria-hidden="true"
-                    className="rig-pivot-marker"
-                    style={{
-                      left: `${element.pivotX}%`,
-                      top: `${element.pivotY}%`,
-                    }}
-                  />
-                ) : null}
                 {editingText ? (
                   <CanvasTextEditor
                     element={element}
@@ -3380,6 +3376,52 @@ function SceneView({
           )
           .map((element) => renderRigElement(element));
       })()}
+      {interactive && selectedId
+        ? (() => {
+            const element = renderedElements.find(
+              (candidate) => candidate.id === selectedId,
+            );
+            if (
+              !element ||
+              !isElementEffectivelyVisible(renderedElements, element.id)
+            ) {
+              return null;
+            }
+            const point = getRenderedRigPoint(renderedElements, element.id, {
+              x: element.x + (element.width * element.pivotX) / 100,
+              y: element.y + (element.height * element.pivotY) / 100,
+            });
+            const draggable =
+              !element.locked &&
+              editingTextId !== element.id &&
+              Boolean(onPivotPointerAction);
+            return (
+              // Inspector sliders remain the keyboard-accessible equivalent for this direct pointer control.
+              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+              <span
+                aria-hidden="true"
+                className="rig-pivot-marker"
+                data-draggable={draggable || undefined}
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  if (draggable) onPivotPointerAction?.(event, element.id);
+                }}
+                style={{
+                  left: `${(point.x / CANVAS_WIDTH) * 100}%`,
+                  top: `${(point.y / CANVAS_HEIGHT) * 100}%`,
+                }}
+                title={
+                  element.locked
+                    ? `Unlock ${element.name} to place its joint`
+                    : `Drag to place ${element.name} joint`
+                }
+              >
+                <span className="rig-pivot-glyph" />
+              </span>
+            );
+          })()
+        : null}
     </section>
   );
 }
@@ -6759,6 +6801,146 @@ export function MotusStudio() {
     setNotice(`Revision ${revision.revision} restored to draft`);
   };
 
+  const beginPivotPointerAction = (
+    event: ReactPointerEvent<HTMLElement>,
+    elementId: string,
+  ) => {
+    const element = findElement(project, activeScene.id, elementId);
+    const artboard = event.currentTarget.closest(
+      '.artboard',
+    ) as HTMLElement | null;
+    if (
+      previewActive ||
+      !event.isPrimary ||
+      event.button !== 0 ||
+      !element ||
+      element.locked ||
+      selectedElementId !== elementId ||
+      editingTextElementId === elementId ||
+      !artboard
+    ) {
+      return;
+    }
+    const bounds = artboard.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    const elementName = element.name;
+
+    event.preventDefault();
+    event.stopPropagation();
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    activePivotGesture.current = null;
+    setActiveAlignmentGuides([]);
+    const originSceneElements = activeScene.elements;
+    const pointerId = event.pointerId;
+    const pointerType = event.pointerType;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startCanvasPoint = {
+      x: ((startX - bounds.left) / bounds.width) * CANVAS_WIDTH,
+      y: ((startY - bounds.top) / bounds.height) * CANVAS_HEIGHT,
+    };
+    const renderedPivot = getRenderedRigPoint(originSceneElements, elementId, {
+      x: element.x + (element.width * element.pivotX) / 100,
+      y: element.y + (element.height * element.pivotY) / 100,
+    });
+    const grabOffset = {
+      x: startCanvasPoint.x - renderedPivot.x,
+      y: startCanvasPoint.y - renderedPivot.y,
+    };
+    let moved = false;
+    let blockedByCanvas = false;
+
+    function onMove(pointer: PointerEvent) {
+      if (pointer.pointerId !== pointerId) return;
+      const clientDeltaX = pointer.clientX - startX;
+      const clientDeltaY = pointer.clientY - startY;
+      if (
+        !moved &&
+        !hasPointerDragStarted(clientDeltaX, clientDeltaY, pointerType)
+      ) {
+        return;
+      }
+      const renderedPoint = {
+        x:
+          ((pointer.clientX - bounds.left) / bounds.width) * CANVAS_WIDTH -
+          grabOffset.x,
+        y:
+          ((pointer.clientY - bounds.top) / bounds.height) * CANVAS_HEIGHT -
+          grabOffset.y,
+      };
+      const pivot = getElementRigPivotForRenderedCanvasPoint(
+        originSceneElements,
+        elementId,
+        renderedPoint,
+      );
+      if (!pivot) return;
+      const result = setElementRigPivotPreservingPose(
+        originSceneElements,
+        elementId,
+        pivot.pivotX,
+        pivot.pivotY,
+      );
+      if (result.issue) {
+        blockedByCanvas = true;
+        setNotice('Joint reached the canvas limit');
+        return;
+      }
+      blockedByCanvas = false;
+      if (!moved && !result.changed) return;
+      if (!moved) {
+        undoStack.current = trimProjectHistory([
+          ...undoStack.current,
+          createProjectHistoryEntry(project, {
+            chapterId: activeChapter.id,
+            sceneId: activeScene.id,
+            elementId,
+          }),
+        ]);
+        redoStack.current = [];
+        setCanUndo(true);
+        setCanRedo(false);
+        clearDeletionUndo();
+        setIsDirty(true);
+        moved = true;
+      }
+      setProject((current) => {
+        const next = cloneProject(current);
+        const scene = findProjectScene(next, activeScene.id)?.scene;
+        if (!scene) return current;
+        scene.elements = result.changed ? result.elements : originSceneElements;
+        next.updatedAt = new Date().toISOString();
+        return next;
+      });
+    }
+
+    function cleanup() {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+      if (activePointerCleanup.current === cleanup) {
+        activePointerCleanup.current = null;
+      }
+    }
+
+    function finish(pointer?: PointerEvent | Event) {
+      if (pointer instanceof PointerEvent && pointer.pointerId !== pointerId) {
+        return;
+      }
+      cleanup();
+      if (moved && !blockedByCanvas) {
+        setNotice(`${elementName} joint placed · pose preserved`);
+      }
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish, { once: true });
+    activePointerCleanup.current = cleanup;
+  };
+
   const beginPointerAction = (
     event: ReactPointerEvent<HTMLElement>,
     elementId: string,
@@ -6772,6 +6954,7 @@ export function MotusStudio() {
       '.artboard',
     ) as HTMLElement | null;
     if (
+      previewActive ||
       !event.isPrimary ||
       event.button !== 0 ||
       !element ||
@@ -8668,8 +8851,9 @@ export function MotusStudio() {
                 select every layer. Dragged layers snap to canvas and visible
                 layer edges and centers; hold Alt or Option for free movement.
                 Double-click text, or press Enter on selected text, to edit it
-                directly on the stage. For exact keyboard resizing and rotation,
-                use Width, Height, and Rotation in the Design inspector.
+                directly on the stage. For exact keyboard resizing, rotation,
+                and joint placement, use Width, Height, Rotation, Pivot X, and
+                Pivot Y in the Design inspector.
               </span>
               {inspectorTab === 'design' ? (
                 <>
@@ -8776,6 +8960,9 @@ export function MotusStudio() {
                 onKeyboardNudgeEnd={endHistoryTransaction}
                 onPlaybackComplete={finishCanvasPreview}
                 onPlaybackController={handleCanvasPlaybackController}
+                onPivotPointerAction={
+                  previewActive ? undefined : beginPivotPointerAction
+                }
                 onPointerAction={beginPointerAction}
                 onSelect={selectElement}
                 onTextChange={changeTextOnCanvas}

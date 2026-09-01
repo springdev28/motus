@@ -3668,6 +3668,50 @@ function inverseRotateRigPointAroundElement(
   return { x: pivot.x + rotated.x, y: pivot.y + rotated.y };
 }
 
+/**
+ * Converts a rendered canvas point into the selected layer's authored pivot.
+ * The full transform chain is inverted so direct stage placement remains
+ * accurate beneath rotated parents and for a locally rotated layer.
+ */
+export function getElementRigPivotForRenderedCanvasPoint(
+  elements: readonly MotusElement[],
+  elementId: string,
+  point: { x: number; y: number },
+): { pivotX: number; pivotY: number } | null {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  if (
+    !element ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    !Number.isFinite(element.width) ||
+    !Number.isFinite(element.height) ||
+    element.width <= 0 ||
+    element.height <= 0
+  ) {
+    return null;
+  }
+  const transforms = [element, ...getElementRigAncestors(elements, elementId)];
+  const authoredPoint = [...transforms]
+    .reverse()
+    .reduce(
+      (candidate, transform) =>
+        inverseRotateRigPointAroundElement(candidate, transform),
+      point,
+    );
+  return {
+    pivotX: clamp(
+      ((authoredPoint.x - element.x) / element.width) * 100,
+      MIN_ELEMENT_RIG_PIVOT,
+      MAX_ELEMENT_RIG_PIVOT,
+    ),
+    pivotY: clamp(
+      ((authoredPoint.y - element.y) / element.height) * 100,
+      MIN_ELEMENT_RIG_PIVOT,
+      MAX_ELEMENT_RIG_PIVOT,
+    ),
+  };
+}
+
 function normalizeRigRotation(rotation: number) {
   return ((((rotation + 180) % 360) + 360) % 360) - 180;
 }
