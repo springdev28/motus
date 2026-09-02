@@ -3485,6 +3485,44 @@ export function getElementRigDescendantIds(
   return descendants;
 }
 
+/** Returns the complete transform-connected rig containing one layer. */
+export function getElementRigComponentIds(
+  elements: readonly MotusElement[],
+  elementId: string,
+): string[] {
+  const ids = new Set(elements.map((element) => element.id));
+  if (!ids.has(elementId)) return [];
+
+  const neighbors = new Map<string, Set<string>>(
+    elements.map((element) => [element.id, new Set<string>()]),
+  );
+  for (const element of elements) {
+    if (
+      !element.parentId ||
+      element.parentId === element.id ||
+      !ids.has(element.parentId)
+    ) {
+      continue;
+    }
+    neighbors.get(element.id)?.add(element.parentId);
+    neighbors.get(element.parentId)?.add(element.id);
+  }
+
+  const connected = new Set<string>([elementId]);
+  const queue = [elementId];
+  while (queue.length) {
+    const current = queue.shift()!;
+    for (const neighbor of neighbors.get(current) ?? []) {
+      if (connected.has(neighbor)) continue;
+      connected.add(neighbor);
+      queue.push(neighbor);
+    }
+  }
+  return elements
+    .filter((element) => connected.has(element.id))
+    .map((element) => element.id);
+}
+
 export function getElementRigDepth(
   elements: readonly MotusElement[],
   elementId: string,
@@ -3668,6 +3706,80 @@ function inverseRotateRigPointAroundElement(
   return { x: pivot.x + rotated.x, y: pivot.y + rotated.y };
 }
 
+/** Returns a layer joint's final canvas position after every parent transform. */
+export function getElementRigRenderedPivotPoint(
+  elements: readonly MotusElement[],
+  elementId: string,
+): { x: number; y: number } | null {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  if (!element) return null;
+  const authoredPivot = {
+    x: element.x + (element.width * element.pivotX) / 100,
+    y: element.y + (element.height * element.pivotY) / 100,
+  };
+  if (!Number.isFinite(authoredPivot.x) || !Number.isFinite(authoredPivot.y)) {
+    return null;
+  }
+  const visited = new Set<string>([elementId]);
+  let renderedPoint = authoredPivot;
+  for (const ancestor of getElementRigAncestors(elements, elementId)) {
+    if (visited.has(ancestor.id)) return null;
+    visited.add(ancestor.id);
+    renderedPoint = rotateRigPointAroundElement(renderedPoint, ancestor);
+    if (
+      !Number.isFinite(renderedPoint.x) ||
+      !Number.isFinite(renderedPoint.y)
+    ) {
+      return null;
+    }
+  }
+  return renderedPoint;
+}
+
+/**
+ * Converts a rendered canvas point into the selected layer's authored pivot.
+ * The full transform chain is inverted so direct stage placement remains
+ * accurate beneath rotated parents and for a locally rotated layer.
+ */
+export function getElementRigPivotForRenderedCanvasPoint(
+  elements: readonly MotusElement[],
+  elementId: string,
+  point: { x: number; y: number },
+): { pivotX: number; pivotY: number } | null {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  if (
+    !element ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    !Number.isFinite(element.width) ||
+    !Number.isFinite(element.height) ||
+    element.width <= 0 ||
+    element.height <= 0
+  ) {
+    return null;
+  }
+  const transforms = [element, ...getElementRigAncestors(elements, elementId)];
+  const authoredPoint = [...transforms]
+    .reverse()
+    .reduce(
+      (candidate, transform) =>
+        inverseRotateRigPointAroundElement(candidate, transform),
+      point,
+    );
+  return {
+    pivotX: clamp(
+      ((authoredPoint.x - element.x) / element.width) * 100,
+      MIN_ELEMENT_RIG_PIVOT,
+      MAX_ELEMENT_RIG_PIVOT,
+    ),
+    pivotY: clamp(
+      ((authoredPoint.y - element.y) / element.height) * 100,
+      MIN_ELEMENT_RIG_PIVOT,
+      MAX_ELEMENT_RIG_PIVOT,
+    ),
+  };
+}
+
 function normalizeRigRotation(rotation: number) {
   return ((((rotation + 180) % 360) + 360) % 360) - 180;
 }
@@ -3780,6 +3892,103 @@ export function reparentElementRigBranchPreservingPose(
   };
 }
 
+export type ElementRigPivotIssue =
+  | 'missing-layer'
+  | 'invalid-pivot'
+  | 'coordinate-limit';
+
+/**
+ * Moves a rig branch's authored coordinates while changing its root pivot so
+ * the current rendered pose does not jump. Future rotation still uses the new
+ * pivot, which is the intended joint-authoring behavior.
+ */
+export function setElementRigPivotPreservingPose(
+  elements: readonly MotusElement[],
+  elementId: string,
+  pivotX: number,
+  pivotY: number,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): {
+  changed: boolean;
+  elements: MotusElement[];
+  issue: ElementRigPivotIssue | null;
+} {
+  const element = elements.find((candidate) => candidate.id === elementId);
+  if (!element) {
+    return { changed: false, elements: [...elements], issue: 'missing-layer' };
+  }
+  if (
+    !Number.isFinite(pivotX) ||
+    pivotX < MIN_ELEMENT_RIG_PIVOT ||
+    pivotX > MAX_ELEMENT_RIG_PIVOT ||
+    !Number.isFinite(pivotY) ||
+    pivotY < MIN_ELEMENT_RIG_PIVOT ||
+    pivotY > MAX_ELEMENT_RIG_PIVOT
+  ) {
+    return { changed: false, elements: [...elements], issue: 'invalid-pivot' };
+  }
+  if (element.pivotX === pivotX && element.pivotY === pivotY) {
+    return { changed: false, elements: [...elements], issue: null };
+  }
+
+  const nextAuthoredPivot = {
+    x: element.x + (element.width * pivotX) / 100,
+    y: element.y + (element.height * pivotY) / 100,
+  };
+  const fixedNextPivot = rotateRigPointAroundElement(
+    nextAuthoredPivot,
+    element,
+  );
+  const deltaX = fixedNextPivot.x - nextAuthoredPivot.x;
+  const deltaY = fixedNextPivot.y - nextAuthoredPivot.y;
+  const safeCanvasWidth = Math.max(
+    MIN_ELEMENT_WIDTH,
+    finite(canvasWidth, CANVAS_WIDTH),
+  );
+  const safeCanvasHeight = Math.max(
+    MIN_ELEMENT_HEIGHT,
+    finite(canvasHeight, CANVAS_HEIGHT),
+  );
+  const branchIds = new Set([
+    elementId,
+    ...getElementRigDescendantIds(elements, elementId),
+  ]);
+  const nextElements = elements.map((candidate) => {
+    if (!branchIds.has(candidate.id)) return candidate;
+    return {
+      ...candidate,
+      ...(candidate.id === elementId ? { pivotX, pivotY } : {}),
+      x: candidate.x + deltaX,
+      y: candidate.y + deltaY,
+    };
+  });
+  const exceedsCoordinateLimit = nextElements.some((candidate) => {
+    if (!branchIds.has(candidate.id)) return false;
+    const normalized = constrainElementToCanvas(
+      candidate,
+      safeCanvasWidth,
+      safeCanvasHeight,
+    );
+    return (
+      Math.abs(normalized.x - candidate.x) > 1e-9 ||
+      Math.abs(normalized.y - candidate.y) > 1e-9
+    );
+  });
+  if (exceedsCoordinateLimit) {
+    return {
+      changed: false,
+      elements: [...elements],
+      issue: 'coordinate-limit',
+    };
+  }
+  return {
+    changed: true,
+    elements: nextElements,
+    issue: null,
+  };
+}
+
 /** Returns visible bounds after the element and every rig ancestor rotate it. */
 export function getElementRigRenderedVisualBounds(
   elements: readonly MotusElement[],
@@ -3825,6 +4034,84 @@ function getElementRigSelectionRootIds(
     let parentId = element.parentId;
     while (parentId && !visited.has(parentId)) {
       if (selected.has(parentId)) return [];
+      visited.add(parentId);
+      parentId = byId.get(parentId)?.parentId ?? null;
+    }
+    return [element.id];
+  });
+}
+
+/**
+ * Normalizes two canvas points into a finite, canvas-bounded marquee. Keeping
+ * this in the model makes pointer hit testing independent of the editor zoom.
+ */
+export function createCanvasSelectionRect(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): CanvasSelectionRect {
+  const safeCanvasWidth = Math.max(0, finite(canvasWidth, CANVAS_WIDTH));
+  const safeCanvasHeight = Math.max(0, finite(canvasHeight, CANVAS_HEIGHT));
+  const boundedStartX = clamp(finite(startX, 0), 0, safeCanvasWidth);
+  const boundedStartY = clamp(finite(startY, 0), 0, safeCanvasHeight);
+  const boundedEndX = clamp(finite(endX, 0), 0, safeCanvasWidth);
+  const boundedEndY = clamp(finite(endY, 0), 0, safeCanvasHeight);
+  return {
+    left: Math.min(boundedStartX, boundedEndX),
+    top: Math.min(boundedStartY, boundedEndY),
+    right: Math.max(boundedStartX, boundedEndX),
+    bottom: Math.max(boundedStartY, boundedEndY),
+  };
+}
+
+/**
+ * Returns effectively visible layers fully enclosed by a canvas marquee in
+ * deterministic scene order. If both a rig parent and one of its descendants
+ * are enclosed, only the highest enclosed ancestor is returned so a branch is
+ * never selected twice.
+ */
+export function getElementIdsInCanvasSelectionRect(
+  elements: readonly MotusElement[],
+  rect: CanvasSelectionRect,
+): string[] {
+  const normalized = createCanvasSelectionRect(
+    rect.left,
+    rect.top,
+    rect.right,
+    rect.bottom,
+  );
+  if (
+    normalized.right - normalized.left <= 0 ||
+    normalized.bottom - normalized.top <= 0
+  ) {
+    return [];
+  }
+
+  const enclosed = new Set(
+    elements.flatMap((element) => {
+      if (!isElementEffectivelyVisible(elements, element.id)) return [];
+      const bounds = getElementRigRenderedVisualBounds(elements, element.id);
+      if (!bounds) return [];
+      const fullyEnclosed =
+        bounds.left >= normalized.left - 1e-6 &&
+        bounds.top >= normalized.top - 1e-6 &&
+        bounds.right <= normalized.right + 1e-6 &&
+        bounds.bottom <= normalized.bottom + 1e-6;
+      return fullyEnclosed ? [element.id] : [];
+    }),
+  );
+  if (enclosed.size < 2) return [...enclosed];
+
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  return elements.flatMap((element) => {
+    if (!enclosed.has(element.id)) return [];
+    const visited = new Set<string>();
+    let parentId = element.parentId;
+    while (parentId && !visited.has(parentId)) {
+      if (enclosed.has(parentId)) return [];
       visited.add(parentId);
       parentId = byId.get(parentId)?.parentId ?? null;
     }
@@ -4867,6 +5154,13 @@ export type ElementVisualBounds = {
   bottom: number;
   centerX: number;
   centerY: number;
+};
+
+export type CanvasSelectionRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 };
 
 export type ElementAlignmentGuide = {
@@ -7113,6 +7407,20 @@ export function createProjectHistoryEntry(
     ),
     bytes: getProjectStorageBytes(snapshot),
   };
+}
+
+/**
+ * Materializes an undo or redo snapshot as a new draft revision. History
+ * snapshots intentionally retain their original timestamp, but restoring one
+ * must advance it so journal recovery cannot prefer the state being undone.
+ */
+export function prepareProjectHistoryRestore(
+  entry: ProjectHistoryEntry,
+  updatedAt = new Date().toISOString(),
+): ProjectHistoryEntry {
+  const project = cloneProject(entry.project);
+  project.updatedAt = updatedAt;
+  return createProjectHistoryEntry(project, entry.selection);
 }
 
 export function trimProjectHistory(

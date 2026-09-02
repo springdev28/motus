@@ -47,6 +47,7 @@ import {
   canAddElementToScene,
   canAddSceneToProject,
   compileElementMotion,
+  createCanvasSelectionRect,
   createBlankChapter,
   createBlankProject,
   constrainElementToCanvas,
@@ -71,6 +72,7 @@ import {
   getElementImageFraming,
   getElementShapePreset,
   getElementRigCascadeDeleteIds,
+  getElementIdsInCanvasSelectionRect,
   getElementRigDepth,
   getElementRigDescendantIds,
   getElementRigIntegrityIssue,
@@ -100,6 +102,7 @@ import {
   normalizeElementTypography,
   normalizeMotionBlockNumericField,
   parseProjectTags,
+  prepareProjectHistoryRestore,
   recordProjectHistory,
   removePublicationRevision,
   replaceMotionEvent,
@@ -422,6 +425,36 @@ void test('history entries clone projects and repair stale selection', () => {
     elementId: 'scene-1-speech',
   });
   assert.equal(entry.bytes, getProjectStorageBytes(entry.project));
+});
+
+void test('restored history becomes the newest recoverable draft revision', () => {
+  const original = createDefaultProject();
+  original.updatedAt = '2026-08-29T06:00:00.000Z';
+  const entry = createProjectHistoryEntry(original, {
+    chapterId: DEFAULT_CHAPTER_ID,
+    sceneId: 'scene-1',
+    elementId: 'scene-1-orb',
+  });
+  const stateBeingUndone = structuredClone(original);
+  stateBeingUndone.title = 'State being undone';
+  stateBeingUndone.updatedAt = '2026-08-29T06:01:00.000Z';
+
+  const restored = prepareProjectHistoryRestore(
+    entry,
+    '2026-08-29T06:02:00.000Z',
+  );
+  const newest = restoreNewestProject([
+    { source: 'old-active-slot', value: JSON.stringify(stateBeingUndone) },
+    { source: 'restored-slot', value: JSON.stringify(restored.project) },
+  ]);
+
+  assert.equal(restored.project.updatedAt, '2026-08-29T06:02:00.000Z');
+  assert.equal(restored.project.title, original.title);
+  assert.notEqual(restored.project, entry.project);
+  assert.notEqual(restored.project.chapters, entry.project.chapters);
+  assert.equal(restored.bytes, getProjectStorageBytes(restored.project));
+  assert.equal(newest?.source, 'restored-slot');
+  assert.equal(entry.project.updatedAt, '2026-08-29T06:00:00.000Z');
 });
 
 void test('history pruning keeps the newest contiguous snapshots within budget', () => {
@@ -4961,6 +4994,100 @@ void test('rig selection movement is bounded in rendered canvas space', () => {
     constrainElementToCanvas({ ...movedChild }).y,
     movedChild.y,
     'rigged authored coordinates survive normalization',
+  );
+});
+
+void test('canvas selection rectangles normalize, clamp, and ignore zero area', () => {
+  assert.deepEqual(createCanvasSelectionRect(900, 1_500, -40, 120), {
+    left: 0,
+    top: 120,
+    right: 900,
+    bottom: CANVAS_HEIGHT,
+  });
+  assert.deepEqual(
+    createCanvasSelectionRect(Number.NaN, 20, Number.POSITIVE_INFINITY, 20),
+    { left: 0, top: 20, right: 0, bottom: 20 },
+  );
+  assert.deepEqual(
+    getElementIdsInCanvasSelectionRect(
+      [createElement('shape', 1, { id: 'zero-area-target' })],
+      { left: 20, top: 20, right: 20, bottom: 200 },
+    ),
+    [],
+  );
+});
+
+void test('canvas marquee selects fully enclosed visible layers in scene order', () => {
+  const project = createDefaultProject();
+  const scene = project.chapters[0].scenes[0];
+  const locked = createElement('shape', 10, {
+    id: 'locked-in-marquee',
+    x: 120,
+    y: 430,
+    width: 80,
+    height: 80,
+    locked: true,
+  });
+  const hidden = createElement('shape', 11, {
+    id: 'hidden-in-marquee',
+    x: 260,
+    y: 430,
+    width: 80,
+    height: 80,
+    visible: false,
+  });
+  const elements = [...scene.elements, locked, hidden];
+
+  assert.deepEqual(
+    getElementIdsInCanvasSelectionRect(elements, {
+      left: 80,
+      top: 120,
+      right: 840,
+      bottom: 760,
+    }),
+    ['scene-1-title', 'scene-1-orb', locked.id],
+  );
+});
+
+void test('canvas marquee uses rendered rig bounds and selects a branch once', () => {
+  const parent = createElement('group', 1, {
+    id: 'marquee-parent',
+    x: 360,
+    y: 360,
+    width: 300,
+    height: 300,
+    rotation: 32,
+  });
+  const child = createElement('shape', 2, {
+    id: 'marquee-child',
+    parentId: parent.id,
+    x: 410,
+    y: 390,
+    width: 90,
+    height: 160,
+    rotation: -18,
+  });
+  const elements = [parent, child];
+  const parentBounds = getElementRigRenderedVisualBounds(elements, parent.id)!;
+  const childBounds = getElementRigRenderedVisualBounds(elements, child.id)!;
+
+  assert.deepEqual(
+    getElementIdsInCanvasSelectionRect(elements, {
+      left: Math.min(parentBounds.left, childBounds.left) - 1,
+      top: Math.min(parentBounds.top, childBounds.top) - 1,
+      right: Math.max(parentBounds.right, childBounds.right) + 1,
+      bottom: Math.max(parentBounds.bottom, childBounds.bottom) + 1,
+    }),
+    [parent.id],
+  );
+  assert.deepEqual(
+    getElementIdsInCanvasSelectionRect(elements, {
+      left: childBounds.left - 1,
+      top: childBounds.top - 1,
+      right: childBounds.right + 1,
+      bottom: childBounds.bottom + 1,
+    }),
+    [child.id],
   );
 });
 
