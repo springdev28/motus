@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "vinext dev",
-    "build": "vinext build && node scripts/prepare-hostinger-build.mjs",
+    "build": "node scripts/restore-ai-assets.mjs && vinext build && node scripts/prepare-hostinger-build.mjs",
     "start": "node dist/hostinger-server.mjs",
     "start:worker": "wrangler dev --config dist/server/wrangler.json",
     "test": "node --experimental-strip-types --test lib/*.test.ts",
