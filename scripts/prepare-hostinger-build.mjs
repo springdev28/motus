@@ -1,6 +1,12 @@
 import { copyFile } from 'node:fs/promises';
 
-const source = new URL('../hostinger-server.mjs', import.meta.url);
-const destination = new URL('../dist/hostinger-server.mjs', import.meta.url);
+const entries = ['hostinger-server.mjs', 'server.js'];
 
-await copyFile(source, destination);
+await Promise.all(
+  entries.map((entry) =>
+    copyFile(
+      new URL(`../${entry}`, import.meta.url),
+      new URL(`../dist/${entry}`, import.meta.url),
+    ),
+  ),
+);

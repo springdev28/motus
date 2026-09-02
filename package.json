@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "node scripts/restore-ai-assets.mjs && vinext build && node scripts/prepare-hostinger-build.mjs",
-    "start": "node hostinger-server.mjs",
+    "start": "node server.js",
     "start:worker": "wrangler dev --config dist/server/wrangler.json",
     "test": "node --experimental-strip-types --test lib/*.test.ts",
     "lint": "oxlint",
@@ -27,6 +27,7 @@
     "cmdk": "1.1.1",
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.5.2",
+    "express": "5.2.1",
     "input-otp": "1.4.2",
     "lucide-react": "1.31.0",
     "perfect-freehand": "1.2.3",
