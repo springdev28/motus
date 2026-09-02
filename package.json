@@ -7,8 +7,9 @@
   },
   "scripts": {
     "dev": "vinext dev",
-    "build": "vinext build",
-    "start": "wrangler dev --config dist/server/wrangler.json",
+    "build": "vinext build && node scripts/prepare-hostinger-build.mjs",
+    "start": "node dist/hostinger-server.mjs",
+    "start:worker": "wrangler dev --config dist/server/wrangler.json",
     "test": "node --experimental-strip-types --test lib/*.test.ts",
     "lint": "oxlint",
     "format": "oxfmt",
