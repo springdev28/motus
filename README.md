@@ -38,6 +38,16 @@ npm test
 npm run build
 ```
 
+## Hostinger deployment
+
+The repository is intentionally detected as an Express/Node application by
+Hostinger even though Vinext owns request rendering. `server.js` is the
+conventional platform entry point and delegates to `hostinger-server.mjs`,
+which starts the Vinext production server on `0.0.0.0` using `PORT` (3000 by
+default). Keep the `express` dependency and both entry files in place; removing
+them makes Hostinger auto-detect the repository as a static Vite site, which
+cannot serve this server-rendered build.
+
 ## Planning
 
 - [MVP delivery plan](docs/MVP_PLAN.md)
