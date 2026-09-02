@@ -198,6 +198,7 @@ import {
   compileElementMotion,
   countMotionBlocks,
   constrainElementToCanvas,
+  createCanvasSelectionRect,
   createBlankChapter,
   createBlankProject,
   createBounceJump,
@@ -219,6 +220,7 @@ import {
   getCompiledMotionKeyframeEstimate,
   getExpandedMotionStepCount,
   getElementImageFraming,
+  getElementIdsInCanvasSelectionRect,
   getElementShapePreset,
   getElementRigCascadeDeleteIds,
   getElementRigComponentIds,
@@ -283,6 +285,7 @@ import {
   wouldCreateElementRigCycle,
   writeDraftJournal,
   type BounceJump,
+  type CanvasSelectionRect,
   type Easing,
   type ElementAlignmentGuide,
   type ElementPointerTransformMode,
@@ -2686,6 +2689,7 @@ function animateElementProgram(
 type SceneViewProps = {
   scene: MotusScene;
   alignmentGuides?: readonly ElementAlignmentGuide[];
+  marqueeRect?: CanvasSelectionRect | null;
   elementLimit?: number;
   selectedId?: string;
   selectedIds?: ReadonlySet<string>;
@@ -2718,6 +2722,9 @@ type SceneViewProps = {
     event: ReactPointerEvent<HTMLElement>,
     elementId: string,
   ) => void;
+  onCanvasMarqueePointerAction?: (
+    event: ReactPointerEvent<HTMLElement>,
+  ) => void;
 };
 
 type ReaderTriggerElement = (
@@ -2729,6 +2736,7 @@ type ReaderTriggerElement = (
 function SceneView({
   scene,
   alignmentGuides = [],
+  marqueeRect = null,
   elementLimit,
   selectedId,
   selectedIds,
@@ -2750,6 +2758,7 @@ function SceneView({
   onElementRef,
   onPointerAction,
   onPivotPointerAction,
+  onCanvasMarqueePointerAction,
 }: SceneViewProps) {
   const maskNamespace = useId().replace(/[^a-z0-9_-]/gi, '-');
   const elementNodes = useRef(new Map<string, HTMLDivElement>());
@@ -2767,6 +2776,14 @@ function SceneView({
         ? scene.elements
         : getSceneThumbnailElements(scene, elementLimit),
     [elementLimit, scene],
+  );
+  const marqueeCandidateCount = useMemo(
+    () =>
+      marqueeRect
+        ? getElementIdsInCanvasSelectionRect(renderedElements, marqueeRect)
+            .length
+        : 0,
+    [marqueeRect, renderedElements],
   );
   const playingElementIdsKey = playingElementIds
     ? JSON.stringify(playingElementIds)
@@ -3033,10 +3050,39 @@ function SceneView({
   }, [scene.id]);
 
   return (
+    // Marquee selection is pointer-enhanced; Layers toggles and Select All are
+    // the complete keyboard/touch equivalent described by canvas-instructions.
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
     <section
       aria-label={interactive ? `${scene.name} layers` : undefined}
       className="artboard"
       data-joint-editing={jointEditing || undefined}
+      onClick={
+        interactive && onCanvasMarqueePointerAction
+          ? (event) => {
+              const target =
+                event.target instanceof Element ? event.target : null;
+              if (target?.closest('[data-element-id]')) return;
+              event.stopPropagation();
+            }
+          : undefined
+      }
+      onPointerDown={
+        interactive && onCanvasMarqueePointerAction
+          ? (event) => {
+              const target =
+                event.target instanceof Element ? event.target : null;
+              if (
+                target?.closest(
+                  '[data-element-id], .rig-pivot-marker, .rig-joint-node, .rig-skeleton-navigator',
+                )
+              ) {
+                return;
+              }
+              onCanvasMarqueePointerAction(event);
+            }
+          : undefined
+      }
       style={{ background: scene.background }}
     >
       <div className="artboard-grid" />
@@ -3054,6 +3100,24 @@ function SceneView({
           }
         />
       ))}
+      {interactive && marqueeRect ? (
+        <div
+          aria-hidden="true"
+          className="canvas-marquee"
+          data-empty={marqueeCandidateCount === 0 || undefined}
+          style={{
+            left: `${(marqueeRect.left / CANVAS_WIDTH) * 100}%`,
+            top: `${(marqueeRect.top / CANVAS_HEIGHT) * 100}%`,
+            width: `${((marqueeRect.right - marqueeRect.left) / CANVAS_WIDTH) * 100}%`,
+            height: `${((marqueeRect.bottom - marqueeRect.top) / CANVAS_HEIGHT) * 100}%`,
+          }}
+        >
+          <span>
+            {marqueeCandidateCount}{' '}
+            {marqueeCandidateCount === 1 ? 'layer' : 'layers'}
+          </span>
+        </div>
+      ) : null}
       {(() => {
         const renderedElementIds = new Set(
           renderedElements.map((element) => element.id),
@@ -3779,6 +3843,8 @@ export function MotusStudio() {
   const [activeAlignmentGuides, setActiveAlignmentGuides] = useState<
     ElementAlignmentGuide[]
   >([]);
+  const [canvasMarqueeRect, setCanvasMarqueeRect] =
+    useState<CanvasSelectionRect | null>(null);
   const [canvasPreviewKey, setCanvasPreviewKey] = useState(0);
   const [readerPreviewKey, setReaderPreviewKey] = useState(0);
   const [previewScope, setPreviewScope] = useState<PreviewScope>('selected');
@@ -3914,6 +3980,7 @@ export function MotusStudio() {
     pendingPreviewSeek.current = null;
     previewRunningRef.current = false;
     setActiveAlignmentGuides([]);
+    setCanvasMarqueeRect(null);
     setPreviewRunning(false);
     setPreviewActive(false);
     setPreviewStartsPaused(false);
@@ -7251,6 +7318,143 @@ export function MotusStudio() {
     setNotice(`Revision ${revision.revision} restored to draft`);
   };
 
+  const beginCanvasMarquee = (event: ReactPointerEvent<HTMLElement>) => {
+    const artboard = event.currentTarget;
+    if (
+      previewActive ||
+      jointEditing ||
+      editingTextElementId !== null ||
+      !event.isPrimary ||
+      event.button !== 0
+    ) {
+      return;
+    }
+    const bounds = artboard.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    activePointerCleanup.current?.();
+    endHistoryTransaction();
+    setActiveAlignmentGuides([]);
+    const pointerId = event.pointerId;
+    const pointerType = event.pointerType;
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    const startCanvasX =
+      ((startClientX - bounds.left) / bounds.width) * CANVAS_WIDTH;
+    const startCanvasY =
+      ((startClientY - bounds.top) / bounds.height) * CANVAS_HEIGHT;
+    const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+    const originSelection = selectedElementIds.filter((elementId) =>
+      activeScene.elements.some((element) => element.id === elementId),
+    );
+    let moved = false;
+    let latestRect: CanvasSelectionRect | null = null;
+
+    const pointToCanvasRect = (pointer: PointerEvent) =>
+      createCanvasSelectionRect(
+        startCanvasX,
+        startCanvasY,
+        ((pointer.clientX - bounds.left) / bounds.width) * CANVAS_WIDTH,
+        ((pointer.clientY - bounds.top) / bounds.height) * CANVAS_HEIGHT,
+      );
+
+    function onMove(pointer: PointerEvent) {
+      if (pointer.pointerId !== pointerId) return;
+      if (
+        !moved &&
+        !hasPointerDragStarted(
+          pointer.clientX - startClientX,
+          pointer.clientY - startClientY,
+          pointerType,
+        )
+      ) {
+        return;
+      }
+      moved = true;
+      latestRect = pointToCanvasRect(pointer);
+      setCanvasMarqueeRect(latestRect);
+    }
+
+    function cleanup() {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('blur', cancel);
+      setCanvasMarqueeRect(null);
+      if (activePointerCleanup.current === cleanup) {
+        activePointerCleanup.current = null;
+      }
+    }
+
+    function applySelection(hitIds: string[]) {
+      const combined = additive
+        ? [...new Set([...originSelection, ...hitIds])]
+        : hitIds;
+      const combinedSet = new Set(combined);
+      const byId = new Map(
+        activeScene.elements.map((element) => [element.id, element]),
+      );
+      const nextSelection = activeScene.elements.flatMap((element) => {
+        if (!combinedSet.has(element.id)) return [];
+        const visited = new Set<string>();
+        let parentId = element.parentId;
+        while (parentId && !visited.has(parentId)) {
+          if (combinedSet.has(parentId)) return [];
+          visited.add(parentId);
+          parentId = byId.get(parentId)?.parentId ?? null;
+        }
+        return [element.id];
+      });
+      const primaryId =
+        [...hitIds].reverse().find((id) => nextSelection.includes(id)) ??
+        (nextSelection.includes(selectedElementId)
+          ? selectedElementId
+          : (nextSelection.at(-1) ?? ''));
+      setSelectedElementIds(nextSelection);
+      setPrimarySelectedElementId(
+        primaryId,
+        activeScene.id,
+        activeScene.elements,
+      );
+      setEditingTextElementId(null);
+      setNotice(
+        nextSelection.length > 1
+          ? `${nextSelection.length} layers selected with marquee`
+          : nextSelection.length === 1
+            ? '1 layer selected with marquee'
+            : 'Selection cleared',
+      );
+    }
+
+    function finish(pointer: PointerEvent) {
+      if (pointer.pointerId !== pointerId) return;
+      if (moved) latestRect = pointToCanvasRect(pointer);
+      cleanup();
+      if (!moved || !latestRect) {
+        if (!additive) applySelection([]);
+        return;
+      }
+      applySelection(
+        getElementIdsInCanvasSelectionRect(activeScene.elements, latestRect),
+      );
+    }
+
+    function cancel(pointer: PointerEvent | Event) {
+      if (pointer instanceof PointerEvent && pointer.pointerId !== pointerId) {
+        return;
+      }
+      cleanup();
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('blur', cancel, { once: true });
+    activePointerCleanup.current = cleanup;
+  };
+
   const beginPivotPointerAction = (
     event: ReactPointerEvent<HTMLElement>,
     elementId: string,
@@ -9358,7 +9562,7 @@ export function MotusStudio() {
                     ? 'Stage · select layers, then edit their blocks'
                     : selectedElements.length > 1
                       ? `Stage · ${selectedElements.length} layers selected · drag together`
-                      : 'Stage · drag layers · double-click text to edit'}
+                      : 'Stage · drag empty space to select · double-click text to edit'}
               </span>
               <span className="canvas-sr-instructions" id="canvas-instructions">
                 Select a layer on the stage. Use arrow keys to move it one
@@ -9367,9 +9571,11 @@ export function MotusStudio() {
                 Shift, Control, or Command while clicking to add or remove a
                 layer from the current selection. Selected unlocked layers move
                 together. The add/remove buttons in Layers provide the same
-                control on touch screens. Press Control or Command plus A to
-                select every layer. Dragged layers snap to canvas and visible
-                layer edges and centers; hold Alt or Option for free movement.
+                control on touch screens. Drag a rectangle around layers on
+                empty canvas space to select them; hold Shift, Control, or
+                Command to add them. Press Control or Command plus A to select
+                every layer. Dragged layers snap to canvas and visible layer
+                edges and centers; hold Alt or Option for free movement.
                 Double-click text, or press Enter on selected text, to edit it
                 directly on the stage. For exact keyboard resizing, rotation,
                 and joint placement, use Width, Height, Rotation, Pivot X, and
@@ -9516,7 +9722,15 @@ export function MotusStudio() {
                 editingTextId={editingTextElementId}
                 interactive
                 jointEditing={jointEditing}
+                marqueeRect={canvasMarqueeRect}
                 onBeginTextEdit={beginTextEditing}
+                onCanvasMarqueePointerAction={
+                  !previewActive &&
+                  !jointEditing &&
+                  editingTextElementId === null
+                    ? beginCanvasMarquee
+                    : undefined
+                }
                 onEndTextEdit={finishTextEditing}
                 onElementRef={(elementId, node) => {
                   if (node) canvasElementRefs.current.set(elementId, node);

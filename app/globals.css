@@ -4893,6 +4893,46 @@
   transform: translateY(-0.5px);
 }
 
+.canvas-marquee {
+  position: absolute;
+  z-index: 50020;
+  box-sizing: border-box;
+  border: 2px solid #7c4dff;
+  border-radius: 4px;
+  background: rgb(124 77 255 / 14%);
+  pointer-events: none;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 62%),
+    0 6px 18px rgb(55 32 130 / 16%);
+}
+.canvas-marquee[data-empty] {
+  border-color: rgb(217 204 255 / 74%);
+  background: rgb(217 204 255 / 8%);
+  box-shadow: 0 0 0 1px rgb(42 31 79 / 22%);
+}
+.canvas-marquee > span {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  border: 1px solid rgb(255 255 255 / 68%);
+  border-radius: 999px;
+  background: #6d40e8;
+  padding: 4px 8px;
+  color: white;
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgb(41 24 102 / 28%);
+}
+.canvas-marquee[data-empty] > span {
+  background: rgb(55 46 78 / 86%);
+}
+
 .canvas-element {
   position: absolute;
   z-index: var(--layer-order, 0);

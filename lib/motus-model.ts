@@ -4041,6 +4041,84 @@ function getElementRigSelectionRootIds(
   });
 }
 
+/**
+ * Normalizes two canvas points into a finite, canvas-bounded marquee. Keeping
+ * this in the model makes pointer hit testing independent of the editor zoom.
+ */
+export function createCanvasSelectionRect(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  canvasWidth = CANVAS_WIDTH,
+  canvasHeight = CANVAS_HEIGHT,
+): CanvasSelectionRect {
+  const safeCanvasWidth = Math.max(0, finite(canvasWidth, CANVAS_WIDTH));
+  const safeCanvasHeight = Math.max(0, finite(canvasHeight, CANVAS_HEIGHT));
+  const boundedStartX = clamp(finite(startX, 0), 0, safeCanvasWidth);
+  const boundedStartY = clamp(finite(startY, 0), 0, safeCanvasHeight);
+  const boundedEndX = clamp(finite(endX, 0), 0, safeCanvasWidth);
+  const boundedEndY = clamp(finite(endY, 0), 0, safeCanvasHeight);
+  return {
+    left: Math.min(boundedStartX, boundedEndX),
+    top: Math.min(boundedStartY, boundedEndY),
+    right: Math.max(boundedStartX, boundedEndX),
+    bottom: Math.max(boundedStartY, boundedEndY),
+  };
+}
+
+/**
+ * Returns effectively visible layers fully enclosed by a canvas marquee in
+ * deterministic scene order. If both a rig parent and one of its descendants
+ * are enclosed, only the highest enclosed ancestor is returned so a branch is
+ * never selected twice.
+ */
+export function getElementIdsInCanvasSelectionRect(
+  elements: readonly MotusElement[],
+  rect: CanvasSelectionRect,
+): string[] {
+  const normalized = createCanvasSelectionRect(
+    rect.left,
+    rect.top,
+    rect.right,
+    rect.bottom,
+  );
+  if (
+    normalized.right - normalized.left <= 0 ||
+    normalized.bottom - normalized.top <= 0
+  ) {
+    return [];
+  }
+
+  const enclosed = new Set(
+    elements.flatMap((element) => {
+      if (!isElementEffectivelyVisible(elements, element.id)) return [];
+      const bounds = getElementRigRenderedVisualBounds(elements, element.id);
+      if (!bounds) return [];
+      const fullyEnclosed =
+        bounds.left >= normalized.left - 1e-6 &&
+        bounds.top >= normalized.top - 1e-6 &&
+        bounds.right <= normalized.right + 1e-6 &&
+        bounds.bottom <= normalized.bottom + 1e-6;
+      return fullyEnclosed ? [element.id] : [];
+    }),
+  );
+  if (enclosed.size < 2) return [...enclosed];
+
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  return elements.flatMap((element) => {
+    if (!enclosed.has(element.id)) return [];
+    const visited = new Set<string>();
+    let parentId = element.parentId;
+    while (parentId && !visited.has(parentId)) {
+      if (enclosed.has(parentId)) return [];
+      visited.add(parentId);
+      parentId = byId.get(parentId)?.parentId ?? null;
+    }
+    return [element.id];
+  });
+}
+
 function boundRigCanvasMovement(
   visualBounds: readonly ElementVisualBounds[],
   deltaX: number,
@@ -5076,6 +5154,13 @@ export type ElementVisualBounds = {
   bottom: number;
   centerX: number;
   centerY: number;
+};
+
+export type CanvasSelectionRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 };
 
 export type ElementAlignmentGuide = {
