@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { MotusDiscover } from '@/components/motus-discover';
 
 export const metadata: Metadata = {
-  title: 'Explore motion comics — Motus',
+  title: 'Explore creators & interactive stories — Motus',
   description:
     'Search motion comics, creators, communities, tags, fandoms, and characters; filter works by genre, origin, community, format, status, and rating.',
 };

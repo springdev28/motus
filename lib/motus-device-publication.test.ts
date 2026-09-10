@@ -1,3 +1,4 @@
+import { createDefaultProject } from './test-fixtures/editor-project.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -21,7 +22,6 @@ import {
 import {
   DEFAULT_READER_PRESENTATION,
   PROJECT_SCHEMA_VERSION,
-  createDefaultProject,
   createPublicationRevision,
   type MotusElement,
   type MotusProject,

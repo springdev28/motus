@@ -1,21 +1,21 @@
 /* oxlint-disable next/no-html-link-for-pages -- Full-page transitions keep local draft recovery independent of router state. */
 'use client';
 
+import { MotusSiteHeader } from '@/components/motus-site-header';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   BookOpen,
-  Clock3,
   Code2,
   Heart,
   Layers3,
   Play,
-  Plus,
   Sparkles,
+  Globe2,
 } from 'lucide-react';
 
 import { readNewestMotusDraft } from '@/lib/motus-draft-storage';
-import { MotusLogo } from '@/components/motus-logo';
+import { MotusShare } from '@/components/motus-share';
 import { MotusWorkMetadataSummary } from '@/components/motus-work-metadata-summary';
 import {
   DEVICE_FOLLOWED_WORKS_STORAGE_KEY,
@@ -30,6 +30,9 @@ import {
 } from '@/lib/motus-device-publication';
 import {
   MOTUS_LIBRARY_WORKS,
+  parseStoredCreatorIdSet,
+  migrateStoredCreatorHandles,
+  type LibraryCreatorId,
   createCatalogPreviewProject,
   parseStoredReadingProgress,
   parseStoredSlugSet,
@@ -64,6 +67,9 @@ export function MotusHome() {
     status: 'loading',
     project: null,
   });
+  const [followedCreators, setFollowedCreators] = useState<
+    Set<LibraryCreatorId>
+  >(new Set());
   const [readingProgress, setReadingProgress] =
     useState<LibraryReadingProgress>({});
   const [followedWorks, setFollowedWorks] = useState<Set<string>>(new Set());
@@ -144,6 +150,16 @@ export function MotusHome() {
         setDeviceFollowedSlugs(new Set());
       }
       try {
+        const storedCreators = window.localStorage.getItem(
+          'motus:followed-creators:v2',
+        );
+        setFollowedCreators(
+          storedCreators === null
+            ? migrateStoredCreatorHandles(
+                window.localStorage.getItem('motus:followed-creators:v1'),
+              )
+            : parseStoredCreatorIdSet(storedCreators),
+        );
         setReadingProgress(
           parseStoredReadingProgress(
             window.localStorage.getItem(READING_PROGRESS_STORAGE_KEY),
@@ -269,8 +285,9 @@ export function MotusHome() {
   }, [devicePublications, deviceReadingProgress, readingProgress]);
 
   const followingWorks = useMemo(() => {
-    const catalog = MOTUS_LIBRARY_WORKS.filter((work) =>
-      followedWorks.has(work.slug),
+    const catalog = MOTUS_LIBRARY_WORKS.filter(
+      (work) =>
+        followedWorks.has(work.slug) || followedCreators.has(work.creatorId),
     ).map((work) => ({
       slug: work.slug,
       title: work.title,
@@ -290,38 +307,119 @@ export function MotusHome() {
         local: true,
       }));
     return [...local, ...catalog];
-  }, [deviceFollowedSlugs, devicePublications, followedWorks]);
+  }, [
+    deviceFollowedSlugs,
+    devicePublications,
+    followedWorks,
+    followedCreators,
+  ]);
 
   return (
     <div className="home-shell">
-      <header className="home-header">
-        <a aria-label="Motus home" className="home-brand" href="/">
-          <MotusLogo className="home-brand-mark" variant="on-light" />
-          <span>MOTUS</span>
-        </a>
-        <nav aria-label="Primary navigation" className="home-nav">
-          <a aria-current="page" href="/">
-            Home
-          </a>
-          <a href="/discover">Explore</a>
-          <a href="/#following">Following</a>
-        </nav>
-        <a className="home-studio-link" href="/studio">
-          <Plus aria-hidden="true" />
-          <span>Open Studio</span>
-        </a>
-      </header>
+      <MotusSiteHeader active="home" />
 
       <main className="home-main">
         <section className="home-creator-heading" aria-labelledby="home-title">
           <div>
-            <span className="home-kicker">CREATOR HOME</span>
-            <h1 id="home-title">Your stories, in motion.</h1>
+            <span className="home-kicker">
+              <Globe2 aria-hidden="true" /> AN OPEN SHELF FOR IMAGINATION
+            </span>
+            <h1 id="home-title">
+              Stories worth finding.
+              <br />
+              Creators worth following.
+            </h1>
           </div>
-          <p>
-            Build the page, shape the movement, and keep the work in one visual
-            space.
-          </p>
+          <div className="home-intro">
+            <p>
+              Original comics, transformative fanworks, and stories that move.
+              Find your next favorite—or share something only you could make.
+            </p>
+            <div className="home-hero-actions">
+              <a className="home-continue-button" href="/studio">
+                Create your work <ArrowRight aria-hidden="true" />
+              </a>
+              <a href="/discover">
+                Explore creators & work <ArrowRight aria-hidden="true" />
+              </a>
+            </div>
+          </div>
+        </section>
+
+        <section
+          className="home-featured-shelf"
+          aria-labelledby="featured-shelf-title"
+        >
+          <header className="home-section-heading">
+            <div>
+              <span>THE READING ROOM</span>
+              <h2 id="featured-shelf-title">Find your next favorite</h2>
+            </div>
+            <a href="/discover">
+              Browse the archive <ArrowRight aria-hidden="true" />
+            </a>
+          </header>
+          <div className="home-genre-links" aria-label="Browse by genre">
+            {[
+              'Fantasy',
+              'Romance',
+              'Science fiction',
+              'Drama',
+              'Mystery',
+              'Action',
+            ].map((genre) => (
+              <a
+                key={genre}
+                href={`/discover?genre=${encodeURIComponent(genre)}`}
+              >
+                {genre}
+              </a>
+            ))}
+            <a href="/discover?origin=fanwork">Fanworks</a>
+          </div>
+          <div className="home-featured-grid">
+            {discoverWorks.map((work) => (
+              <article key={work.slug}>
+                <a
+                  className="home-featured-cover"
+                  href={`/read/${work.slug}`}
+                  style={{ background: work.palette }}
+                  aria-label={`Read ${work.title}`}
+                >
+                  <BookOpen aria-hidden="true" />
+                  <span>{work.genre}</span>
+                </a>
+                <div className="home-featured-copy">
+                  <h3>
+                    <a href={`/read/${work.slug}`}>{work.title}</a>
+                  </h3>
+                  <a href={`/creator/${work.creatorHandle.slice(1)}`}>
+                    {work.creator}
+                  </a>
+                  <p>{work.description}</p>
+                  <small>
+                    {work.rating} · {work.language} · {work.chapterCount}{' '}
+                    chapters
+                  </small>
+                </div>
+              </article>
+            ))}
+          </div>
+          {!discoverWorks.length ? (
+            <div className="home-empty-card">
+              <BookOpen aria-hidden="true" />
+              <div>
+                <h3>A fresh start for real creators</h3>
+                <p>
+                  The public shelf is empty. Create your own work, or open a
+                  reader edition shared by its creator.
+                </p>
+              </div>
+              <a className="home-continue-button" href="/read/import">
+                Open a shared edition <ArrowRight aria-hidden="true" />
+              </a>
+            </div>
+          ) : null}
         </section>
 
         <section className="home-workspace" aria-labelledby="continue-title">
@@ -439,7 +537,7 @@ export function MotusHome() {
           >
             <header className="home-section-heading">
               <div>
-                <span>PUBLISHED IN THIS BROWSER</span>
+                <span>SHARE & PROMOTE</span>
                 <h2 id="published-work-title">Your reader editions</h2>
               </div>
               <a href={`/read/${devicePublications[0].slug}`}>
@@ -488,15 +586,52 @@ export function MotusHome() {
                     <a href={`/read/${publication.slug}`}>
                       <Play fill="currentColor" /> Read revision
                     </a>
-                    <a href="/studio">
-                      Open Studio <ArrowRight aria-hidden="true" />
-                    </a>
+                    <MotusShare
+                      title={publication.source.title}
+                      creator={publication.source.creatorName}
+                      description={publication.source.description}
+                      path={`/read/${publication.slug}`}
+                      tags={publication.source.tags}
+                      publication={publication}
+                    />
                   </div>
                 </article>
               ))}
             </div>
           </section>
-        ) : null}
+        ) : (
+          <section
+            className="home-published-work"
+            aria-labelledby="published-work-title"
+          >
+            <header className="home-section-heading">
+              <div>
+                <span>SHARE & PROMOTE</span>
+                <h2 id="published-work-title">
+                  Your first audience starts here.
+                </h2>
+              </div>
+            </header>
+            <div className="home-empty-card">
+              <Globe2 aria-hidden="true" />
+              <div>
+                <h3>Publish an interactive reader edition</h3>
+                <p>
+                  Create in Studio, publish a revision, then download the
+                  edition and a caption to share with your audience.
+                </p>
+              </div>
+              <a className="home-continue-button" href="/studio">
+                Start in Studio <ArrowRight aria-hidden="true" />
+              </a>
+            </div>
+            <p className="home-edition-note">
+              Editions are currently saved on this device. Share the downloaded
+              file so someone else can{' '}
+              <a href="/read/import">open it in Motus</a>.
+            </p>
+          </section>
+        )}
 
         <section className="home-tools" aria-labelledby="tools-title">
           <header className="home-section-heading">
@@ -524,18 +659,22 @@ export function MotusHome() {
             </a>
             <a
               href={
-                draft.status === 'ready' ? '/studio?reader=draft' : '/studio'
+                draft.status === 'ready'
+                  ? '/studio?reader=draft'
+                  : '/read/import'
               }
             >
               <BookOpen aria-hidden="true" />
               <span>
                 <strong>
-                  {draft.status === 'ready' ? 'Draft reader' : 'Sample project'}
+                  {draft.status === 'ready'
+                    ? 'Draft reader'
+                    : 'Open a shared edition'}
                 </strong>
                 <small>
                   {draft.status === 'ready'
                     ? 'Read the current sequence'
-                    : 'Explore a complete scene set'}
+                    : 'Read work shared by its creator'}
                 </small>
               </span>
               <ArrowRight aria-hidden="true" />
@@ -551,7 +690,7 @@ export function MotusHome() {
           <header className="home-section-heading">
             <div>
               <span>FOLLOWING</span>
-              <h2 id="following-title">Works you follow</h2>
+              <h2 id="following-title">From your creative circle</h2>
             </div>
             <a href="/discover?view=following">
               Browse catalog follows <ArrowRight aria-hidden="true" />
@@ -582,7 +721,9 @@ export function MotusHome() {
               <Heart aria-hidden="true" />
               <span>
                 <strong>No followed works yet</strong>
-                <small>Follow any reader edition to keep it here.</small>
+                <small>
+                  Follow a work or a creator to build your own feed.
+                </small>
               </span>
               <a href="/discover">Explore works</a>
             </div>
@@ -649,43 +790,6 @@ export function MotusHome() {
             </div>
           </section>
         ) : null}
-
-        <section
-          className="home-discover"
-          id="discover"
-          aria-labelledby="discover-title"
-        >
-          <header className="home-section-heading">
-            <div>
-              <span>DISCOVER</span>
-              <h2 id="discover-title">Motion stories</h2>
-            </div>
-            <a href="/discover">
-              Open catalog <ArrowRight aria-hidden="true" />
-            </a>
-          </header>
-          <div className="home-discover-grid">
-            {discoverWorks.map((work, index) => (
-              <a href={`/read/${work.slug}`} key={work.title}>
-                <span
-                  aria-hidden="true"
-                  className="home-work-cover"
-                  style={{ background: work.palette }}
-                >
-                  <span>{String(index + 1).padStart(2, '0')}</span>
-                  <Clock3 />
-                </span>
-                <span className="home-work-copy">
-                  <strong>{work.title}</strong>
-                  <small>{work.creator}</small>
-                  <em>
-                    {work.genre} · {work.status}
-                  </em>
-                </span>
-              </a>
-            ))}
-          </div>
-        </section>
       </main>
     </div>
   );

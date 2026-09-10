@@ -1,5 +1,6 @@
 /* oxlint-disable next/no-html-link-for-pages -- Reader navigation uses stable public paths. */
 'use client';
+import { MotusPageTurn } from '@/components/motus-page-turn';
 
 import {
   useCallback,
@@ -21,6 +22,9 @@ import {
   RotateCcw,
 } from 'lucide-react';
 
+import { MotusSettingsButton } from '@/components/motus-settings';
+import { languageName } from '@/lib/motus-languages';
+import { MotusShare } from '@/components/motus-share';
 import { MotusLogo } from '@/components/motus-logo';
 import { ReaderScene } from '@/components/motus-studio';
 import { MotusWorkMetadataSummary } from '@/components/motus-work-metadata-summary';
@@ -143,7 +147,7 @@ function createDeviceReaderWork(
       ? STATUS_LABELS[metadata.workStatus]
       : `Revision ${publication.revision.revision}`,
     ratingLabel: RATING_LABELS[publication.source.contentRating],
-    languageLabel: publication.source.language.toLocaleUpperCase(),
+    languageLabel: languageName(publication.source.language),
     originLabel: getDeviceOriginLabel(metadata.origin, publication),
     palette: cover.background,
     accent: cover.accent,
@@ -499,6 +503,9 @@ export function MotusReader({ slug }: { slug: string }) {
             ? 'No matching published revision is saved in this browser.'
             : 'This story is not in the Motus library.'}
         </h1>
+        {expectsDevicePublication ? (
+          <a href="/read/import">Have a reader file? Open a shared edition</a>
+        ) : null}
         <a href={expectsDevicePublication ? '/' : '/discover'}>
           {expectsDevicePublication ? 'Return home' : 'Return to Explore'}
         </a>
@@ -575,6 +582,7 @@ export function MotusReader({ slug }: { slug: string }) {
           <span>MOTUS</span>
         </a>
         <div className="published-reader-follow-wrap">
+          <MotusSettingsButton />
           <Button
             aria-pressed={followed}
             className="published-reader-follow"
@@ -636,6 +644,14 @@ export function MotusReader({ slug }: { slug: string }) {
               </span>
             )}
             <p>{work.description}</p>
+            <MotusShare
+              title={work.title}
+              creator={work.creator}
+              description={work.description}
+              path={`/read/${work.slug}`}
+              tags={work.tags}
+              publication={work.devicePublication ?? undefined}
+            />
             <div className="published-reader-tags" aria-label="Work tags">
               {work.tags.map((tag) =>
                 work.devicePublication ? (
@@ -829,6 +845,8 @@ export function MotusReader({ slug }: { slug: string }) {
                     }}
                     scene={scene}
                     sessionKey={playSession}
+                    scrollTransition={project.readerPresentation.transition}
+                    transitionDuration={project.readerPresentation.durationMs}
                   />
                 ))}
               </div>
@@ -841,11 +859,14 @@ export function MotusReader({ slug }: { slug: string }) {
                 data-turn={pageTransition.entryEdge}
                 style={pageTransitionStyle}
               >
-                <div
-                  className="published-reader-page-leaf"
-                  key={`${activeChapter.id}-${mode}-${pageIndex}-${pageTransitionSequence}`}
-                >
-                  {visiblePageIndexes.map((sceneIndex, spreadOffset) => (
+                <MotusPageTurn
+                  pageKey={`${activeChapter.id}-${mode}-${pageIndex}-${pageTransitionSequence}`}
+                  layout={mode}
+                  direction={project.readerPresentation.direction}
+                  transition={pageTransition.effectiveStyle}
+                  entryEdge={pageTransition.entryEdge}
+                  durationMs={project.readerPresentation.durationMs}
+                  pages={visiblePageIndexes.map((sceneIndex, spreadOffset) => (
                     <ReaderScene
                       index={sceneIndex}
                       key={`${activeChapter.scenes[sceneIndex].id}-${playSession}-${pageIndex}`}
@@ -856,7 +877,7 @@ export function MotusReader({ slug }: { slug: string }) {
                       sessionKey={playSession + spreadOffset}
                     />
                   ))}
-                </div>
+                />
                 <div className="published-reader-page-controls">
                   <Button
                     aria-label={
@@ -901,11 +922,7 @@ export function MotusReader({ slug }: { slug: string }) {
                   editable blocks.
                 </span>
               </div>
-              <a href="/studio">
-                {work.devicePublication
-                  ? 'Edit in Studio'
-                  : 'Create with Motus'}
-              </a>
+              <a href="/studio">Create with Motus</a>
             </footer>
           </section>
         )}

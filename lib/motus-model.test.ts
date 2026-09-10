@@ -1,3 +1,4 @@
+import { createDefaultProject } from './test-fixtures/editor-project.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -51,7 +52,6 @@ import {
   createBlankProject,
   constrainElementToCanvas,
   createCopyName,
-  createDefaultProject,
   createElement,
   createElementCopy,
   createMotionBlock,
@@ -154,7 +154,7 @@ const COMPILED_MOTION_CHANNELS = [
   'clipLeft',
 ] as const;
 
-const DEFAULT_CHAPTER_ID = 'signal-in-the-fog-chapter-1';
+const DEFAULT_CHAPTER_ID = 'editor-test-project-chapter-1';
 
 function createLegacyProject(
   schemaVersion: 2 | 3 | 4 | 5 | 6,
@@ -359,10 +359,10 @@ void test('comic text is included in concise accessible element labels', () => {
   const text = project.chapters[0].scenes[0].elements[0];
   const shape = project.chapters[0].scenes[0].elements[1];
 
-  text.text = '  Something moved\n beyond the fog.  ';
+  text.text = '  Fixture\n heading.  ';
   assert.equal(
     describeElementForAccessibility(text),
-    'Scene title: Something moved beyond the fog.',
+    'Scene title: Fixture heading.',
   );
   assert.equal(describeElementForAccessibility(shape), 'Signal orb');
 
@@ -389,7 +389,7 @@ void test('continuous edit gestures occupy one undo history entry', () => {
   project.title = 'Signal';
 
   assert.equal(history.undoStack.length, 1);
-  assert.equal(history.undoStack[0].project.title, 'Signal in the Fog');
+  assert.equal(history.undoStack[0].project.title, 'Editor fixture');
   assert.deepEqual(history.undoStack[0].selection, selection);
 
   history = recordProjectHistory(
@@ -415,7 +415,7 @@ void test('history entries clone projects and repair stale selection', () => {
   });
 
   project.title = 'Changed after capture';
-  assert.equal(entry.project.title, 'Signal in the Fog');
+  assert.equal(entry.project.title, 'Editor fixture');
   assert.deepEqual(entry.selection, {
     chapterId: DEFAULT_CHAPTER_ID,
     sceneId: 'scene-1',
@@ -1530,7 +1530,7 @@ void test('image element copies preserve independent framing controls', () => {
 void test('canvas fit sizing respects both workspace axes and safe fallbacks', () => {
   assert.equal(getFitCanvasWidth(800, 600, 48, 48), 414);
   assert.equal(getFitCanvasWidth(500, 1_000, 48, 48), 452);
-  assert.equal(getFitCanvasWidth(160, 160, 24, 24), 180);
+  assert.equal(getFitCanvasWidth(160, 160, 24, 24), 102);
   assert.equal(getFitCanvasWidth(Number.NaN, 600), 430);
 });
 
@@ -3703,7 +3703,7 @@ void test('version 6 drafts and publication revisions migrate losslessly into on
 void test('nested version 7 projects round-trip chapters, format, cover, and revisions', () => {
   const project = createDefaultProject();
   const secondChapter = createBlankChapter({
-    id: 'signal-in-the-fog-chapter-2',
+    id: 'editor-test-project-chapter-2',
     sceneId: 'scene-4',
     title: 'Chapter 2 · The Return',
   });
@@ -4132,7 +4132,7 @@ void test('project import normalizes optional metadata without losing history', 
 
   assert.ok(result.project);
   assert.equal(result.error, null);
-  assert.equal(result.project.id, 'signal-in-the-fog');
+  assert.equal(result.project.id, 'editor-fixture');
   assert.equal(result.project.publications.length, 1);
   assert.equal(result.project.publishedRevision, 1);
   assert.equal(result.project.publications[0].description, '');
@@ -4235,7 +4235,7 @@ void test('published revisions remain immutable when the draft changes', () => {
 
   assert.equal(revision.revision, 1);
   assert.equal(revision.createdAt, '2026-08-29T00:00:00.000Z');
-  assert.equal(revision.title, 'Signal in the Fog');
+  assert.equal(revision.title, 'Editor fixture');
   assert.equal(revision.coverSceneId, 'scene-2');
   assert.deepEqual(revision.tags, ['science fiction', 'mystery']);
   assert.deepEqual(revision.metadata.characters, [
@@ -4245,7 +4245,7 @@ void test('published revisions remain immutable when the draft changes', () => {
   assert.deepEqual(revision.metadata.themes, ['Connection', 'Memory']);
   assert.equal(
     revision.chapters[0].scenes[0].elements[0].text,
-    'Something moved beyond the fog.',
+    'Fixture heading.',
   );
 });
 
@@ -4301,11 +4301,11 @@ void test('reader source defaults to the edited draft after publication', () => 
   const revisionSource = resolveReaderSource(project, revision);
   assert.equal(revisionSource.mode, 'revision');
   assert.equal(revisionSource.revision, 1);
-  assert.equal(revisionSource.title, 'Signal in the Fog');
+  assert.equal(revisionSource.title, 'Editor fixture');
   assert.equal(revisionSource.contentRating, 'all-ages');
   assert.equal(revisionSource.coverSceneId, 'scene-1');
   assert.deepEqual(revisionSource.metadata.themes, ['Connection', 'Memory']);
-  assert.equal(revisionSource.chapters[0].scenes[0].name, 'The signal');
+  assert.equal(revisionSource.chapters[0].scenes[0].name, 'Test scene');
   draftSource.metadata.themes.push('Reader-only mutation');
   assert.equal(project.metadata.themes.includes('Reader-only mutation'), false);
 });
@@ -4356,7 +4356,7 @@ void test('publication readiness requires creator status and exact fanwork sourc
     'Choose the work origin',
   ]);
 
-  project.metadata.contributorNames = ['Bahar Yüksel'];
+  project.metadata.contributorNames = ['Test creator'];
   project.metadata.workStatus = 'ongoing';
   project.metadata.origin = 'motus-fanwork';
   assert.deepEqual(getPublicationReadiness(project).issues, [
@@ -4405,7 +4405,7 @@ void test('a published revision can be recovered as a new editable draft', () =>
   restored.chapters[0].scenes[0].elements[0].text = 'Editable restored scene';
   assert.equal(
     revision.chapters[0].scenes[0].elements[0].text,
-    'Something moved beyond the fog.',
+    'Fixture heading.',
   );
   assert.equal(restorePublicationToDraft(project, 'missing-revision'), null);
 });

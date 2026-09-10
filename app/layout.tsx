@@ -1,14 +1,17 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './motus-platform.css';
+import { MotusSettingsProvider } from '@/components/motus-settings';
+import { APPEARANCE_BOOTSTRAP } from '@/lib/motus-appearance';
 
 const siteOrigin =
-  process.env.SITE_URL ?? 'https://motus-studio.baharyuksel0403.chatgpt.site';
+  process.env.SITE_URL ?? 'https://firebrick-lark-503190.hostingersite.com';
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin),
-  title: 'Motus — Motion comics, made visual',
+  title: 'Motus | The comic archive',
   description:
-    'Build layered motion comics with a visual canvas and editable animation blocks.',
+    'Upload comics, add simple animation, and read in your preferred display.',
   icons: {
     apple: [{ url: '/apple-touch-icon-v2.png', sizes: '180x180' }],
     icon: [
@@ -26,24 +29,24 @@ export const metadata: Metadata = {
   },
   manifest: '/manifest.webmanifest',
   openGraph: {
-    title: 'Motus — Motion comics, made visual',
+    title: 'Motus | The comic archive',
     description:
-      'Build layered motion comics with a visual canvas and editable animation blocks.',
+      'Upload comics, add simple animation, and read in your preferred display.',
     images: [
       {
         url: '/og-v2.png',
         width: 1728,
         height: 910,
-        alt: 'Motus — Motion comics, made visual.',
+        alt: 'Motus | The comic archive.',
       },
     ],
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Motus — Motion comics, made visual',
+    title: 'Motus | The comic archive',
     description:
-      'Build layered motion comics with a visual canvas and editable animation blocks.',
+      'Upload comics, add simple animation, and read in your preferred display.',
     images: ['/og-v2.png'],
   },
 };
@@ -59,8 +62,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP }} />
+      </head>
+      <body>
+        <MotusSettingsProvider>{children}</MotusSettingsProvider>
+      </body>
     </html>
   );
 }

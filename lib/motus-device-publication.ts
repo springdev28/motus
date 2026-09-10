@@ -1,3 +1,4 @@
+import { isRetiredTestEdition } from './motus-demo-cleanup.ts';
 import { readNewestMotusDraft } from './motus-draft-storage.ts';
 import {
   DEFAULT_ELEMENT_SHAPE_PRESET,
@@ -23,7 +24,8 @@ export const MAX_DEVICE_PUBLICATIONS = 12;
 const MAX_DEVICE_PUBLICATION_REGISTRY_CHARACTERS = 24_000_000;
 const MAX_DEVICE_PREFERENCE_ENTRIES = 100;
 
-type DeviceReadStorage = Pick<Storage, 'getItem'>;
+type DeviceReadStorage = Pick<Storage, 'getItem'> &
+  Partial<Pick<Storage, 'setItem'>>;
 type DeviceWriteStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 type DevicePublicationRecord = {
@@ -217,6 +219,9 @@ function restoreDevicePublicationRecord(
   }
 }
 
+// Shared editions use exactly the same schema validation as saved editions.
+export const restoreSharedPublicationRecord = restoreDevicePublicationRecord;
+
 export function listDevicePublications(
   storage: DeviceReadStorage,
 ): DevicePublication[] {
@@ -236,12 +241,23 @@ export function listDevicePublications(
     if (envelope.schemaVersion !== 1 || !Array.isArray(envelope.publications)) {
       return [];
     }
+    const retained = envelope.publications.filter(
+      (record) => !isRetiredTestEdition(record),
+    );
+    if (retained.length !== envelope.publications.length) {
+      try {
+        storage.setItem?.(
+          DEVICE_PUBLICATION_REGISTRY_STORAGE_KEY,
+          JSON.stringify({ ...envelope, publications: retained }),
+        );
+      } catch {
+        /* Read-only storage can still exclude retired test editions. */
+      }
+    }
+    envelope.publications = retained;
     const publications: DevicePublication[] = [];
     const slugs = new Set<string>();
-    for (const candidate of envelope.publications.slice(
-      0,
-      MAX_DEVICE_PUBLICATIONS,
-    )) {
+    for (const candidate of retained.slice(0, MAX_DEVICE_PUBLICATIONS)) {
       const publication = restoreDevicePublicationRecord(candidate);
       if (!publication || slugs.has(publication.slug)) continue;
       slugs.add(publication.slug);

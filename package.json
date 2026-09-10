@@ -6,13 +6,16 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
-    "build": "vinext build",
-    "start": "wrangler dev --config dist/server/wrangler.json",
+    "dev": "MOTUS_HOSTING=node vinext dev",
+    "build": "npm run build:hostinger",
+    "start": "node hostinger-server.mjs",
     "test": "node --experimental-strip-types --test lib/*.test.ts",
     "lint": "oxlint",
     "format": "oxfmt",
-    "verify:ai-assets": "node scripts/verify-ai-assets.mjs"
+    "verify:ai-assets": "node scripts/verify-ai-assets.mjs",
+    "build:hostinger": "node scripts/restore-ai-assets.mjs && MOTUS_HOSTING=node vinext build && node scripts/prepare-hostinger-build.mjs",
+    "build:worker": "vinext build",
+    "start:worker": "wrangler dev --config dist/server/wrangler.json"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -26,6 +29,7 @@
     "cmdk": "1.1.1",
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.5.2",
+    "express": "5.2.1",
     "input-otp": "1.4.2",
     "lucide-react": "1.31.0",
     "perfect-freehand": "1.2.3",
@@ -60,5 +64,6 @@
     "vite": "^8.2.2",
     "wrangler": "^4.127.1"
   },
-  "type": "module"
+  "type": "module",
+  "main": "hostinger-server.mjs"
 }

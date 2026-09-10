@@ -1,5 +1,6 @@
 'use client';
 
+import { MOTUS_LANGUAGES, languageName } from '@/lib/motus-languages';
 import { useState } from 'react';
 import { BookOpenText, Compass, ShieldCheck } from 'lucide-react';
 
@@ -321,11 +322,18 @@ export function MotusWorkDetailsDialog({
                     }
                     value={project.language}
                   >
-                    <NativeSelectOption value="en">English</NativeSelectOption>
-                    <NativeSelectOption value="tr">Turkish</NativeSelectOption>
-                    <NativeSelectOption value="es">Spanish</NativeSelectOption>
-                    <NativeSelectOption value="fr">French</NativeSelectOption>
-                    <NativeSelectOption value="ja">Japanese</NativeSelectOption>
+                    {!MOTUS_LANGUAGES.some(
+                      ([code]) => code === project.language,
+                    ) ? (
+                      <NativeSelectOption value={project.language}>
+                        {languageName(project.language)}
+                      </NativeSelectOption>
+                    ) : null}
+                    {MOTUS_LANGUAGES.map(([code, label]) => (
+                      <NativeSelectOption key={code} value={code}>
+                        {label}
+                      </NativeSelectOption>
+                    ))}
                   </NativeSelect>
                 </label>
                 <label

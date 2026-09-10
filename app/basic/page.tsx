@@ -5,6 +5,6 @@ export const metadata: Metadata = {
   description:
     'Upload comics, add simple animation, and read in your preferred display.',
 };
-export default function Home() {
+export default function BasicPage() {
   return <MotusBasic />;
 }

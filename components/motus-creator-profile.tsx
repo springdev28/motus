@@ -1,9 +1,9 @@
 /* oxlint-disable next/no-html-link-for-pages -- Creator profiles use stable first-party routes. */
 'use client';
 
+import { MotusSiteHeader } from '@/components/motus-site-header';
 import { useEffect, useState } from 'react';
 import {
-  ArrowLeft,
   ArrowRight,
   BookOpen,
   Check,
@@ -14,6 +14,7 @@ import {
   Users,
 } from 'lucide-react';
 
+import { MotusShare } from '@/components/motus-share';
 import { MotusLogo } from '@/components/motus-logo';
 import { Button } from '@/components/ui/button';
 import {
@@ -166,19 +167,7 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
 
   return (
     <div className="creator-profile-shell">
-      <header className="creator-profile-header">
-        <a className="creator-profile-back" href="/discover?entity=creators">
-          <ArrowLeft aria-hidden="true" />
-          Creators
-        </a>
-        <a aria-label="Motus home" className="creator-profile-brand" href="/">
-          <MotusLogo variant="on-dark" />
-          <span>MOTUS</span>
-        </a>
-        <a className="creator-profile-create" href="/studio">
-          <Sparkles aria-hidden="true" /> Create
-        </a>
-      </header>
+      <MotusSiteHeader />
 
       <main className="creator-profile-main">
         <section
@@ -210,6 +199,12 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
             </div>
           </div>
           <div className="creator-profile-follow-wrap">
+            <MotusShare
+              title={`${creator.name} on Motus`}
+              creator={creator.name}
+              description={creator.bio}
+              path={`/creator/${creator.routeHandle}`}
+            />
             <Button
               aria-pressed={followed}
               disabled={!hydrated}
@@ -376,12 +371,11 @@ export function MotusCreatorProfile({ handle }: { handle: string }) {
         <section className="creator-profile-note">
           <BookOpen aria-hidden="true" />
           <div>
-            <strong>
-              Profile follows are device-local in this private alpha.
-            </strong>
+            <strong>Keep your favorite creators close.</strong>
             <p>
-              No follower counts, account claims, or public membership states
-              are invented before Motus has authenticated profiles.
+              Following a creator adds their work to your Following feed on this
+              device. These sample profiles let you explore the Motus
+              experience.
             </p>
           </div>
         </section>

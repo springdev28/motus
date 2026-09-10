@@ -40,11 +40,7 @@ export const LIBRARY_WORK_GENRES = [
 
 export const LIBRARY_WORK_ORIGINS = ['original', 'fanwork'] as const;
 
-export const LIBRARY_COMMUNITY_SLUGS = [
-  'motion-makers',
-  'quiet-panels',
-  'midnight-archive',
-] as const;
+export const LIBRARY_COMMUNITY_SLUGS: readonly string[] = [];
 
 export const LIBRARY_ENTITY_TYPES = [
   'works',
@@ -55,16 +51,7 @@ export const LIBRARY_ENTITY_TYPES = [
   'characters',
 ] as const;
 
-export const LIBRARY_CREATOR_IDS = [
-  'creator-miravale',
-  'creator-junipermoss',
-  'creator-ayanorth',
-  'creator-tomasgrey',
-  'creator-emihoshino',
-  'creator-solmercer',
-  'creator-rincalder',
-  'creator-noorstatic',
-] as const;
+export const LIBRARY_CREATOR_IDS: readonly string[] = [];
 
 export const LIBRARY_CONTENT_WARNING_IDS = [
   'violence',
@@ -164,345 +151,21 @@ export type LibraryCommunity = {
   palette: string;
 };
 
-export const MOTUS_LIBRARY_CREATORS: readonly LibraryCreator[] = [
-  {
-    id: 'creator-miravale',
-    routeHandle: 'miravale',
-    displayHandle: '@miravale',
-    name: 'Mira Vale',
-    bio: 'Science-fiction cartoonist building quiet mysteries from maps, light, and impossible signals.',
-    banner: 'linear-gradient(125deg, #18192a, #45326e 52%, #365f70)',
-    accent: '#a7eef2',
-    communitySlugs: ['motion-makers'],
-    featuredWorkSlug: 'the-last-signal',
-  },
-  {
-    id: 'creator-junipermoss',
-    routeHandle: 'junipermoss',
-    displayHandle: '@junipermoss',
-    name: 'Juniper Moss',
-    bio: 'Illustrator of cozy fantasy, practical magic, and the meals that turn strangers into family.',
-    banner: 'linear-gradient(125deg, #263a35, #5e412d 58%, #9a7047)',
-    accent: '#ffd693',
-    communitySlugs: ['quiet-panels'],
-    featuredWorkSlug: 'tea-at-the-edge-of-magic',
-  },
-  {
-    id: 'creator-ayanorth',
-    routeHandle: 'ayanorth',
-    displayHandle: '@ayanorth',
-    name: 'Aya North',
-    bio: 'Motion-comic director pairing romance, performance, and electric color with rhythm-led animation.',
-    banner: 'linear-gradient(125deg, #25152c, #803158 56%, #365f9b)',
-    accent: '#ff9bd1',
-    communitySlugs: ['motion-makers'],
-    featuredWorkSlug: 'neon-hearts-club',
-  },
-  {
-    id: 'creator-tomasgrey',
-    routeHandle: 'tomasgrey',
-    displayHandle: '@tomasgrey',
-    name: 'Tomas Grey',
-    bio: 'Horror artist interested in unreliable architecture, inherited memory, and weather with motives.',
-    banner: 'linear-gradient(125deg, #111719, #2e4042 55%, #625847)',
-    accent: '#a9c7c4',
-    communitySlugs: ['midnight-archive'],
-    featuredWorkSlug: 'the-house-below-rain',
-  },
-  {
-    id: 'creator-emihoshino',
-    routeHandle: 'emihoshino',
-    displayHandle: '@emihoshino',
-    name: 'Emi Hoshino',
-    bio: 'Page-comic author drawing family dramas through paper craft, letters, and small acts of repair.',
-    banner: 'linear-gradient(125deg, #34273b, #875b66 56%, #c29f77)',
-    accent: '#ffe1bb',
-    communitySlugs: ['quiet-panels'],
-    featuredWorkSlug: 'paper-moons-of-kyoto',
-  },
-  {
-    id: 'creator-solmercer',
-    routeHandle: 'solmercer',
-    displayHandle: '@solmercer',
-    name: 'Sol Mercer',
-    bio: 'Fantasy cartoonist making hopeful machines, rebellious gardens, and stories about shared stewardship.',
-    banner: 'linear-gradient(125deg, #192723, #53663a 55%, #97633b)',
-    accent: '#e8ff82',
-    communitySlugs: ['motion-makers'],
-    featuredWorkSlug: 'iron-orchard',
-  },
-  {
-    id: 'creator-rincalder',
-    routeHandle: 'rincalder',
-    displayHandle: '@rincalder',
-    name: 'Rin Calder',
-    bio: 'Action artist choreographing sky cities, courier routes, and character-driven motion in Spanish and English.',
-    banner: 'linear-gradient(125deg, #172c43, #285f79 54%, #c47742)',
-    accent: '#8ce8ff',
-    communitySlugs: ['motion-makers'],
-    featuredWorkSlug: 'cloudbreak-courier',
-  },
-  {
-    id: 'creator-noorstatic',
-    routeHandle: 'noorstatic',
-    displayHandle: '@noorstatic',
-    name: 'Noor Static',
-    bio: 'Archive-fiction creator exploring damaged images, haunted preservation, and transformative fanwork.',
-    banner: 'linear-gradient(125deg, #171722, #514365 54%, #406362)',
-    accent: '#c7bcff',
-    communitySlugs: ['midnight-archive'],
-    featuredWorkSlug: 'afterimage-archive',
-  },
-];
+export const MOTUS_LIBRARY_CREATORS: readonly LibraryCreator[] = [];
 
-export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [
-  {
-    slug: 'the-last-signal',
-    title: 'The Last Signal',
-    creatorId: 'creator-miravale',
-    creator: 'Mira Vale',
-    creatorHandle: '@miravale',
-    origin: 'original',
-    contentWarningIds: [],
-    genre: 'Science fiction',
-    communitySlugs: ['motion-makers'],
-    format: 'Vertical scroll',
-    status: 'Ongoing',
-    rating: 'Teen',
-    language: 'English',
-    chapterCount: 12,
-    description:
-      'A cartographer follows a light that should not exist across a flooded satellite city.',
-    tags: ['mystery', 'space', 'slow burn'],
-    characters: ['Mira', 'The Signal'],
-    fandom: null,
-    palette: 'linear-gradient(145deg, #3e2e67, #151624 62%, #4f7182)',
-    accent: '#a7eef2',
-    updatedLabel: 'Updated today',
-    popularity: 98,
-    staffPick: true,
-  },
-  {
-    slug: 'tea-at-the-edge-of-magic',
-    title: 'Tea at the Edge of Magic',
-    creatorId: 'creator-junipermoss',
-    creator: 'Juniper Moss',
-    creatorHandle: '@junipermoss',
-    origin: 'original',
-    contentWarningIds: [],
-    genre: 'Fantasy',
-    communitySlugs: ['quiet-panels'],
-    format: 'Hybrid',
-    status: 'Completed',
-    rating: 'General',
-    language: 'English',
-    chapterCount: 18,
-    description:
-      'A quiet tea shop serves every realm except the one its owner needs to reach.',
-    tags: ['cozy', 'found family', 'witches'],
-    characters: ['Juniper', 'Mallow'],
-    fandom: null,
-    palette: 'linear-gradient(145deg, #60432e, #263a35 58%, #ad8050)',
-    accent: '#ffd693',
-    updatedLabel: 'Complete series',
-    popularity: 92,
-  },
-  {
-    slug: 'neon-hearts-club',
-    title: 'Neon Hearts Club',
-    creatorId: 'creator-ayanorth',
-    creator: 'Aya North',
-    creatorHandle: '@ayanorth',
-    origin: 'original',
-    contentWarningIds: [],
-    genre: 'Romance',
-    communitySlugs: ['motion-makers'],
-    format: 'Motion comic',
-    status: 'Ongoing',
-    rating: 'Teen',
-    language: 'English',
-    chapterCount: 9,
-    description:
-      'Two rival musicians inherit the same midnight stage and a song neither remembers writing.',
-    tags: ['music', 'rivals', 'city nights'],
-    characters: ['Aya', 'Niko'],
-    fandom: null,
-    palette: 'linear-gradient(145deg, #8a315c, #24162d 60%, #3f67a6)',
-    accent: '#ff9bd1',
-    updatedLabel: 'Updated 2 days ago',
-    popularity: 96,
-    staffPick: true,
-  },
-  {
-    slug: 'the-house-below-rain',
-    title: 'The House Below Rain',
-    creatorId: 'creator-tomasgrey',
-    creator: 'Tomas Grey',
-    creatorHandle: '@tomasgrey',
-    origin: 'original',
-    contentWarningIds: ['horror-imagery', 'distressing-themes'],
-    genre: 'Horror',
-    communitySlugs: ['midnight-archive'],
-    format: 'Vertical scroll',
-    status: 'Hiatus',
-    rating: 'Mature',
-    language: 'English',
-    chapterCount: 7,
-    description:
-      'Every storm reveals one more room beneath a house that has no cellar.',
-    tags: ['folk horror', 'rain', 'memory'],
-    characters: ['Ivo', 'Mother Rain'],
-    fandom: null,
-    palette: 'linear-gradient(145deg, #28383a, #111719 58%, #665c4c)',
-    accent: '#a9c7c4',
-    updatedLabel: 'On hiatus',
-    popularity: 86,
-  },
-  {
-    slug: 'paper-moons-of-kyoto',
-    title: 'Paper Moons of Kyoto',
-    creatorId: 'creator-emihoshino',
-    creator: 'Emi Hoshino',
-    creatorHandle: '@emihoshino',
-    origin: 'original',
-    contentWarningIds: [],
-    genre: 'Drama',
-    communitySlugs: ['quiet-panels'],
-    format: 'Page',
-    status: 'Completed',
-    rating: 'Teen',
-    language: 'Japanese',
-    chapterCount: 24,
-    description:
-      'A letterpress apprentice folds unsent apologies into moons that refuse to stay still.',
-    tags: ['family', 'letters', 'coming of age'],
-    characters: ['Emi', 'Ren'],
-    fandom: null,
-    palette: 'linear-gradient(145deg, #8c5d67, #35283c 58%, #cfad83)',
-    accent: '#ffe1bb',
-    updatedLabel: 'Complete series',
-    popularity: 90,
-    staffPick: true,
-  },
-  {
-    slug: 'iron-orchard',
-    title: 'Iron Orchard',
-    creatorId: 'creator-solmercer',
-    creator: 'Sol Mercer',
-    creatorHandle: '@solmercer',
-    origin: 'original',
-    contentWarningIds: ['violence'],
-    genre: 'Fantasy',
-    communitySlugs: ['motion-makers'],
-    format: 'Spread',
-    status: 'Ongoing',
-    rating: 'Teen',
-    language: 'English',
-    chapterCount: 15,
-    description:
-      'Mechanical fruit grows only for the village exile who was forbidden to harvest it.',
-    tags: ['solarpunk', 'machines', 'rebellion'],
-    characters: ['Sol', 'Pip'],
-    fandom: null,
-    palette: 'linear-gradient(145deg, #5c6e3f, #1a2724 58%, #a46c3f)',
-    accent: '#e8ff82',
-    updatedLabel: 'Updated this week',
-    popularity: 88,
-  },
-  {
-    slug: 'cloudbreak-courier',
-    title: 'Cloudbreak Courier',
-    creatorId: 'creator-rincalder',
-    creator: 'Rin Calder',
-    creatorHandle: '@rincalder',
-    origin: 'original',
-    contentWarningIds: [],
-    genre: 'Action',
-    communitySlugs: ['motion-makers'],
-    format: 'Vertical scroll',
-    status: 'Ongoing',
-    rating: 'General',
-    language: 'Spanish',
-    chapterCount: 6,
-    description:
-      'A rooftop courier races weather itself to deliver one impossible blue envelope.',
-    tags: ['adventure', 'sky city', 'friendship'],
-    characters: ['Rin', 'Kite'],
-    fandom: null,
-    palette: 'linear-gradient(145deg, #2e6681, #172c43 58%, #d8894b)',
-    accent: '#8ce8ff',
-    updatedLabel: 'New release',
-    popularity: 82,
-  },
-  {
-    slug: 'afterimage-archive',
-    title: 'Afterimage Archive',
-    creatorId: 'creator-noorstatic',
-    creator: 'Noor Static',
-    creatorHandle: '@noorstatic',
-    origin: 'fanwork',
-    contentWarningIds: ['horror-imagery', 'distressing-themes'],
-    genre: 'Mystery',
-    communitySlugs: ['midnight-archive'],
-    format: 'Motion comic',
-    status: 'Completed',
-    rating: 'Adults only',
-    language: 'English',
-    chapterCount: 11,
-    description:
-      'A conservator discovers that damaged photographs remember what happened outside their frames.',
-    tags: ['archive', 'ghosts', 'analog'],
-    characters: ['Noor', 'Frame 17'],
-    fandom: 'The Static Room',
-    palette: 'linear-gradient(145deg, #564768, #171722 58%, #486a69)',
-    accent: '#c7bcff',
-    updatedLabel: 'Complete series',
-    popularity: 89,
-  },
-];
+export const MOTUS_LIBRARY_WORKS: readonly LibraryWork[] = [];
 
-export const MOTUS_LIBRARY_COMMUNITIES: readonly LibraryCommunity[] = [
-  {
-    slug: 'motion-makers',
-    name: 'Motion Makers',
-    description:
-      'Editable motion studies, block recipes, and creator critique.',
-    members: 1842,
-    works: 386,
-    privacy: 'Public',
-    tags: ['animation', 'blocks', 'critique'],
-    palette: 'linear-gradient(135deg, #2a2450, #7655c6)',
-  },
-  {
-    slug: 'quiet-panels',
-    name: 'Quiet Panels',
-    description: 'Slow comics, visual essays, and deliberate page rhythm.',
-    members: 967,
-    works: 214,
-    privacy: 'Public',
-    tags: ['slice of life', 'essays', 'pacing'],
-    palette: 'linear-gradient(135deg, #304d49, #8b7054)',
-  },
-  {
-    slug: 'midnight-archive',
-    name: 'Midnight Archive',
-    description: 'A moderated home for horror, mystery, and uncanny fiction.',
-    members: 731,
-    works: 149,
-    privacy: 'Private',
-    tags: ['horror', 'mystery', 'moderated'],
-    palette: 'linear-gradient(135deg, #242837, #585168)',
-  },
-];
+export const MOTUS_LIBRARY_COMMUNITIES: readonly LibraryCommunity[] = [];
 
 export type LibraryWorkFilters = {
   query?: string;
+  language?: string;
   format?: LibraryWorkFormat | 'All';
   status?: LibraryWorkStatus | 'All';
   rating?: LibraryWorkRating | 'All';
   genre?: LibraryWorkGenre | 'All';
   origin?: LibraryWorkOrigin | 'All';
-  communitySlug?: LibraryCommunitySlug | 'All';
+  communitySlug?: LibraryCommunitySlug;
   followedSlugs?: ReadonlySet<string>;
   followedOnly?: boolean;
 };
@@ -516,6 +179,12 @@ export function filterLibraryWorks(
 ): LibraryWork[] {
   const query = normalizeSearch(filters.query ?? '');
   return works.filter((work) => {
+    if (
+      filters.language &&
+      filters.language !== 'All' &&
+      work.language !== filters.language
+    )
+      return false;
     if (
       filters.format &&
       filters.format !== 'All' &&
@@ -557,6 +226,7 @@ export function filterLibraryWorks(
     if (!query) return true;
     return [
       work.title,
+      work.description,
       work.creator,
       work.creatorHandle,
       work.genre,

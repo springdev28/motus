@@ -1,6 +1,15 @@
 /* oxlint-disable next/no-html-link-for-pages -- Home navigation performs a full transition after synchronously flushing the draft. */
 'use client';
+import { MotusPageTurn } from '@/components/motus-page-turn';
 
+import { MotusPageSettings } from '@/components/motus-page-settings';
+import {
+  listUploads,
+  saveUpload,
+  removeUpload,
+  type MotusUpload,
+} from '@/lib/motus-uploads';
+import { MotusSettingsButton } from '@/components/motus-settings';
 import {
   useCallback,
   useEffect,
@@ -488,7 +497,8 @@ function getStudioGridTemplate(
   layout: StudioPanelLayout,
 ) {
   const centerMinimum = workspace === 'motion' ? '460px' : '340px';
-  return `60px minmax(112px, ${layout.left}fr) minmax(${centerMinimum}, ${layout.center}fr) minmax(260px, ${layout.right}fr)`;
+  const left = Math.min(24, layout.left);
+  return `60px clamp(180px, calc((100vw - 60px) * ${left / 100}), 320px) minmax(${centerMinimum}, ${layout.center}fr) minmax(260px, ${layout.right}fr)`;
 }
 
 function getBlockWorkspaceGridTemplate(layout: BlockWorkspaceLayout) {
@@ -1679,8 +1689,8 @@ const sceneTemplates = [
     name: 'Dramatic reveal',
     description: 'A title, focal glow, and dialogue beat staged for a reveal.',
     background: sceneBackgrounds[4].value,
-    title: 'Everything changed here.',
-    speech: 'You knew this whole time?',
+    title: 'Your title',
+    speech: 'Your dialogue',
     accent: '#e5ff73',
   },
   {
@@ -1689,8 +1699,8 @@ const sceneTemplates = [
     description:
       'Balanced text and speech placement for a slower character beat.',
     background: sceneBackgrounds[1].value,
-    title: 'For a while, neither of us spoke.',
-    speech: 'Can we start again?',
+    title: 'Your caption',
+    speech: 'Your dialogue',
     accent: '#ff9db3',
   },
   {
@@ -1699,8 +1709,8 @@ const sceneTemplates = [
     description:
       'A bold focal object and compact caption for action or surprise.',
     background: sceneBackgrounds[3].value,
-    title: 'THOOM',
-    speech: 'Move!',
+    title: 'Your sound effect',
+    speech: 'Your dialogue',
     accent: '#ffb45e',
   },
 ] as const;
@@ -2056,7 +2066,7 @@ async function readFileAsDataUrl(file: File) {
 
 const toolItems = [
   { id: 'select', label: 'Select', icon: MousePointer2 },
-  { id: 'image', label: 'Image', icon: ImagePlus },
+  { id: 'image', label: 'Uploads', icon: Upload },
   { id: 'text', label: 'Text', icon: Type },
   { id: 'shape', label: 'Shape', icon: Square },
   { id: 'speech', label: 'Speech', icon: MessageSquareText },
@@ -2969,8 +2979,6 @@ function SceneView({
       className="artboard"
       style={{ background: scene.background }}
     >
-      <div className="artboard-grid" />
-      <div className="artboard-horizon" />
       {alignmentGuides.map((guide, index) => (
         <span
           aria-hidden="true"
@@ -3040,7 +3048,7 @@ function SceneView({
                   '--element-font-family':
                     ELEMENT_FONT_STACKS[typography.fontPreset],
                   '--element-font-size-min': `${typography.fontSize * 0.5}px`,
-                  '--element-font-size-fluid': `${typography.fontSize * 0.09}vw`,
+                  '--element-font-size-fluid': `${(typography.fontSize / 430) * 100}cqw`,
                   '--element-font-size-max': `${typography.fontSize}px`,
                   '--element-thumbnail-font-size': `${
                     typography.fontSize *
@@ -3388,6 +3396,9 @@ type ReaderSceneProps = {
   index: number;
   sessionKey: number;
   anchorId?: string;
+  snapshot?: boolean;
+  scrollTransition?: 'cut' | 'slide' | 'book';
+  transitionDuration?: number;
   onEnter?: (index: number) => void;
 };
 
@@ -3396,6 +3407,9 @@ export function ReaderScene({
   index,
   sessionKey,
   anchorId,
+  snapshot = false,
+  scrollTransition = 'cut',
+  transitionDuration = 600,
   onEnter,
 }: ReaderSceneProps) {
   const sceneRef = useRef<HTMLElement>(null);
@@ -3404,7 +3418,7 @@ export function ReaderScene({
 
   useEffect(() => {
     const element = sceneRef.current;
-    if (!element) return;
+    if (!element || snapshot) return;
 
     const prefersReducedMotion = window.matchMedia?.(
       '(prefers-reduced-motion: reduce)',
@@ -3434,14 +3448,18 @@ export function ReaderScene({
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [index, onEnter, sessionKey]);
+  }, [index, onEnter, sessionKey, snapshot]);
 
   return (
     <article
       aria-label={`Scene ${index + 1}: ${scene.name}`}
       className="reader-scene"
-      data-played={playingKey > 0 || undefined}
-      id={anchorId}
+      data-played={playingKey > 0 || snapshot || undefined}
+      data-scroll-transition={
+        reducedMotion || snapshot ? 'cut' : scrollTransition
+      }
+      style={{ '--page-duration': `${transitionDuration}ms` } as CSSProperties}
+      id={snapshot ? undefined : anchorId}
       ref={sceneRef}
     >
       <div className="reader-scene-meta">
@@ -3464,14 +3482,11 @@ export function ReaderScene({
 export function MotusStudio() {
   const [project, setProject] = useState<MotusProject>(createDefaultProject);
   const [activeChapterId, setActiveChapterId] = useState(
-    'signal-in-the-fog-chapter-1',
+    'untitled-work-chapter-1',
   );
-  const [activeSceneId, setActiveSceneId] = useState('scene-1');
-  const [selectedElementId, setPrimarySelectedElementId] =
-    useState('scene-1-orb');
-  const [selectedElementIds, setSelectedElementIds] = useState<string[]>([
-    'scene-1-orb',
-  ]);
+  const [activeSceneId, setActiveSceneId] = useState('untitled-work-scene-1');
+  const [selectedElementId, setPrimarySelectedElementId] = useState('');
+  const [selectedElementIds, setSelectedElementIds] = useState<string[]>([]);
   const setSelectedElementId = useCallback((elementId: string) => {
     setPrimarySelectedElementId(elementId);
     setSelectedElementIds(elementId ? [elementId] : []);
@@ -3509,7 +3524,7 @@ export function MotusStudio() {
   const [readerMatureConfirmed, setReaderMatureConfirmed] = useState(false);
   const [readerMode, setReaderMode] = useState<ReaderMode>('scroll');
   const [readerChapterId, setReaderChapterId] = useState(
-    'signal-in-the-fog-chapter-1',
+    'untitled-work-chapter-1',
   );
   const [readerPageIndex, setReaderPageIndex] = useState(0);
   const [readerPageTurnIntent, setReaderPageTurnIntent] =
@@ -3518,7 +3533,18 @@ export function MotusStudio() {
     useState(0);
   const [publishOpen, setPublishOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
-  const [catalogTab, setCatalogTab] = useState<CatalogTab>('works');
+  const [pageSettingsOpen, setPageSettingsOpen] = useState(false);
+  const [uploads, setUploads] = useState<MotusUpload[]>([]);
+  const [uploadNotice, setUploadNotice] = useState('');
+  const [uploading, setUploading] = useState(false);
+  useEffect(() => {
+    void listUploads()
+      .then(setUploads)
+      .catch(() =>
+        setUploadNotice('Upload storage is unavailable in this browser.'),
+      );
+  }, []);
+  const [catalogTab, setCatalogTab] = useState<CatalogTab>('elements');
   const [catalogSearch, setCatalogSearch] = useState('');
   const [elementCatalogSearch, setElementCatalogSearch] = useState('');
   const [elementCatalogCategory, setElementCatalogCategory] =
@@ -3866,6 +3892,8 @@ export function MotusStudio() {
     : undefined;
   const projectImageAssets = useMemo(() => {
     const assets = new Map<string, ProjectImageAsset>();
+    for (const upload of uploads)
+      assets.set(upload.src, { ...upload, uses: 0 });
     for (const scene of allScenes) {
       for (const element of scene.elements) {
         if (element.type !== 'image' || !element.src) continue;
@@ -3885,7 +3913,7 @@ export function MotusStudio() {
       }
     }
     return [...assets.values()];
-  }, [allScenes]);
+  }, [allScenes, uploads]);
   const normalizedBlockPaletteSearch = blockPaletteSearch
     .trim()
     .toLocaleLowerCase();
@@ -3933,7 +3961,11 @@ export function MotusStudio() {
       })).filter((group) => group.entries.length > 0),
     [visibleBlockPaletteEntries],
   );
-  const activeTool = inspectorTab === 'motion' ? 'motion' : 'select';
+  const activeTool =
+    inspectorTab === 'motion' &&
+    (desktopPanelsEnabled || mobileStudioPane === 'blocks')
+      ? 'motion'
+      : 'select';
 
   function persistProject(
     candidate: MotusProject,
@@ -3985,7 +4017,7 @@ export function MotusStudio() {
 
   useEffect(() => {
     let active = true;
-    const desktopQuery = window.matchMedia('(min-width: 901px)');
+    const desktopQuery = window.matchMedia('(min-width: 1101px)');
     const syncDesktopState = () => {
       if (active) setDesktopPanelsEnabled(desktopQuery.matches);
     };
@@ -4046,6 +4078,13 @@ export function MotusStudio() {
             ? 'Legacy draft recovered'
             : 'Saved draft recovered',
         );
+      }
+      if (!restored) {
+        const blank = createBlankProject(uniqueId('work'), nowIso());
+        setProject(blank);
+        setActiveChapterId(blank.chapters[0].id);
+        setActiveSceneId(blank.chapters[0].scenes[0].id);
+        setSelectedElementId('');
       }
       setHydrated(true);
     });
@@ -4449,6 +4488,7 @@ export function MotusStudio() {
     }
     setSelectedElementId(element.id);
     setInspectorTab('design');
+    setMobileStudioPane('stage');
     setNotice(`${element.name} added`);
     focusEditorTarget(activeScene.id, element.id);
     return true;
@@ -5932,23 +5972,28 @@ export function MotusStudio() {
   const runTool = (toolId: string) => {
     if (toolId === 'select') {
       setInspectorTab('design');
+      setMobileStudioPane('stage');
       return;
     }
     if (
-      ['image', 'text', 'shape', 'speech'].includes(toolId) &&
+      ['text', 'shape', 'speech'].includes(toolId) &&
       !canAddElementToScene(activeScene)
     ) {
       setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
       return;
     }
     if (toolId === 'image') {
-      imageInput.current?.click();
+      setCatalogTab('assets');
+      setCatalogOpen(true);
       return;
     }
     if (toolId === 'text') addElement('text');
     if (toolId === 'shape') addElement('shape');
     if (toolId === 'speech') addElement('speech');
-    if (toolId === 'motion') setInspectorTab('motion');
+    if (toolId === 'motion') {
+      setInspectorTab('motion');
+      setMobileStudioPane('blocks');
+    }
     if (toolId === 'catalog') {
       setCatalogTab('elements');
       setCatalogOpen(true);
@@ -5957,7 +6002,10 @@ export function MotusStudio() {
 
   const uploadImage = async (file?: File) => {
     if (!file) return;
-    if (!canAddElementToScene(activeScene)) {
+    if (
+      !(catalogOpen && catalogTab === 'assets') &&
+      !canAddElementToScene(activeScene)
+    ) {
       setNotice(`This scene has reached the ${MAX_SCENE_ELEMENTS}-layer limit`);
       return;
     }
@@ -5967,6 +6015,7 @@ export function MotusStudio() {
     });
     if (envelopeError) {
       setNotice(envelopeError);
+      setUploadNotice(envelopeError);
       return;
     }
 
@@ -5975,6 +6024,7 @@ export function MotusStudio() {
       const detectedMime = detectImageFormat(header);
       if (!detectedMime || detectedMime !== file.type) {
         setNotice('Image contents do not match a valid PNG or WebP');
+        setUploadNotice('Image contents do not match a valid PNG or WebP');
         return;
       }
 
@@ -5986,11 +6036,27 @@ export function MotusStudio() {
       });
       if (decodedError) {
         setNotice(decodedError);
+        setUploadNotice(decodedError);
         return;
       }
 
       const src = await readFileAsDataUrl(file);
       const scale = Math.min(420 / dimensions.width, 420 / dimensions.height);
+      try {
+        await saveUpload({
+          name: file.name,
+          src,
+          width: dimensions.width,
+          height: dimensions.height,
+        });
+        setUploads(await listUploads());
+        setUploadNotice(`${file.name} saved to Uploads`);
+      } catch {
+        setUploadNotice(
+          'Browser storage is full or unavailable. This upload could not be saved.',
+        );
+      }
+      if (catalogOpen && catalogTab === 'assets') return;
       const added = addElement(
         'image',
         {
@@ -6009,17 +6075,19 @@ export function MotusStudio() {
       }
     } catch {
       setNotice('Image could not be decoded');
+      setUploadNotice('Image could not be decoded');
     }
   };
 
   const addProjectImageAsset = (asset: ProjectImageAsset) => {
+    const scale = Math.min(1, 420 / asset.width, 420 / asset.height);
     const added = addElement(
       'image',
       {
         name: createCopyName(asset.name, MAX_ELEMENT_NAME_LENGTH),
         src: asset.src,
-        width: asset.width,
-        height: asset.height,
+        width: Math.max(8, Math.round(asset.width * scale)),
+        height: Math.max(8, Math.round(asset.height * scale)),
         fill: '#ffffff',
       },
       true,
@@ -6224,8 +6292,7 @@ export function MotusStudio() {
     const nextScene: MotusScene = {
       id,
       name: `Scene ${allScenes.length + 1}`,
-      background:
-        'linear-gradient(155deg, #28213d 0%, #12131e 54%, #3c3350 100%)',
+      background: activeScene.background,
       elements: [],
     };
     commitProject((draft) => {
@@ -7937,11 +8004,16 @@ export function MotusStudio() {
     <main className="studio-shell">
       <input
         accept=".png,.webp,image/png,image/webp"
-        aria-label="Upload a PNG or WebP image"
+        multiple
+        aria-label="Upload PNG or WebP files"
         className="sr-only"
         onChange={(event) => {
-          void uploadImage(event.target.files?.[0]);
+          const files = Array.from(event.target.files ?? []);
           event.target.value = '';
+          setUploading(true);
+          void (async () => {
+            for (const file of files) await uploadImage(file);
+          })().finally(() => setUploading(false));
         }}
         ref={imageInput}
         type="file"
@@ -7995,6 +8067,7 @@ export function MotusStudio() {
         />
 
         <div className="topbar-actions">
+          <MotusSettingsButton />
           <button
             aria-keyshortcuts="Meta+S Control+S"
             className="save-state"
@@ -8041,10 +8114,17 @@ export function MotusStudio() {
             Preview
           </Button>
           <Button
+            className="topbar-page-settings"
+            variant="outline"
+            onClick={() => setPageSettingsOpen(true)}
+          >
+            Page settings
+          </Button>
+          <Button
             aria-label="Open Motus catalogs"
             className="topbar-mobile-hide"
             onClick={() => {
-              setCatalogTab('works');
+              setCatalogTab('elements');
               setCatalogOpen(true);
             }}
             variant="secondary"
@@ -8186,6 +8266,9 @@ export function MotusStudio() {
                 <Pencil />
                 Work details
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setPageSettingsOpen(true)}>
+                Page design & display
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="min-h-10 px-2.5"
@@ -8211,7 +8294,7 @@ export function MotusStudio() {
               <DropdownMenuItem
                 className="min-h-10 px-2.5"
                 onClick={() => {
-                  setCatalogTab('works');
+                  setCatalogTab('elements');
                   setCatalogOpen(true);
                 }}
               >
@@ -8232,6 +8315,10 @@ export function MotusStudio() {
               >
                 <Upload />
                 Import project
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={exportProject}>
+                <Download />
+                Export project
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -8350,6 +8437,13 @@ export function MotusStudio() {
                 value={activeScene.name}
               />
             </label>
+            <Button
+              variant="outline"
+              className="page-settings-shortcut"
+              onClick={() => setPageSettingsOpen(true)}
+            >
+              Page design & display
+            </Button>
             <fieldset className="scene-palette">
               <legend className="sr-only">Scene background</legend>
               {sceneBackgrounds.map((background) => (
@@ -9020,7 +9114,10 @@ export function MotusStudio() {
                     {activeScene.elements.length === 0 ? (
                       <Button
                         onClick={() => {
-                          if (addElement('shape')) setInspectorTab('motion');
+                          if (addElement('shape')) {
+                            setInspectorTab('motion');
+                            setMobileStudioPane('blocks');
+                          }
                         }}
                       >
                         Add a shape layer
@@ -11278,7 +11375,7 @@ export function MotusStudio() {
               onLayoutChanged={rememberStudioPanelLayout}
               orientation="horizontal"
             >
-              <ResizablePanel id="left" minSize="112px" />
+              <ResizablePanel id="left" minSize="180px" maxSize="320px" />
               <ResizableHandle
                 aria-label={
                   inspectorTab === 'motion'
@@ -11322,8 +11419,8 @@ export function MotusStudio() {
           <DialogHeader>
             <DialogTitle>Motus catalogs</DialogTitle>
             <DialogDescription>
-              Add editable comic elements, read motion previews, reuse project
-              images, start from a scene template, or apply a block preset.
+              Add editable comic elements, read motion previews, reuse your
+              uploads, start from a scene template, or apply a block preset.
             </DialogDescription>
           </DialogHeader>
           <div
@@ -11367,8 +11464,8 @@ export function MotusStudio() {
               tabIndex={catalogTab === 'assets' ? 0 : -1}
               type="button"
             >
-              <ImagePlus />
-              Project images
+              <Upload />
+              Uploads
             </button>
             <button
               aria-controls="catalog-panel-templates"
@@ -11466,7 +11563,7 @@ export function MotusStudio() {
               <div className="catalog-section-heading">
                 <div>
                   <span>DISCOVER</span>
-                  <strong>Interactive motion previews</strong>
+                  <strong>Creator works</strong>
                 </div>
                 <small>{filteredWorkCatalog.length} playable results</small>
               </div>
@@ -11514,8 +11611,11 @@ export function MotusStudio() {
               ) : (
                 <div className="catalog-empty">
                   <Search />
-                  <strong>No matching works</strong>
-                  <p>Try a title, creator, genre, format, or tag.</p>
+                  <strong>No public works yet</strong>
+                  <p>
+                    Work shared by real creators will appear here when public
+                    publishing is available.
+                  </p>
                 </div>
               )}
             </section>
@@ -11656,22 +11756,35 @@ export function MotusStudio() {
               <div className="catalog-search">
                 <Search aria-hidden="true" />
                 <Input
-                  aria-label="Search project images"
+                  aria-label="Search uploads"
                   onChange={(event) => setCatalogSearch(event.target.value)}
-                  placeholder="Search images used in this work…"
+                  placeholder="Search all your uploads…"
                   value={catalogSearch}
                 />
               </div>
               <div className="catalog-section-heading">
                 <div>
-                  <span>PROJECT IMAGES</span>
-                  <strong>Reuse uploaded layers</strong>
+                  <span>YOUR UPLOADS</span>
+                  <strong>Upload once, use in any work</strong>
                 </div>
                 <small>
-                  {projectImageAssets.length} image
-                  {projectImageAssets.length === 1 ? '' : 's'} in this work
+                  {projectImageAssets.length} files available on this device
                 </small>
               </div>
+              <div className="uploads-toolbar">
+                <Button
+                  disabled={uploading}
+                  onClick={() => imageInput.current?.click()}
+                >
+                  <Upload />
+                  {uploading ? 'Uploading…' : 'Upload files'}
+                </Button>
+                <p>
+                  Your uploads stay here even after you remove a layer or start
+                  a new work. PNG and WebP, saved on this device.
+                </p>
+              </div>
+              <output aria-live="polite">{uploadNotice}</output>
               {filteredProjectImageAssets.length ? (
                 <div className="asset-catalog-grid">
                   {filteredProjectImageAssets.map((asset) => (
@@ -11689,6 +11802,30 @@ export function MotusStudio() {
                           used {asset.uses}×
                         </small>
                         <h3>{asset.name}</h3>
+                        {uploads.some((upload) => upload.id === asset.id) ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Remove ${asset.name} from uploads`}
+                            onClick={() => {
+                              void removeUpload(asset.id)
+                                .then(() => listUploads())
+                                .then(setUploads)
+                                .then(() =>
+                                  setUploadNotice(
+                                    'Removed from Uploads. Existing pages keep their image.',
+                                  ),
+                                )
+                                .catch(() =>
+                                  setUploadNotice(
+                                    'Could not remove this upload.',
+                                  ),
+                                );
+                            }}
+                          >
+                            Remove from uploads
+                          </Button>
+                        ) : null}
                         <Button
                           onClick={() => addProjectImageAsset(asset)}
                           size="sm"
@@ -11704,7 +11841,7 @@ export function MotusStudio() {
               ) : projectImageAssets.length ? (
                 <div className="catalog-empty">
                   <Search />
-                  <strong>No matching project images</strong>
+                  <strong>No matching uploads</strong>
                   <p>Try a shorter file name.</p>
                   <Button
                     onClick={() => setCatalogSearch('')}
@@ -11723,14 +11860,11 @@ export function MotusStudio() {
                   </p>
                   <Button
                     onClick={() => {
-                      setCatalogOpen(false);
-                      window.requestAnimationFrame(() =>
-                        imageInput.current?.click(),
-                      );
+                      imageInput.current?.click();
                     }}
                   >
                     <Upload />
-                    Upload image
+                    Upload files
                   </Button>
                 </div>
               )}
@@ -12050,6 +12184,13 @@ export function MotusStudio() {
         </DialogContent>
       </Dialog>
 
+      <MotusPageSettings
+        open={pageSettingsOpen}
+        onOpenChange={setPageSettingsOpen}
+        project={project}
+        sceneId={activeScene.id}
+        onCommit={commitProject}
+      />
       <MotusWorkDetailsDialog
         activeChapterId={activeChapter.id}
         endHistoryTransaction={endHistoryTransaction}
@@ -12088,7 +12229,7 @@ export function MotusStudio() {
                   Revision {readerSource.revision} is stored in this browser.
                 </span>
                 <a href={`/read/${getDevicePublicationSlug(project.id)}`}>
-                  Open browser reader
+                  Open reader & share edition
                   <ArrowRight aria-hidden="true" />
                 </a>
               </div>
@@ -12214,6 +12355,12 @@ export function MotusStudio() {
                       key={`${scene.id}-${readerPreviewKey}`}
                       scene={scene}
                       sessionKey={readerPreviewKey || 1}
+                      scrollTransition={
+                        readerSource.readerPresentation.transition
+                      }
+                      transitionDuration={
+                        readerSource.readerPresentation.durationMs
+                      }
                     />
                   ))
                 ) : (
@@ -12227,11 +12374,14 @@ export function MotusStudio() {
                     data-turn={readerPageTransition.entryEdge}
                     style={readerPageTransitionStyle}
                   >
-                    <div
-                      className="reader-page-leaf"
-                      key={`${readerChapter.id}-${readerMode}-${resolvedReaderPageIndex}-${readerPageTransitionSequence}`}
-                    >
-                      {readerVisibleSceneIndexes.map(
+                    <MotusPageTurn
+                      pageKey={`${readerChapter.id}-${readerMode}-${resolvedReaderPageIndex}-${readerPageTransitionSequence}`}
+                      layout={readerMode}
+                      direction={readerSource.readerPresentation.direction}
+                      transition={readerPageTransition.effectiveStyle}
+                      entryEdge={readerPageTransition.entryEdge}
+                      durationMs={readerSource.readerPresentation.durationMs}
+                      pages={readerVisibleSceneIndexes.map(
                         (sceneIndex, spreadOffset) => (
                           <ReaderScene
                             index={sceneIndex}
@@ -12246,7 +12396,7 @@ export function MotusStudio() {
                           />
                         ),
                       )}
-                    </div>
+                    />
                     <nav
                       aria-label="Scene navigation"
                       className="reader-page-navigation"
@@ -12383,8 +12533,10 @@ export function MotusStudio() {
             </div>
 
             <p className="publish-note">
-              Nothing is uploaded. This reader edition is stored only in this
-              browser; visibility is recorded as intent.
+              This edition is saved in your browser. After publishing, open the
+              reader and choose Share & promote to download an interactive
+              edition for your audience. Nothing is uploaded; visibility records
+              your publishing preference.
             </p>
 
             <section
