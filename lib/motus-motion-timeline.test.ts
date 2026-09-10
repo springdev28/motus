@@ -126,3 +126,64 @@ void test('scene timelines omit hidden and actionless layers and use the longest
   );
   assert.equal(getMotionTimelineDuration(tracks), 1_200);
 });
+
+function animatedRigLayer(
+  id: string,
+  parentId: string | null,
+  durationMs: number,
+  visible = true,
+) {
+  const element = createElement('shape', 1, {
+    id,
+    name: id,
+    parentId,
+    visible,
+  });
+  const move = createMotionBlock('move', `${id}-move`);
+  move.durationMs = durationMs;
+  element.motion.blocks = [element.motion.blocks[0], move];
+  return element;
+}
+
+void test('rig timeline follows the selected component in scene order', () => {
+  const body = animatedRigLayer('body', null, 1_300);
+  const head = animatedRigLayer('head', 'body', 600);
+  const hand = animatedRigLayer('hand', 'head', 900);
+  const prop = animatedRigLayer('prop', null, 2_000);
+  const elements = [hand, prop, body, head];
+
+  const tracks = buildMotionTimelineTracks(elements, 'rig', hand.id);
+
+  assert.deepEqual(
+    tracks.map((track) => track.elementId),
+    ['hand', 'body', 'head'],
+  );
+  assert.equal(getMotionTimelineDuration(tracks), 1_300);
+});
+
+void test('rig timeline handles singleton, missing, and hidden selections', () => {
+  const singleton = animatedRigLayer('singleton', null, 750);
+  const unrelated = animatedRigLayer('unrelated', null, 1_400);
+  const singletonElements = [unrelated, singleton];
+
+  assert.deepEqual(
+    buildMotionTimelineTracks(singletonElements, 'rig', singleton.id),
+    buildMotionTimelineTracks(singletonElements, 'selected', singleton.id),
+  );
+  assert.deepEqual(
+    buildMotionTimelineTracks(singletonElements, 'rig', 'missing'),
+    [],
+  );
+  assert.deepEqual(buildMotionTimelineTracks(singletonElements, 'rig'), []);
+
+  const hiddenRoot = animatedRigLayer('hidden-root', null, 500, false);
+  const visibleChild = animatedRigLayer('visible-child', hiddenRoot.id, 900);
+  assert.deepEqual(
+    buildMotionTimelineTracks(
+      [hiddenRoot, visibleChild],
+      'rig',
+      visibleChild.id,
+    ),
+    [],
+  );
+});

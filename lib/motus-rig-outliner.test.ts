@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   MAX_ELEMENT_RIG_DEPTH,
   createElement,
+  getElementRigComponentIds,
   getElementRigRenderedVisualBounds,
   reorderElementRigSibling,
   reparentElementRigBranchPreservingPose,
@@ -113,6 +114,45 @@ void test('rejects sibling reorders across parents and missing layers', () => {
   const unchanged = reorderElementRigSibling(source, 'root-a', 'root-a');
   assert.equal(unchanged.outcome, 'unchanged');
   assert.deepEqual(unchanged.elements, source);
+});
+
+void test('finds every transform-connected layer in one rig', () => {
+  const source = [
+    layer('body', null),
+    layer('head', 'body'),
+    layer('hair', 'head'),
+    layer('arm', 'body'),
+    layer('prop', null),
+  ];
+
+  assert.deepEqual(getElementRigComponentIds(source, 'hair'), [
+    'body',
+    'head',
+    'hair',
+    'arm',
+  ]);
+  assert.deepEqual(getElementRigComponentIds(source, 'body'), [
+    'body',
+    'head',
+    'hair',
+    'arm',
+  ]);
+  assert.deepEqual(getElementRigComponentIds(source, 'prop'), ['prop']);
+  assert.deepEqual(getElementRigComponentIds(source, 'missing'), []);
+});
+
+void test('keeps malformed orphan and cyclic rig lookup finite', () => {
+  const source = [
+    layer('orphan', 'missing'),
+    layer('cycle-a', 'cycle-b'),
+    layer('cycle-b', 'cycle-a'),
+  ];
+
+  assert.deepEqual(getElementRigComponentIds(source, 'orphan'), ['orphan']);
+  assert.deepEqual(getElementRigComponentIds(source, 'cycle-a'), [
+    'cycle-a',
+    'cycle-b',
+  ]);
 });
 
 void test('reparents a nested branch under a rotated parent without a pose jump', () => {

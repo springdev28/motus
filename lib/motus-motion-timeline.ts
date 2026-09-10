@@ -1,12 +1,14 @@
 import {
   MOTION_BLOCK_CATALOG,
   compileElementMotion,
+  getElementRigComponentIds,
+  isElementEffectivelyVisible,
   type CompiledMotionStep,
   type MotionBlockCategory,
   type MotusElement,
 } from './motus-model.ts';
 
-export type MotionTimelineScope = 'selected' | 'scene';
+export type MotionTimelineScope = 'selected' | 'rig' | 'scene';
 
 export type MotionTimelineSpan = {
   blockId: string;
@@ -120,12 +122,21 @@ export function buildMotionTimelineTracks(
   scope: MotionTimelineScope,
   selectedElementId?: string,
 ): MotionTimelineTrack[] {
-  const candidates =
-    scope === 'selected'
-      ? elements.filter((element) => element.id === selectedElementId)
-      : elements;
+  const candidateIds =
+    scope === 'scene'
+      ? null
+      : new Set(
+          scope === 'rig' && selectedElementId
+            ? getElementRigComponentIds(elements, selectedElementId)
+            : selectedElementId
+              ? [selectedElementId]
+              : [],
+        );
+  const candidates = candidateIds
+    ? elements.filter((element) => candidateIds.has(element.id))
+    : elements;
   return candidates.flatMap((element) => {
-    if (!element.visible) return [];
+    if (!isElementEffectivelyVisible(elements, element.id)) return [];
     const compiled = compileElementMotion(element);
     if (!compiled.steps.some((step) => step.kind !== 'wait')) return [];
     const { laneCount, spans } = createTimelineSpans(compiled.steps);
