@@ -7,6 +7,8 @@ import {
   type ReactNode,
 } from 'react';
 import { Settings2, Sun, Moon, Monitor } from 'lucide-react';
+import { usePlatform } from './motus-platform-provider';
+import type { ReadingPreferences } from '@/lib/motus-platform';
 import {
   Dialog,
   DialogContent,
@@ -37,7 +39,24 @@ export function MotusSettingsButton() {
   );
 }
 export function MotusSettingsProvider({ children }: { children: ReactNode }) {
+  const { preferences, savePreferences, user } = usePlatform();
   const [open, setOpen] = useState(false);
+  const [preferenceBusy, setPreferenceBusy] = useState(false);
+  async function updatePreferences(patch: Partial<ReadingPreferences>) {
+    setPreferenceBusy(true);
+    try {
+      await savePreferences({ ...preferences, ...patch });
+      setNotice(
+        user
+          ? 'Reading preferences saved to your account.'
+          : 'Reading preferences saved on this device.',
+      );
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setPreferenceBusy(false);
+    }
+  }
   const [appearance, setAppearance] = useState<Appearance>('light');
   const [notice, setNotice] = useState('');
   useEffect(() => {
@@ -100,7 +119,7 @@ export function MotusSettingsProvider({ children }: { children: ReactNode }) {
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
               Make Motus comfortable for you. Preferences apply across the
-              library, profiles, reader, and Studio.
+              library, profiles, reader, and editor.
             </DialogDescription>
           </DialogHeader>
           <fieldset className="appearance-options">
@@ -138,6 +157,64 @@ export function MotusSettingsProvider({ children }: { children: ReactNode }) {
             choose “Use device setting.” Artwork keeps the creator’s original
             colors.
           </p>
+          <fieldset
+            className="platform-form platform-settings"
+            disabled={preferenceBusy}
+          >
+            <legend>Reading preferences</legend>
+            <label>
+              Default display
+              <select
+                value={preferences.format}
+                onChange={(e) =>
+                  void updatePreferences({
+                    format: e.target.value as ReadingPreferences['format'],
+                  })
+                }
+              >
+                <option value="creator">Use the creator’s layout</option>
+                <option value="scroll">Vertical scroll</option>
+                <option value="page">Single page</option>
+                <option value="spread">Two-page spread</option>
+              </select>
+            </label>
+            <label>
+              Reading direction
+              <select
+                value={preferences.direction}
+                onChange={(e) =>
+                  void updatePreferences({
+                    direction: e.target
+                      .value as ReadingPreferences['direction'],
+                  })
+                }
+              >
+                <option value="creator">Use the creator’s direction</option>
+                <option value="ltr">Left to right</option>
+                <option value="rtl">Right to left</option>
+              </select>
+            </label>
+            <label className="platform-check">
+              <input
+                type="checkbox"
+                checked={preferences.motion}
+                onChange={(e) =>
+                  void updatePreferences({ motion: e.target.checked })
+                }
+              />
+              Play comic animations
+            </label>
+            <label className="platform-check">
+              <input
+                type="checkbox"
+                checked={preferences.rememberPosition}
+                onChange={(e) =>
+                  void updatePreferences({ rememberPosition: e.target.checked })
+                }
+              />
+              Remember my page on this device
+            </label>
+          </fieldset>
           <output aria-live="polite">{notice}</output>
         </DialogContent>
       </Dialog>

@@ -14,8 +14,9 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { MotusLogo } from './motus-logo';
-import { MotusSettingsButton } from './motus-settings';
+import { MotusPlatformHeader } from './motus-platform-header';
+import { usePlatform } from './motus-platform-provider';
+import { MotusPublishDialog } from './motus-publish-dialog';
 import { MotusPageTurn } from './motus-page-turn';
 import {
   BASIC_DB,
@@ -190,34 +191,119 @@ function ComicPage({
     </div>
   );
 }
-function BasicReader({
+export function BasicReader({
   comic,
   close,
 }: {
   comic: BasicComic;
   close: () => void;
 }) {
-  const [mode, setMode] = useState(comic.format);
+  const { preferences } = usePlatform();
+  const direction =
+    preferences.direction === 'creator'
+      ? comic.direction
+      : preferences.direction;
+  const [mode, setMode] = useState(
+    preferences.format === 'creator' ? comic.format : preferences.format,
+  );
   const [index, setIndex] = useState(0);
   const [session, setSession] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(preferences.motion);
   const [forward, setForward] = useState(true);
   const step = mode === 'spread' ? 2 : 1;
+  const scrollArea = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // oxlint-disable-next-line react/react-compiler -- Apply changed account reading preferences to the open reader.
+    setMode(
+      preferences.format === 'creator' ? comic.format : preferences.format,
+    );
+    setPlaying(preferences.motion);
+  }, [preferences.format, preferences.motion, comic.format]);
+  useEffect(() => {
+    if (!preferences.rememberPosition) return;
+    try {
+      const stored = Number(
+        localStorage.getItem(`motus:reading-position:${comic.id}`),
+      );
+      if (Number.isFinite(stored)) {
+        // oxlint-disable-next-line react/react-compiler -- Restore reading progress from browser storage after hydration.
+        setIndex(
+          Math.max(
+            0,
+            Math.floor(Math.min(comic.pages.length - 1, stored) / step) * step,
+          ),
+        );
+        if (mode === 'scroll' && stored > 0)
+          scrollArea.current
+            ?.querySelector(
+              `[data-page="${Math.min(comic.pages.length - 1, Math.floor(stored))}"]`,
+            )
+            ?.scrollIntoView({ block: 'start' });
+      }
+    } catch {
+      /* Reading remains available without browser storage. */
+    }
+  }, [comic.id, comic.pages.length, preferences.rememberPosition, mode, step]);
+  useEffect(() => {
+    // oxlint-disable-next-line react/react-compiler -- Normalize the selected page when switching to a two-page spread.
+    setIndex((i) => Math.max(0, Math.floor(i / step) * step));
+  }, [step]);
+  const savePosition = (value: number) => {
+    if (!preferences.rememberPosition) return;
+    try {
+      localStorage.setItem(`motus:reading-position:${comic.id}`, String(value));
+    } catch {
+      /* Progress persistence is optional. */
+    }
+  };
+  useEffect(() => {
+    if (mode !== 'scroll' || !preferences.rememberPosition) return;
+    const area = scrollArea.current;
+    if (!area) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort(
+            (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
+          )[0];
+        if (!visible) return;
+        const current = Number((visible.target as HTMLElement).dataset.page);
+        if (Number.isFinite(current)) {
+          setIndex(current);
+          try {
+            localStorage.setItem(
+              `motus:reading-position:${comic.id}`,
+              String(current),
+            );
+          } catch {
+            /* Reading remains available. */
+          }
+        }
+      },
+      { rootMargin: '-10% 0px -65% 0px' },
+    );
+    area
+      .querySelectorAll('figure')
+      .forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [mode, preferences.rememberPosition, comic.id, session, playing]);
   const move = (delta: number) => {
     setForward(delta > 0);
-    setIndex((i) =>
-      Math.max(
-        0,
-        Math.min(
-          Math.floor((comic.pages.length - 1) / step) * step,
-          i + delta * step,
-        ),
+    const next = Math.max(
+      0,
+      Math.min(
+        Math.floor((comic.pages.length - 1) / step) * step,
+        index + delta * step,
       ),
     );
+    setIndex(next);
+    savePosition(next);
   };
   const changeMode = (value: BasicComic['format']) => {
     setMode(value);
     setIndex(0);
+    savePosition(0);
   };
   useEffect(() => {
     function navigate(event: KeyboardEvent) {
@@ -230,21 +316,38 @@ function BasicReader({
         return;
       event.preventDefault();
       const delta =
-        (event.key === 'ArrowRight') === (comic.direction === 'ltr') ? 1 : -1;
+        (event.key === 'ArrowRight') === (direction === 'ltr') ? 1 : -1;
       setForward(delta > 0);
-      setIndex((i) =>
-        Math.max(
-          0,
-          Math.min(
-            Math.floor((comic.pages.length - 1) / step) * step,
-            i + delta * step,
-          ),
+      const next = Math.max(
+        0,
+        Math.min(
+          Math.floor((comic.pages.length - 1) / step) * step,
+          index + delta * step,
         ),
       );
+      setIndex(next);
+      if (preferences.rememberPosition) {
+        try {
+          localStorage.setItem(
+            `motus:reading-position:${comic.id}`,
+            String(next),
+          );
+        } catch {
+          /* Reading remains available. */
+        }
+      }
     }
     window.addEventListener('keydown', navigate);
     return () => window.removeEventListener('keydown', navigate);
-  }, [mode, comic.direction, comic.pages.length, step]);
+  }, [
+    mode,
+    direction,
+    comic.pages.length,
+    comic.id,
+    step,
+    index,
+    preferences.rememberPosition,
+  ]);
   return (
     <main className="basic-reader">
       <div className="basic-reader-tools">
@@ -267,12 +370,13 @@ function BasicReader({
         <button onClick={() => setSession((s) => s + 1)}>Replay</button>
       </div>
       <div
+        ref={scrollArea}
         className={`basic-reading-area ${mode === 'scroll' ? 'is-scroll' : ''}`}
         key={`${session}-${playing}`}
       >
         {mode === 'scroll' ? (
           comic.pages.map((page, i) => (
-            <figure key={page.id}>
+            <figure key={page.id} data-page={i}>
               <ComicPage page={page} playing={playing} />
               <figcaption>Page {i + 1}</figcaption>
             </figure>
@@ -281,11 +385,9 @@ function BasicReader({
           <MotusPageTurn
             pageKey={`${mode}-${index}`}
             layout={mode}
-            direction={comic.direction}
+            direction={direction}
             transition={playing ? comic.transition : 'cut'}
-            entryEdge={
-              forward === (comic.direction === 'ltr') ? 'right' : 'left'
-            }
+            entryEdge={forward === (direction === 'ltr') ? 'right' : 'left'}
             durationMs={360}
             pages={comic.pages.slice(index, index + step).map((page) => (
               <ComicPage key={page.id} page={page} playing={playing} />
@@ -301,7 +403,7 @@ function BasicReader({
           className="basic-pagination"
           aria-label="Pages"
           style={{
-            flexDirection: comic.direction === 'rtl' ? 'row-reverse' : 'row',
+            flexDirection: direction === 'rtl' ? 'row-reverse' : 'row',
           }}
         >
           <button disabled={index === 0} onClick={() => move(-1)}>
@@ -326,6 +428,8 @@ function BasicReader({
   );
 }
 export function MotusBasic() {
+  const { profile } = usePlatform();
+  const [publishOpen, setPublishOpen] = useState(false);
   const [comics, setComics] = useState<BasicComic[]>([]);
   const [comic, setComic] = useState<BasicComic | null>(null);
   const [reader, setReader] = useState<BasicComic | null>(null);
@@ -340,7 +444,7 @@ export function MotusBasic() {
   const latestComic = useRef<BasicComic | null>(null);
   const pendingSaves = useRef(0);
   const [dirty, setDirty] = useState(false);
-  const [shelf, setShelf] = useState('archive');
+  const [shelf, setShelf] = useState('drafts');
   const [search, setSearch] = useState('');
   const [rating, setRating] = useState('All ratings');
   const [format, setFormat] = useState('all');
@@ -359,7 +463,12 @@ export function MotusBasic() {
     let active = true;
     basicStore('list')
       .then((items) => {
-        if (active) setComics(items);
+        if (active) {
+          setComics(items);
+          const id = new URLSearchParams(window.location.search).get('edit');
+          const found = items.find((c) => c.id === id);
+          if (found) setComic(structuredClone(found));
+        }
       })
       .catch((e) => {
         if (active) setNotice(String(e.message));
@@ -451,7 +560,12 @@ export function MotusBasic() {
       });
   }
   function openEditor(c: BasicComic) {
-    setComic(structuredClone(c));
+    setComic(
+      structuredClone({
+        ...c,
+        author: c.author || profile?.display_name || '',
+      }),
+    );
     setPageIndex(0);
     setLayerIndex(0);
     setDirty(false);
@@ -462,7 +576,7 @@ export function MotusBasic() {
     setNotice('');
   }
   async function save(archive = false, leave = false) {
-    if (!comic) return;
+    if (!comic) return false;
     if (
       archive &&
       (!comic.title.trim() || !comic.author.trim() || !comic.pages.length)
@@ -470,7 +584,7 @@ export function MotusBasic() {
       setNotice(
         'Add a title, creator name, and at least one page before adding to the archive.',
       );
-      return;
+      return false;
     }
     setBusy(true);
     const updated = {
@@ -485,11 +599,13 @@ export function MotusBasic() {
       setDirty(false);
       setNotice(
         archive
-          ? 'Added to your browser archive. Download a copy to share it.'
+          ? 'Saved a local copy of your published comic.'
           : 'Saved in this browser.',
       );
+      return true;
     } catch (e) {
       setNotice((e as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -589,32 +705,25 @@ export function MotusBasic() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
     <div className="basic-app" data-storage={BASIC_DB}>
-      <header className="basic-header">
-        <a href="/" className="basic-brand">
-          <MotusLogo className="basic-logo-light" variant="on-light" />
-          <MotusLogo className="basic-logo-dark" variant="on-dark" />
-          <span>
-            MOTUS<span className="basic-brand-sub">THE COMIC ARCHIVE</span>
-          </span>
-        </a>
-        <nav aria-label="Main">
-          <button
-            aria-current={!comic && !reader ? 'page' : undefined}
-            disabled={busy}
-            onClick={() => {
-              if (comic && dirty) {
-                void save(false, true);
-              } else {
-                setComic(null);
-              }
-              setReader(null);
-            }}
-          >
-            Browse comics
-          </button>
-          <MotusSettingsButton />
-        </nav>
-      </header>
+      <MotusPlatformHeader
+        active="library"
+        onNavigate={(href) => {
+          if (busy) return;
+          void (async () => {
+            if (comic && (dirty || saving) && !(await save())) return;
+            window.location.assign(href);
+          })();
+        }}
+      />
+      {publishOpen && comic && (
+        <MotusPublishDialog
+          comic={comic}
+          close={() => setPublishOpen(false)}
+          onPublished={() => {
+            void save(true);
+          }}
+        />
+      )}
       <input
         ref={importInput}
         type="file"
@@ -685,9 +794,13 @@ export function MotusBasic() {
               <button
                 className="basic-primary"
                 disabled={busy}
-                onClick={() => void save(true, true)}
+                onClick={() => {
+                  void save().then((saved) => {
+                    if (saved) setPublishOpen(true);
+                  });
+                }}
               >
-                {comic.archived ? 'Update archive' : 'Add to archive'}
+                Publish
               </button>
             </div>
           </div>
@@ -1174,7 +1287,7 @@ export function MotusBasic() {
             <p className="basic-eyebrow">
               A HOME FOR COMICS, STILL & IN MOTION
             </p>
-            <h1>Every panel has a story.</h1>
+            <h1>Your drafts & comics.</h1>
             <p>
               A simple place for your comics. Upload your pages, add a little
               <br className="basic-desktop-break" /> animation, and let the
@@ -1208,7 +1321,7 @@ export function MotusBasic() {
                     className={shelf === 'archive' ? 'is-active' : ''}
                     onClick={() => setShelf('archive')}
                   >
-                    Comic archive{' '}
+                    Saved copies{' '}
                     <span>{comics.filter((c) => c.archived).length}</span>
                   </button>
                   <button
@@ -1225,7 +1338,7 @@ export function MotusBasic() {
                 </span>
               </div>
               {!loaded ? (
-                <p className="basic-empty">Opening your archive…</p>
+                <p className="basic-empty">Opening your drafts…</p>
               ) : shown.length ? (
                 shown.map((c) => (
                   <article className="basic-work" key={c.id}>
@@ -1371,9 +1484,9 @@ export function MotusBasic() {
                 <BookOpen size={18} />
                 <h3>Your browser bookshelf</h3>
                 <p>
-                  Comics are saved on this device. Download a comic file to back
-                  it up or share it with someone. They can import it here to
-                  read.
+                  Drafts and saved copies stay on this device. Use Publish in
+                  the editor to share a comic with the archive, or Download to
+                  keep a backup.
                 </p>
               </div>
             </aside>

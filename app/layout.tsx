@@ -1,11 +1,14 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import './motus-platform.css';
+import './motus-basic.css';
+import './motus-social.css';
+import { MotusPlatformProvider } from '@/components/motus-platform-provider';
 import { MotusSettingsProvider } from '@/components/motus-settings';
 import { APPEARANCE_BOOTSTRAP } from '@/lib/motus-appearance';
 
 const siteOrigin =
-  process.env.SITE_URL ?? 'https://firebrick-lark-503190.hostingersite.com';
+  process.env.SITE_URL ?? 'https://olive-toad-138897.hostingersite.com';
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin),
@@ -67,7 +70,9 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP }} />
       </head>
       <body>
-        <MotusSettingsProvider>{children}</MotusSettingsProvider>
+        <MotusPlatformProvider>
+          <MotusSettingsProvider>{children}</MotusSettingsProvider>
+        </MotusPlatformProvider>
       </body>
     </html>
   );
