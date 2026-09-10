@@ -80,9 +80,11 @@ and the large model binaries restored during the build. The separate
 `build:worker` script retains the earlier Sites/Cloudflare deployment option.
 
 Use Hostinger's **Other / Node.js** application type, Node 22, build script
-`build`, output directory `dist`, and entry file `hostinger-server.mjs`.
+`build`, output directory `dist`, and entry file `server.js`.
 Automatic Vite detection must be overridden because Motus requires a running
-server. The Node build does not depend on `.openai/hosting.json`.
+server. Hostinger loads its entry through `require()`, so `server.js` uses
+a dynamic import to start the asynchronous Vinext server. Do not replace it
+with a static import or point that loader directly at `hostinger-server.mjs`. The Node build does not depend on `.openai/hosting.json`.
 The Express dependency and conventional `server.js` entry also allow Hostinger's
 archive detector to choose its Node server runtime instead of static Vite hosting;
 Vinext continues to handle the application requests.

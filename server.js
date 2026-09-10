@@ -1,4 +1,6 @@
-// Hostinger classifies repositories with an Express runtime as server-side
-// applications. Keep this conventional entry point at the repository root so
-// GitHub-triggered deployments do not fall back to static Vite hosting.
-import './hostinger-server.mjs';
+// Hostinger loads this conventional entry with require(). Keep its module graph
+// synchronous and load the asynchronous Vinext server through dynamic import.
+import('./hostinger-server.mjs').catch((error) => {
+  console.error('Motus failed to start:', error);
+  process.exitCode = 1;
+});
