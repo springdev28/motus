@@ -15,7 +15,10 @@
     "verify:ai-assets": "node scripts/verify-ai-assets.mjs",
     "build:hostinger": "node scripts/restore-ai-assets.mjs && MOTUS_HOSTING=node vinext build && node scripts/prepare-hostinger-build.mjs",
     "build:worker": "vinext build",
-    "start:worker": "wrangler dev --config dist/server/wrangler.json"
+    "start:worker": "wrangler dev --config dist/server/wrangler.json",
+    "predev": "node scripts/prepare-pdf-assets.mjs",
+    "prebuild:hostinger": "node scripts/prepare-pdf-assets.mjs",
+    "prebuild:worker": "node scripts/prepare-pdf-assets.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -33,6 +36,7 @@
     "express": "5.2.1",
     "input-otp": "1.4.2",
     "lucide-react": "1.31.0",
+    "pdfjs-dist": "6.3.289",
     "perfect-freehand": "1.2.3",
     "pixi.js": "8.20.0",
     "react": "^19.2.8",

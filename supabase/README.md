@@ -38,6 +38,8 @@ Reports are stored privately in `public.content_reports`. The site operator revi
 
 Directory and archive queries return at most 500 recent records. Comic files remain JSON editions containing validated raster image data; no HTML, scripts, remote image URLs, payments, ads, or original Studio routes are exposed. Reading progress and appearance stay on each device; layout, direction, animation, and remember-position preferences sync to signed-in accounts.
 
+The editor accepts PDF uploads up to 50 MB, alongside PNG, JPG and WebP images. PDF.js converts every page locally into a raster image, preserving page order, rotation and proportions. Imported pages use the same animation presets, image layers and reader layouts as other pages. Comics remain limited to 100 pages and 80 MB locally; the published edition must fit the storage bucket's 50 MB limit. Password-protected PDFs require an unlocked copy. PDF workers, fonts, character maps and decoders are prepared from the pinned dependency before development and builds, with no external CDN dependency.
+
 ## Local development
 
 The ignored `.env.local` holds the public project URL and publishable key. Never commit the Schoolar backup under `artifacts/backups`; it contains private records and credentials and is unrelated to Motus deployments.

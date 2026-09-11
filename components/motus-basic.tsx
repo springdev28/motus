@@ -30,6 +30,7 @@ import {
   type BasicLayer,
   type BasicPage,
 } from '@/lib/motus-basic';
+import { isPdf, readPdfPages } from '@/lib/motus-pdf';
 import '@/app/motus-basic.css';
 
 const labels = {
@@ -611,7 +612,7 @@ export function MotusBasic() {
     }
   }
   async function upload(files: FileList | null, asLayer = false) {
-    if (!files?.length || !comic) return;
+    if (!files?.length || !comic || busy) return;
     if (
       (!asLayer && comic.pages.length + files.length > 100) ||
       (asLayer && (!page || page.layers.length + files.length > 30))
@@ -620,42 +621,62 @@ export function MotusBasic() {
       return;
     }
     setBusy(true);
-    setNotice('Opening images…');
+    setNotice('Opening pages…');
     try {
       const additions: BasicPage[] = [];
       const layers: BasicLayer[] = [];
+      let dataLength = JSON.stringify(comic).length;
       for (const file of Array.from(files)) {
-        const image = await readImage(file);
-        let width = 100,
-          height = 100;
-        if (asLayer && page) {
-          const scale =
-            Math.min(page.width / image.width, page.height / image.height) *
-            0.65;
-          width = ((image.width * scale) / page.width) * 100;
-          height = ((image.height * scale) / page.height) * 100;
+        const images =
+          !asLayer && isPdf(file)
+            ? await readPdfPages(file, {
+                maxPages: 100 - comic.pages.length - additions.length,
+                maxDataLength: 80_000_000 - dataLength,
+                onProgress: (current, total) =>
+                  setNotice(
+                    `Opening ${file.name}: page ${current} of ${total}…`,
+                  ),
+              })
+            : [{ ...(await readImage(file)), name: file.name }];
+        for (const image of images) {
+          if (!asLayer && comic.pages.length + additions.length >= 100)
+            throw new Error('Use up to 100 pages per comic.');
+          dataLength += image.src.length;
+          if (dataLength > 80_000_000)
+            throw new Error(
+              'This comic is too large. Keep the total under 80 MB.',
+            );
+          let width = 100,
+            height = 100;
+          if (asLayer && page) {
+            const scale =
+              Math.min(page.width / image.width, page.height / image.height) *
+              0.65;
+            width = ((image.width * scale) / page.width) * 100;
+            height = ((image.height * scale) / page.height) * 100;
+          }
+          const l: BasicLayer = {
+            id: crypto.randomUUID(),
+            name: image.name,
+            src: image.src,
+            x: (100 - width) / 2,
+            y: (100 - height) / 2,
+            width,
+            height,
+            effect: 'none',
+            duration: 0.7,
+            delay: 0,
+            trigger: 'enter',
+          };
+          layers.push(l);
+          additions.push({
+            id: crypto.randomUUID(),
+            width: image.width,
+            height: image.height,
+            background: '#ffffff',
+            layers: [l],
+          });
         }
-        const l: BasicLayer = {
-          id: crypto.randomUUID(),
-          name: file.name,
-          src: image.src,
-          x: (100 - width) / 2,
-          y: (100 - height) / 2,
-          width,
-          height,
-          effect: 'none',
-          duration: 0.7,
-          delay: 0,
-          trigger: 'enter',
-        };
-        layers.push(l);
-        additions.push({
-          id: crypto.randomUUID(),
-          width: image.width,
-          height: image.height,
-          background: '#ffffff',
-          layers: [l],
-        });
       }
       const pages =
         asLayer && page
@@ -668,7 +689,9 @@ export function MotusBasic() {
       edit({ pages });
       setPageIndex(asLayer ? pageIndex : comic.pages.length);
       setLayerIndex(asLayer && page ? page.layers.length : 0);
-      setNotice('Images added. Your draft saves automatically.');
+      setNotice(
+        `${asLayer ? 'Images' : 'Pages'} added. Your draft saves automatically.`,
+      );
     } catch (e) {
       setNotice((e as Error).message);
     } finally {
@@ -887,7 +910,7 @@ export function MotusBasic() {
                   ref={fileInput}
                   hidden
                   type="file"
-                  accept="image/png,image/jpeg,image/webp"
+                  accept="image/png,image/jpeg,image/webp,application/pdf,.pdf"
                   multiple
                   onChange={(e) => {
                     void upload(e.target.files);
@@ -901,7 +924,8 @@ export function MotusBasic() {
                   <Plus size={16} /> Upload pages
                 </button>
                 <p className="basic-muted basic-small">
-                  PNG, JPG, WebP · 10 MB each
+                  PNG, JPG, WebP · 10 MB each. PDF · 50 MB. Up to 100 pages
+                  total.
                 </p>
                 <ol>
                   {comic.pages.map((p, i) => (
@@ -1010,9 +1034,9 @@ export function MotusBasic() {
                     >
                       <ImagePlus size={40} strokeWidth={1} />
                       <strong>Start with your artwork</strong>
-                      <span>Drop your images here, or choose files.</span>
-                      <span>Images keep their original proportions.</span>
-                      <span className="basic-primary">Choose images</span>
+                      <span>Drop images or a PDF here, or choose files.</span>
+                      <span>PDF pages and images keep their proportions.</span>
+                      <span className="basic-primary">Choose files</span>
                     </button>
                   )}
                 </div>
