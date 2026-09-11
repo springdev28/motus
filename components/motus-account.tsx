@@ -6,7 +6,8 @@ import { BackendNotice, MotusPlatformShell } from './motus-platform-header';
 import { MotusSettingsButton } from './motus-settings';
 import { normalizeHandle, validateHandle } from '@/lib/motus-platform';
 export function MotusAccount() {
-  const { client, user, profile, loading, reloadProfile } = usePlatform();
+  const { client, user, profile, loading, emailReady, reloadProfile } =
+    usePlatform();
   const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,7 +51,7 @@ export function MotusAccount() {
   }
   function authenticate(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!client) return;
+    if (!client || (mode !== 'signin' && !emailReady)) return;
     void run(async () => {
       const redirectTo = `${window.location.origin}/account`;
       if (mode === 'reset') {
@@ -124,6 +125,7 @@ export function MotusAccount() {
                 <button
                   key={value}
                   aria-pressed={mode === value}
+                  disabled={value !== 'signin' && !emailReady}
                   onClick={() => {
                     setMode(value);
                     setNotice('');
@@ -133,6 +135,13 @@ export function MotusAccount() {
                 </button>
               ))}
             </div>
+            {!emailReady && (
+              <p className="platform-notice">
+                New accounts and password resets will be available once account
+                email delivery is ready. You can use the editor and reading
+                settings now.
+              </p>
+            )}
             <form onSubmit={authenticate} className="platform-form">
               <label>
                 Email
@@ -162,7 +171,10 @@ export function MotusAccount() {
                   )}
                 </label>
               )}
-              <button className="basic-primary" disabled={!client || busy}>
+              <button
+                className="basic-primary"
+                disabled={!client || busy || (mode !== 'signin' && !emailReady)}
+              >
                 {busy
                   ? 'Please wait…'
                   : mode === 'signup'

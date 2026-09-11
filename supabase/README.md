@@ -1,6 +1,8 @@
 # Motus shared accounts and comics
 
-Implementation is prepared for a dedicated Supabase project. No production database has been provisioned or modified by this change. Until runtime configuration is supplied, the app shows an explicit service notice and keeps local drafts and settings usable.
+The dedicated Motus project is `cgwfvxyfsoigzgbsiamn` in springdev28’s Org, Frankfurt. The initial schema was applied on September 11, 2026. Its public URL and publishable key are configured in Hostinger and the ignored local environment file. Email sender configuration, authentication redirects, and full signup/recovery delivery testing still need completion before enabling registration and password resets. Those actions are explicitly disabled until `MOTUS_AUTH_EMAIL_READY=true` is set after delivery testing.
+
+`verify-access.sql` passed against this project and rolled back all synthetic fixtures. It checks ownership, private drafts/preferences/storage, community membership, unpublishing after leaving a community, public reading, and anonymous write restrictions. Security advisors reported no issues. Public REST and private-data access checks are also verified.
 
 ## Deployment setup
 
@@ -12,8 +14,9 @@ Implementation is prepared for a dedicated Supabase project. No production datab
    - `MOTUS_SUPABASE_URL`: the dedicated project's HTTPS URL.
    - `MOTUS_SUPABASE_PUBLISHABLE_KEY`: a modern `sb_publishable_` key, never a service-role or secret key.
    - `SITE_URL`: `https://olive-toad-138897.hostingersite.com`.
-6. Build and deploy using the existing Hostinger `server.js` entry, Node 22, and `npm run build`. Local development can use exported environment variables or the hosting environment. The config API reads runtime environment variables and returns only validated public configuration.
-7. Run the access checks below before opening public registration. Check Supabase security/performance advisors as well.
+6. After confirming delivery and redirects, set `MOTUS_AUTH_EMAIL_READY=true` alongside the existing environment variables. The Hostinger API replaces the entire variable set, so retain the URL, publishable key, and `SITE_URL`.
+7. Build and deploy using the existing Hostinger `server.js` entry, Node 22, and `npm run build`. Local development can use exported environment variables or the hosting environment. The config API reads runtime environment variables and returns only validated public configuration.
+8. Run the access checks below before opening public registration. Check Supabase security/performance advisors as well.
 
 ## Access and release checks
 
@@ -34,3 +37,7 @@ Use two separate test accounts, A and B, plus an anonymous client. Do not use a 
 Reports are stored privately in `public.content_reports`. The site operator reviews them in the Supabase dashboard and can set a reported work's `published` flag to `false` if needed. Reports do not email the operator. There is no moderation dashboard in this release.
 
 Directory and archive queries return at most 500 recent records. Comic files remain JSON editions containing validated raster image data; no HTML, scripts, remote image URLs, payments, ads, or original Studio routes are exposed. Reading progress and appearance stay on each device; layout, direction, animation, and remember-position preferences sync to signed-in accounts.
+
+## Local development
+
+The ignored `.env.local` holds the public project URL and publishable key. Never commit the Schoolar backup under `artifacts/backups`; it contains private records and credentials and is unrelated to Motus deployments.

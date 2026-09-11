@@ -103,7 +103,12 @@ void test('archive search combines tags, ratings, language and display without c
 
 void test('public configuration never exposes secret keys or credential-bearing URLs', async () => {
   const { publicPlatformConfig } = await import('./motus-platform-config.ts');
-  const closed = { configured: false, url: null, publishableKey: null };
+  const closed = {
+    configured: false,
+    url: null,
+    publishableKey: null,
+    emailReady: false,
+  };
   assert.deepEqual(publicPlatformConfig(undefined, undefined), closed);
   assert.deepEqual(
     publicPlatformConfig('https://example.supabase.co', 'sb_secret_private'),
@@ -143,6 +148,28 @@ void test('public configuration never exposes secret keys or credential-bearing 
       configured: true,
       url: 'https://example.supabase.co',
       publishableKey: 'sb_publishable_public',
+      emailReady: false,
     },
+  );
+});
+
+void test('account email actions remain gated until explicitly enabled with a valid backend', async () => {
+  const { publicPlatformConfig } = await import('./motus-platform-config.ts');
+  assert.equal(
+    publicPlatformConfig(undefined, undefined, true).emailReady,
+    false,
+  );
+  assert.equal(
+    publicPlatformConfig('https://example.supabase.co', 'sb_publishable_public')
+      .emailReady,
+    false,
+  );
+  assert.equal(
+    publicPlatformConfig(
+      'https://example.supabase.co',
+      'sb_publishable_public',
+      true,
+    ).emailReady,
+    true,
   );
 });

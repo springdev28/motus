@@ -1,6 +1,7 @@
 export function publicPlatformConfig(
   url: string | undefined,
   key: string | undefined,
+  emailReady = false,
 ) {
   // Only modern publishable keys are supported. Never serialize secret or service-role credentials.
   if (url && key?.startsWith('sb_publishable_')) {
@@ -14,11 +15,21 @@ export function publicPlatformConfig(
         !endpoint.hash &&
         endpoint.pathname === '/'
       ) {
-        return { configured: true, url: endpoint.origin, publishableKey: key };
+        return {
+          configured: true,
+          url: endpoint.origin,
+          publishableKey: key,
+          emailReady,
+        };
       }
     } catch {
       /* An incomplete deployment stays safely unconfigured. */
     }
   }
-  return { configured: false, url: null, publishableKey: null };
+  return {
+    configured: false,
+    url: null,
+    publishableKey: null,
+    emailReady: false,
+  };
 }
