@@ -26,7 +26,6 @@ type PlatformContextValue = {
   user: User | null;
   profile: PlatformProfile | null;
   loading: boolean;
-  emailReady: boolean;
   error: string;
   preferences: ReadingPreferences;
   savePreferences: (p: ReadingPreferences) => Promise<void>;
@@ -43,7 +42,6 @@ export function MotusPlatformProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<PlatformProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [emailReady, setEmailReady] = useState(false);
   const [error, setError] = useState('');
   const [preferences, setPreferences] = useState(DEFAULT_READING_PREFERENCES);
   const preferenceRevision = useRef(0);
@@ -70,7 +68,6 @@ export function MotusPlatformProvider({ children }: { children: ReactNode }) {
           );
         const config = (await response.json()) as {
           configured: boolean;
-          emailReady: boolean;
           url: string;
           publishableKey: string;
         };
@@ -79,19 +76,11 @@ export function MotusPlatformProvider({ children }: { children: ReactNode }) {
           auth: {
             persistSession: true,
             autoRefreshToken: true,
-            detectSessionInUrl: true,
+            detectSessionInUrl: false,
           },
         });
         setClient(sdk);
-        setEmailReady(config.emailReady === true);
         const { data } = sdk.auth.onAuthStateChange((_event, session) => {
-          if (_event === 'PASSWORD_RECOVERY') {
-            try {
-              sessionStorage.setItem('motus:password-recovery', 'true');
-            } catch {
-              /* Recovery can also be detected by the account screen. */
-            }
-          }
           if (active) setUser(session?.user ?? null);
         });
         unsubscribe = () => data.subscription.unsubscribe();
@@ -197,7 +186,6 @@ export function MotusPlatformProvider({ children }: { children: ReactNode }) {
         user,
         profile: profile?.id === userId ? profile : null,
         loading,
-        emailReady,
         error,
         preferences,
         savePreferences,

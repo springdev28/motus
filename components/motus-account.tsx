@@ -6,9 +6,8 @@ import { BackendNotice, MotusPlatformShell } from './motus-platform-header';
 import { MotusSettingsButton } from './motus-settings';
 import { normalizeHandle, validateHandle } from '@/lib/motus-platform';
 export function MotusAccount() {
-  const { client, user, profile, loading, emailReady, reloadProfile } =
-    usePlatform();
-  const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
+  const { client, user, profile, loading, reloadProfile } = usePlatform();
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [handle, setHandle] = useState('');
@@ -16,28 +15,12 @@ export function MotusAccount() {
   const [bio, setBio] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [recovery, setRecovery] = useState(false);
   useEffect(() => {
     // oxlint-disable-next-line react/react-compiler -- Populate editable profile fields when the authenticated profile finishes loading.
     setHandle(profile?.handle || '');
     setName(profile?.display_name || '');
     setBio(profile?.bio || '');
   }, [profile]);
-  useEffect(() => {
-    if (!client) return;
-    const { data } = client.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
-    });
-    // The provider may finish processing the recovery callback before this screen mounts.
-    try {
-      if (sessionStorage.getItem('motus:password-recovery') === 'true')
-        // oxlint-disable-next-line react/react-compiler -- Restore the password recovery flag written by the auth callback.
-        setRecovery(true);
-    } catch {
-      /* Password updates remain available without session storage. */
-    }
-    return () => data.subscription.unsubscribe();
-  }, [client]);
   async function run(action: () => Promise<string>) {
     setBusy(true);
     setNotice('');
@@ -51,29 +34,27 @@ export function MotusAccount() {
   }
   function authenticate(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!client || (mode !== 'signin' && !emailReady)) return;
+    if (!client || busy) return;
     void run(async () => {
-      const redirectTo = `${window.location.origin}/account`;
-      if (mode === 'reset') {
-        const result = await client.auth.resetPasswordForEmail(email, {
-          redirectTo,
-        });
-        if (result.error) throw result.error;
-        return 'If an account exists for that address, a reset link will arrive by email.';
-      }
       const result =
         mode === 'signup'
           ? await client.auth.signUp({
-              email,
+              email: email.trim(),
               password,
-              options: { emailRedirectTo: redirectTo },
             })
-          : await client.auth.signInWithPassword({ email, password });
+          : await client.auth.signInWithPassword({
+              email: email.trim(),
+              password,
+            });
       if (result.error) throw result.error;
+      if (!result.data.session)
+        throw new Error(
+          'Signup is temporarily unavailable. Please try again later.',
+        );
       setPassword('');
-      return mode === 'signup' && !result.data.session
-        ? 'Check your email to confirm your account, then sign in.'
-        : 'Signed in. Complete your profile below.';
+      return mode === 'signup'
+        ? 'Account created. Choose your public profile below.'
+        : 'Signed in.';
     });
   }
   function saveProfile(e: SubmitEvent<HTMLFormElement>) {
@@ -119,13 +100,12 @@ export function MotusAccount() {
                 [
                   ['signin', 'Sign in'],
                   ['signup', 'Create account'],
-                  ['reset', 'Reset password'],
                 ] as const
               ).map(([value, label]) => (
                 <button
                   key={value}
                   aria-pressed={mode === value}
-                  disabled={value !== 'signin' && !emailReady}
+                  disabled={busy}
                   onClick={() => {
                     setMode(value);
                     setNotice('');
@@ -135,13 +115,6 @@ export function MotusAccount() {
                 </button>
               ))}
             </div>
-            {!emailReady && (
-              <p className="platform-notice">
-                New accounts and password resets will be available once account
-                email delivery is ready. You can use the editor and reading
-                settings now.
-              </p>
-            )}
             <form onSubmit={authenticate} className="platform-form">
               <label>
                 Email
@@ -153,35 +126,31 @@ export function MotusAccount() {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </label>
-              {mode !== 'reset' && (
-                <label>
-                  Password
-                  <input
-                    type="password"
-                    autoComplete={
-                      mode === 'signin' ? 'current-password' : 'new-password'
-                    }
-                    required
-                    minLength={mode === 'signup' ? 12 : 1}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                  {mode === 'signup' && (
-                    <small>Use at least 12 characters.</small>
-                  )}
-                </label>
-              )}
-              <button
-                className="basic-primary"
-                disabled={!client || busy || (mode !== 'signin' && !emailReady)}
-              >
+              <label>
+                Password
+                <input
+                  type="password"
+                  autoComplete={
+                    mode === 'signin' ? 'current-password' : 'new-password'
+                  }
+                  required
+                  minLength={mode === 'signup' ? 12 : 1}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                {mode === 'signup' && (
+                  <small>
+                    Use at least 12 characters. Keep your password safe;
+                    password recovery is not available yet.
+                  </small>
+                )}
+              </label>
+              <button className="basic-primary" disabled={!client || busy}>
                 {busy
                   ? 'Please wait…'
                   : mode === 'signup'
                     ? 'Create account'
-                    : mode === 'reset'
-                      ? 'Send reset link'
-                      : 'Sign in'}
+                    : 'Sign in'}
               </button>
             </form>
           </section>
@@ -199,12 +168,6 @@ export function MotusAccount() {
                       void run(async () => {
                         const result = await client!.auth.signOut();
                         if (result.error) throw result.error;
-                        setRecovery(false);
-                        try {
-                          sessionStorage.removeItem('motus:password-recovery');
-                        } catch {
-                          /* The session is already cleared. */
-                        }
                         setPassword('');
                         return 'Signed out.';
                       })
@@ -260,42 +223,6 @@ export function MotusAccount() {
                     View your public profile →
                   </a>
                 )}
-              </section>
-              <section className="platform-panel">
-                <h2>{recovery ? 'Choose your new password' : 'Password'}</h2>
-                <form
-                  className="platform-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void run(async () => {
-                      const result = await client!.auth.updateUser({
-                        password,
-                      });
-                      if (result.error) throw result.error;
-                      setPassword('');
-                      setRecovery(false);
-                      try {
-                        sessionStorage.removeItem('motus:password-recovery');
-                      } catch {
-                        /* The session is already cleared. */
-                      }
-                      return 'Password updated.';
-                    });
-                  }}
-                >
-                  <label>
-                    New password
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      minLength={12}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
-                  </label>
-                  <button disabled={busy}>Update password</button>
-                </form>
               </section>
             </>
           )

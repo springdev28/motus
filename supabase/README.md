@@ -1,6 +1,6 @@
 # Motus shared accounts and comics
 
-The dedicated Motus project is `cgwfvxyfsoigzgbsiamn` in springdev28’s Org, Frankfurt. The initial schema was applied on September 11, 2026. Its public URL and publishable key are configured in Hostinger and the ignored local environment file. Email sender configuration, authentication redirects, and full signup/recovery delivery testing still need completion before enabling registration and password resets. Those actions are explicitly disabled until `MOTUS_AUTH_EMAIL_READY=true` is set after delivery testing.
+The dedicated Motus project is `cgwfvxyfsoigzgbsiamn` in springdev28’s Org, Frankfurt. The initial schema was applied on September 11, 2026. Its public URL and publishable key are configured in Hostinger and the ignored local environment file. The account screen is being simplified to email and password with immediate signup and no recovery flow, as requested on September 12, 2026. Before deploying this change, turn off Confirm email in Authentication > Sign In / Providers and verify that signup returns a session. Dashboard access is still pending; the hosted confirmation setting has not yet been changed. No SMTP sender is needed for this mode.
 
 `verify-access.sql` passed against this project and rolled back all synthetic fixtures. It checks ownership, private drafts/preferences/storage, community membership, unpublishing after leaving a community, public reading, and anonymous write restrictions. Security advisors reported no issues. Public REST and private-data access checks are also verified.
 
@@ -9,12 +9,12 @@ The dedicated Motus project is `cgwfvxyfsoigzgbsiamn` in springdev28’s Org, Fr
 1. Select the dedicated Motus project and confirm its organization and hosting cost. Do not apply the schema to an unrelated existing project.
 2. Apply `motus-platform-schema.sql` once to the new project. This is a bootstrap schema, not an idempotent migration. It creates eight RLS-protected tables plus a private JSON storage bucket.
 3. In Supabase Auth, set the site URL and allowed redirect URL `https://olive-toad-138897.hostingersite.com/account`. Add `http://localhost:3000/account` only for local development if needed.
-4. Configure custom SMTP for confirmation and password recovery emails, keep email confirmation enabled, set a minimum password length of 12, and test delivery to an address outside the organization. Supabase's default SMTP only sends to authorized organization addresses and is insufficient for public registration. See https://supabase.com/docs/guides/auth/auth-smtp.
+4. Enable email/password signup, turn off Confirm email (`mailer_autoconfirm: true`), and set a minimum password length of 12. Accounts use email as a login identifier without verifying ownership of that address. Password recovery is not offered. See https://supabase.com/docs/guides/auth/passwords.
 5. Set these runtime variables in the Hostinger Node application:
    - `MOTUS_SUPABASE_URL`: the dedicated project's HTTPS URL.
    - `MOTUS_SUPABASE_PUBLISHABLE_KEY`: a modern `sb_publishable_` key, never a service-role or secret key.
    - `SITE_URL`: `https://olive-toad-138897.hostingersite.com`.
-6. After confirming delivery and redirects, set `MOTUS_AUTH_EMAIL_READY=true` alongside the existing environment variables. The Hostinger API replaces the entire variable set, so retain the URL, publishable key, and `SITE_URL`.
+6. Verify `/auth/v1/settings` reports `mailer_autoconfirm: true`. Run a disposable account through signup, sign-out, sign-in and profile creation before release. `MOTUS_AUTH_EMAIL_READY` is no longer used.
 7. Build and deploy using the existing Hostinger `server.js` entry, Node 22, and `npm run build`. Local development can use exported environment variables or the hosting environment. The config API reads runtime environment variables and returns only validated public configuration.
 8. Run the access checks below before opening public registration. Check Supabase security/performance advisors as well.
 
@@ -29,7 +29,7 @@ Use two separate test accounts, A and B, plus an anonymous client. Do not use a 
 - Drafts remain in the existing `motus-basic-v1` IndexedDB store. Publishing uploads an immutable snapshot of at most 50 MB, with access controlled by the associated work's published flag. Later local edits do not alter the public snapshot until republished.
 - Unpublishing removes the public work and storage access while keeping the owner's edition available. The unpublish action also clears community association so leaving a community never prevents withdrawing a work.
 - Publishing an existing local ID owned by another account must fail without replacing any data.
-- Test signup confirmation, sign-in, sign-out, password recovery, profile creation, community creation/join/leave, publishing, reading on another device, bookmarks, creator follows, and reading preferences.
+- Test immediate signup, sign-in, sign-out, profile creation, community creation/join/leave, publishing, reading on another device, bookmarks, creator follows, and reading preferences.
 - Verify all three reader layouts, both reading directions, motion off, page transitions, and image proportions. Verify no original Studio route is exposed.
 
 ## Reporting and limits
