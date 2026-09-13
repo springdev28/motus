@@ -47,6 +47,26 @@ export type BasicComic = {
   archived: boolean;
   updatedAt: string;
 };
+export function duplicateBasicPage(page: BasicPage): BasicPage {
+  return {
+    ...page,
+    id: crypto.randomUUID(),
+    layers: page.layers.map((layer) => ({ ...layer, id: crypto.randomUUID() })),
+  };
+}
+
+export function readingPageStart(
+  index: number,
+  format: BasicComic['format'],
+  pageCount: number,
+) {
+  const bounded = Math.max(
+    0,
+    Math.min(pageCount - 1, Number.isFinite(index) ? Math.floor(index) : 0),
+  );
+  return format === 'spread' ? Math.floor(bounded / 2) * 2 : bounded;
+}
+
 export function blankComic(): BasicComic {
   return {
     version: 1,

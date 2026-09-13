@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   BookOpen,
+  Copy,
   Download,
   ImagePlus,
   Plus,
@@ -24,6 +25,8 @@ import {
   basicStore,
   createBasicSaveQueue,
   blankComic,
+  duplicateBasicPage,
+  readingPageStart,
   effectFrames,
   parseBasicComic,
   type BasicComic,
@@ -213,6 +216,7 @@ export function BasicReader({
   const [forward, setForward] = useState(true);
   const step = mode === 'spread' ? 2 : 1;
   const scrollArea = useRef<HTMLDivElement>(null);
+  const pendingScrollPage = useRef<number | null>(null);
   useEffect(() => {
     // oxlint-disable-next-line react/react-compiler -- Apply changed account reading preferences to the open reader.
     setMode(
@@ -221,6 +225,13 @@ export function BasicReader({
     setPlaying(preferences.motion);
   }, [preferences.format, preferences.motion, comic.format]);
   useEffect(() => {
+    if (pendingScrollPage.current !== null && mode === 'scroll') {
+      scrollArea.current
+        ?.querySelector(`[data-page="${pendingScrollPage.current}"]`)
+        ?.scrollIntoView({ block: 'start' });
+      pendingScrollPage.current = null;
+      return;
+    }
     if (!preferences.rememberPosition) return;
     try {
       const stored = Number(
@@ -258,7 +269,7 @@ export function BasicReader({
     }
   };
   useEffect(() => {
-    if (mode !== 'scroll' || !preferences.rememberPosition) return;
+    if (mode !== 'scroll') return;
     const area = scrollArea.current;
     if (!area) return;
     const observer = new IntersectionObserver(
@@ -273,10 +284,11 @@ export function BasicReader({
         if (Number.isFinite(current)) {
           setIndex(current);
           try {
-            localStorage.setItem(
-              `motus:reading-position:${comic.id}`,
-              String(current),
-            );
+            if (preferences.rememberPosition)
+              localStorage.setItem(
+                `motus:reading-position:${comic.id}`,
+                String(current),
+              );
           } catch {
             /* Reading remains available. */
           }
@@ -302,9 +314,11 @@ export function BasicReader({
     savePosition(next);
   };
   const changeMode = (value: BasicComic['format']) => {
+    const next = readingPageStart(index, value, comic.pages.length);
+    pendingScrollPage.current = value === 'scroll' ? next : null;
     setMode(value);
-    setIndex(0);
-    savePosition(0);
+    setIndex(next);
+    savePosition(next);
   };
   useEffect(() => {
     function navigate(event: KeyboardEvent) {
@@ -955,6 +969,40 @@ export function MotusBasic() {
                   {page && (
                     <div className="basic-actions">
                       <button
+                        disabled={comic.pages.length >= 100}
+                        title={
+                          comic.pages.length >= 100
+                            ? 'A comic can have up to 100 pages'
+                            : 'Duplicate this page and its animations'
+                        }
+                        onClick={() => {
+                          const pages = [...comic.pages];
+                          pages.splice(
+                            pageIndex + 1,
+                            0,
+                            duplicateBasicPage(page),
+                          );
+                          if (
+                            JSON.stringify({ ...comic, pages }).length >
+                            80_000_000
+                          ) {
+                            setNotice(
+                              'This comic is too large to duplicate a page. Keep the total under 80 MB.',
+                            );
+                            return;
+                          }
+                          edit({ pages });
+                          setPageIndex(pageIndex + 1);
+                          setLayerIndex(0);
+                          setPreview(false);
+                          setNotice(
+                            'Page duplicated. You can undo this change.',
+                          );
+                        }}
+                      >
+                        <Copy size={16} /> Duplicate page
+                      </button>
+                      <button
                         disabled={pageIndex === 0}
                         aria-label="Move page earlier"
                         onClick={() => {
@@ -1105,6 +1153,7 @@ export function MotusBasic() {
                               }
                               onClick={() => {
                                 editLayer({ effect });
+                                setPreview(effect !== 'none');
                                 setSession((s) => s + 1);
                               }}
                             >

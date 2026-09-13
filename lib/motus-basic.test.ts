@@ -5,6 +5,8 @@ import {
   parseBasicComic,
   effectFrames,
   EFFECTS,
+  duplicateBasicPage,
+  readingPageStart,
 } from './motus-basic.ts';
 function sample() {
   const comic = blankComic();
@@ -33,6 +35,31 @@ function sample() {
   ];
   return comic;
 }
+void test('duplicated pages retain artwork and animations with independent layer IDs and edits', () => {
+  const comic = sample();
+  const original = comic.pages[0];
+  const copy = duplicateBasicPage(original);
+  comic.pages.push(copy);
+  assert.notEqual(copy.id, original.id);
+  assert.notEqual(copy.layers[0].id, original.layers[0].id);
+  assert.equal(copy.layers[0].src, original.layers[0].src);
+  assert.equal(copy.layers[0].effect, original.layers[0].effect);
+  assert.deepEqual(parseBasicComic(JSON.stringify(comic)), comic);
+  copy.layers[0].effect = 'spin';
+  copy.layers[0].name = 'Changed copy';
+  assert.equal(original.layers[0].effect, 'fade');
+  assert.equal(original.layers[0].name, 'Artwork');
+});
+
+void test('layout changes retain the current page or the spread containing it', () => {
+  assert.equal(readingPageStart(6, 'page', 10), 6);
+  assert.equal(readingPageStart(6, 'scroll', 10), 6);
+  assert.equal(readingPageStart(7, 'spread', 10), 6);
+  assert.equal(readingPageStart(20, 'spread', 9), 8);
+  assert.equal(readingPageStart(-1, 'page', 9), 0);
+  assert.equal(readingPageStart(NaN, 'page', 9), 0);
+  assert.equal(readingPageStart(0, 'spread', 0), 0);
+});
 void test('basic comic files preserve artwork, presets, and every reading display', () => {
   for (const format of ['scroll', 'page', 'spread'] as const)
     for (const direction of ['ltr', 'rtl'] as const) {
